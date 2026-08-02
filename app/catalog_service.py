@@ -9,6 +9,7 @@ import re
 import time
 import urllib.parse
 import urllib.request
+import uuid
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -30,7 +31,10 @@ class CatalogueService:
     """Configurable, cached catalogue discovery with server-side download tokens."""
 
     def __init__(self, work_dir: Path):
-        self.config_path = Path(work_dir) / "catalog-sources.json"
+        work_path = Path(work_dir)
+        self.config_path = work_path / "catalog-sources.json"
+        self._item_dir = work_path / "catalog-items"
+        self._item_dir.mkdir(parents=True, exist_ok=True)
         self._pages: dict[str, CachedPage] = {}
         self._items: dict[str, tuple[float, dict]] = {}
         self._catalogues: dict[str, tuple[float, list[dict]]] = {}
@@ -165,7 +169,7 @@ class CatalogueService:
                 row.update(sourceId=source["id"], sourceName=source["name"], machines=row.get("machines") or source["machines"])
                 token = hashlib.sha256(f"{source['id']}\0{row.get('downloadUrl')}\0{row.get('pageUrl')}\0{row.get('title')}".encode()).hexdigest()[:32]
                 row["id"] = token
-                self._items[token] = (time.time() + 3600, dict(row))
+                self._remember_item(token, row)
                 row.pop("downloadUrl", None)
                 results.append(row)
         results.sort(key=lambda item: (str(item.get("title", "")).casefold(), str(item.get("publisher", "")).casefold()))
@@ -184,18 +188,21 @@ class CatalogueService:
             raise DiskError(f"Unsupported catalogue loading strategy: {loader_name}")
         return loader(source, query, machine)
 
-    def _load_page(self, source: dict, query: str, _machine: str) -> list[dict]:
+    def _load_page(self, source: dict, query: str, machine: str) -> list[dict]:
         options = source.get("options", {})
         url = source["url"]
         template = str(options.get("queryTemplate") or "")
-        if query and template:
-            url = urllib.parse.urljoin(url, template.replace("{query}", urllib.parse.quote_plus(query)))
+        machine_queries = options.get("machineQueries", {})
+        machine_query = str(machine_queries.get(machine, machine_queries.get("all", ""))) if isinstance(machine_queries, dict) else ""
+        if template and (query or machine_query):
+            relative = template.replace("{query}", urllib.parse.quote_plus(query)).replace("{machineQuery}", urllib.parse.quote_plus(machine_query))
+            url = urllib.parse.urljoin(url, relative)
         body = self._fetch(
             url,
             limit=max(1, int(options.get("pageLimitMb", 8))) * 1024 * 1024,
             ttl=max(60, int(options.get("cacheSeconds", 900))),
         ).decode(str(options.get("encoding") or "utf-8"), "replace")
-        return self._parse_rows(source, body, str(options.get("parser") or "links"), {"url": url})
+        return self._parse_rows(source, body, str(options.get("parser") or "links"), {"url": url, "machine": machine})
 
     def _parse_rows(self, source: dict, body: str, parser_name: str, context: dict | None = None) -> list[dict]:
         parsers = {
@@ -205,6 +212,8 @@ class CatalogueService:
             "item-rows": self._parse_item_rows,
             "zip-links": self._parse_zip_links,
             "package-paragraphs": self._parse_package_paragraphs,
+            "query-media-tiles": self._parse_query_media_tiles,
+            "html-cards": self._parse_html_cards,
             "links": self._parse_links,
         }
         parser = parsers.get(parser_name)
@@ -216,6 +225,11 @@ class CatalogueService:
         try:
             body = self._fetch(row["pageUrl"], limit=2 * 1024 * 1024, ttl=86400).decode("utf-8", "replace")
         except DiskError:
+            return None
+        resolver = str(row.get("resolver") or "media-links")
+        if resolver == "upload-buttons":
+            return self._resolve_upload_buttons(row, body)
+        if resolver != "media-links":
             return None
         choices = [
             urllib.parse.urljoin(row["pageUrl"], href)
@@ -229,6 +243,38 @@ class CatalogueService:
         resolved = dict(row)
         resolved["downloadUrl"] = choices[0]
         resolved["downloadChoices"] = list(dict.fromkeys(choices))
+        resolved["artifactType"] = "disk-image"
+        resolved["description"] = resolved["description"].replace(" Download availability is checked when installed.", "")
+        return resolved
+
+    @staticmethod
+    def _resolve_upload_buttons(row: dict, body: str) -> dict | None:
+        options = row.get("resolverOptions", {})
+        extensions = tuple(
+            str(value).lower().lstrip(".")
+            for value in options.get("mediaExtensions", ["ssd", "dsd", "uef", "adf", "hfe"])
+        )
+        archive_terms = [str(value).casefold() for value in options.get("archiveTerms", [])]
+        requests = []
+        for block in re.findall(r'<div[^>]+class=["\'][^"\']*\bupload\b[^"\']*["\'][^>]*>(.*?)(?=<div[^>]+class=["\'][^"\']*\bupload\b|</div>\s*</div>)', body, re.I | re.S):
+            upload_id = re.search(r'data-upload_id=["\'](\d+)["\']', block, re.I)
+            filename_match = re.search(r'<strong[^>]+(?:title|data-name)=["\']([^"\']+)["\']', block, re.I)
+            if not upload_id or not filename_match:
+                continue
+            filename = html.unescape(filename_match.group(1)).strip()
+            suffix = Path(filename).suffix.lower().lstrip(".")
+            if suffix not in extensions and suffix != "zip":
+                continue
+            evidence = f"{row.get('title', '')} {row.get('description', '')} {_plain_text(body)} {filename}".casefold()
+            if suffix == "zip" and archive_terms and not any(term in evidence for term in archive_terms):
+                continue
+            template = str(options.get("requestTemplate") or "{pageUrl}/file/{uploadId}?source=view_game&as_props=1")
+            request_url = template.replace("{pageUrl}", str(row["pageUrl"]).rstrip("/")).replace("{uploadId}", upload_id.group(1))
+            requests.append({"url": request_url, "filename": filename})
+        if not requests:
+            return None
+        resolved = dict(row)
+        resolved["downloadRequests"] = requests
         resolved["artifactType"] = "disk-image"
         resolved["description"] = resolved["description"].replace(" Download availability is checked when installed.", "")
         return resolved
@@ -452,6 +498,57 @@ class CatalogueService:
         return rows
 
     @staticmethod
+    def _parse_query_media_tiles(source: dict, body: str, context: dict) -> list[dict]:
+        options = source.get("options", {})
+        parameter = str(options.get("mediaQueryParameter") or "disk0")
+        publisher = str(options.get("defaultPublisher") or source.get("name") or "")
+        page_url = str(context.get("url") or source["url"])
+        rows = []
+        for block in re.findall(r'<td\b[^>]*>(.*?)</td>', body, re.I | re.S):
+            links = re.findall(r'href=["\']([^"\']+)["\']', block, re.I)
+            media = None
+            for link in links:
+                values = urllib.parse.parse_qs(urllib.parse.urlparse(html.unescape(link)).query).get(parameter, [])
+                if values and re.search(r'\.(?:zip|uef|ssd|dsd|adf|hfe)(?:$|[?#])', values[0], re.I):
+                    media = values[0]
+                    break
+            if not media:
+                continue
+            title_match = re.search(r'</a>\s*<br\s*/?>\s*(.*?)\s*<br\s*/?>', block, re.I | re.S)
+            title = _plain_text(title_match.group(1)) if title_match else Path(urllib.parse.urlparse(media).path).stem
+            page = next((urllib.parse.urljoin(page_url, link) for link in links if parameter not in link), page_url)
+            rows.append(_item(title, publisher, "", media, page, "disk-image", machines=source.get("machines", [])))
+        return rows
+
+    @staticmethod
+    def _parse_html_cards(source: dict, body: str, context: dict) -> list[dict]:
+        options = source.get("options", {})
+        card_class = re.escape(str(options.get("cardClass") or "game_cell"))
+        starts = list(re.finditer(r'<div[^>]+class=["\'][^"\']*\b' + card_class + r'\b[^"\']*["\'][^>]*>', body, re.I))
+        rows = []
+        for number, start in enumerate(starts):
+            block = body[start.start() : starts[number + 1].start() if number + 1 < len(starts) else len(body)]
+            def class_content(name: str) -> str:
+                match = re.search(r'<div[^>]+class=["\'][^"\']*\b' + re.escape(name) + r'\b[^"\']*["\'][^>]*>(.*?)</div>', block, re.I | re.S)
+                return match.group(1) if match else ""
+            title_block = class_content(str(options.get("titleClass") or "game_title"))
+            title_match = re.search(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', title_block, re.I | re.S)
+            if not title_match:
+                continue
+            title = _plain_text(title_match.group(2))
+            page = urllib.parse.urljoin(str(context.get("url") or source["url"]), html.unescape(title_match.group(1)))
+            description = _plain_text(class_content(str(options.get("descriptionClass") or "game_text")))
+            publisher = _plain_text(class_content(str(options.get("publisherClass") or "game_author")))
+            rows.append(_item(
+                title, publisher, "", None, page, "remote-item",
+                description=f"{description} Download availability is checked when installed.".strip(),
+                machines=[str(context["machine"])] if context.get("machine") and context["machine"] != "all" else source.get("machines", []), downloadable=True,
+                resolver=str(options.get("resolver") or "media-links"),
+            ))
+            rows[-1]["resolverOptions"] = dict(options.get("resolverOptions") or {})
+        return rows
+
+    @staticmethod
     def _parse_links(source: dict, body: str, _context: dict) -> list[dict]:
         rows, seen = [], set()
         for href, title in re.findall(r'<a[^>]+href="(https?://[^"]+)"[^>]*>(.*?)</a>', body, re.I | re.S):
@@ -463,24 +560,74 @@ class CatalogueService:
 
     def item(self, token: str) -> dict:
         cached = self._items.get(token)
-        if not cached or cached[0] < time.time():
+        if cached and cached[0] >= time.time():
+            return dict(cached[1])
+        if not re.fullmatch(r"[a-f0-9]{32}", token):
             raise DiskError("That online catalogue result has expired. Search again before installing it.")
-        return dict(cached[1])
+        path = self._item_dir / f"{token}.json"
+        try:
+            payload = json.loads(path.read_text("utf-8"))
+            expires = float(payload["expires"])
+            item = payload["item"]
+            if expires < time.time() or not isinstance(item, dict):
+                raise ValueError
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+            path.unlink(missing_ok=True)
+            raise DiskError("That online catalogue result has expired. Search again before installing it.")
+        self._items[token] = (expires, dict(item))
+        return dict(item)
+
+    def _remember_item(self, token: str, item: dict) -> None:
+        expires = time.time() + 3600
+        stored = dict(item)
+        self._items[token] = (expires, stored)
+        path = self._item_dir / f"{token}.json"
+        temporary = self._item_dir / f".{token}.{uuid.uuid4().hex}.tmp"
+        try:
+            temporary.write_text(json.dumps({"expires": expires, "item": stored}), "utf-8")
+            temporary.replace(path)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def download(self, token: str, preferred: str = "dfs") -> tuple[str, bytes, dict]:
         item = self.item(token)
+        requests = item.get("downloadRequests") or []
+        if requests:
+            request_row = max(requests, key=lambda row: self._download_score(row.get("filename", ""), preferred))
+            url = self._generated_download_url(str(request_row["url"]))
+            name = str(request_row.get("filename") or Path(urllib.parse.urlparse(url).path).name or f"{item['title']}.zip")
+            return name, self._fetch(url, ttl=1, limit=128 * 1024 * 1024), item
         choices = item.get("downloadChoices") or [item.get("downloadUrl")]
         choices = [url for url in choices if url]
-        def score(url):
-            lowered = urllib.parse.urlparse(url).path.casefold()
-            dfs_hint = any(hint in lowered for hint in ("/dfs/", "5_25", ".ssd", ".dsd"))
-            adfs_hint = any(hint in lowered for hint in ("/adfs/", "3_5", ".adf"))
-            return (adfs_hint if preferred == "adfs" else dfs_hint, not (dfs_hint or adfs_hint))
-        url = max(choices, key=score) if choices else None
+        url = max(choices, key=lambda value: self._download_score(value, preferred)) if choices else None
         if not item.get("downloadable", True) or not url:
             raise DiskError("This catalogue item links to its publisher page and cannot be installed automatically.")
         name = Path(urllib.parse.urlparse(url).path).name or f"{item['title']}.zip"
         return name, self._fetch(url, ttl=60, limit=128 * 1024 * 1024), item
+
+    @staticmethod
+    def _download_score(value: str, preferred: str) -> tuple[bool, bool]:
+        lowered = urllib.parse.urlparse(value).path.casefold()
+        dfs_hint = any(hint in lowered for hint in ("/dfs/", "5_25", ".ssd", ".dsd"))
+        adfs_hint = any(hint in lowered for hint in ("/adfs/", "3_5", ".adf"))
+        return (adfs_hint if preferred == "adfs" else dfs_hint, not (dfs_hint or adfs_hint))
+
+    @staticmethod
+    def _generated_download_url(url: str) -> str:
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise DiskError("The catalogue supplied an invalid download request URL.")
+        request = urllib.request.Request(url, data=b"", method="POST", headers={"User-Agent": "AcornFileForge/1.0 (+local archival tool)", "Accept": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=25) as response:
+                payload = json.loads(response.read(256 * 1024).decode("utf-8"))
+        except Exception as exc:
+            raise DiskError(f"Could not generate the catalogue download: {exc}") from exc
+        generated = str(payload.get("url") or "") if isinstance(payload, dict) else ""
+        destination = urllib.parse.urlparse(generated)
+        if destination.scheme not in {"http", "https"} or not destination.netloc:
+            raise DiskError("The catalogue did not return a usable download URL.")
+        return generated
 
 
 def _item(title, publisher, year, download, page, artifact, *, description="", machines=None, downloadable=True, version="", resolver=None):

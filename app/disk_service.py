@@ -1136,6 +1136,15 @@ class DiskService:
             else:
                 self.checkpoints.prune_automatic(session)
 
+    def rollback_automatic_checkpoint(self, session: ImageSession, token: dict) -> None:
+        """Restore a failed mutation and remove its now-redundant undo point."""
+        checkpoint_id = str(token["checkpoint"]["id"])
+        self.restore_checkpoint(session, checkpoint_id)
+        try:
+            self.delete_checkpoint(session, checkpoint_id)
+        except DiskError:
+            pass
+
     def restore_checkpoint(self, session: ImageSession, checkpoint_id: str) -> dict:
         with session.lock:
             try:
@@ -1563,7 +1572,14 @@ class DiskService:
         session.slot_cache.pop(slot, None)
         session.dirty = True
 
-    def insert_slot_bytes(self, session: ImageSession, slot: int, data: bytes, filename: str) -> list[int]:
+    def insert_slot_bytes(
+        self,
+        session: ImageSession,
+        slot: int,
+        data: bytes,
+        filename: str,
+        display_title: str | None = None,
+    ) -> list[int]:
         if session.kind != "mmb":
             raise DiskError("Disk images can only be inserted into MMB slots.")
         suffix = Path(filename).suffix.lower()
@@ -1589,15 +1605,15 @@ class DiskService:
                         session,
                         f"MMFS compatibility change on DSD side {side_index + 1}: {change}.",
                     )
-            self._write_slot(session, slot, repaired_sides[0])
-            self._write_slot(session, slot + 1, repaired_sides[1])
+            self._write_slot(session, slot, repaired_sides[0], display_title)
+            self._write_slot(session, slot + 1, repaired_sides[1], display_title)
             return [slot, slot + 1]
         if suffix != ".ssd":
             raise DiskError("Only SSD or DSD images can be inserted into an MMB.")
         data, changes = repair_dfs_basic_wildcards(data)
         for change in changes:
             self._append_warning(session, f"MMFS compatibility change: {change}.")
-        self._write_slot(session, slot, data)
+        self._write_slot(session, slot, data, display_title)
         return [slot]
 
     def insert_slot_from_session(
@@ -1612,12 +1628,15 @@ class DiskService:
                 raise DiskError("Select an MMB source disk first.")
             data = self._slot_path(source, source_slot).read_bytes()
             filename = "disk.ssd"
+            display_title = self.list_slots(source)[source_slot]["name"]
         elif source.kind == "dfs":
             data = source.path.read_bytes()
-            filename = source.path.name
+            filename = source.name
+            visible_title = Path(source.name).stem
+            display_title = visible_title if visible_title.casefold() != "blank" else None
         else:
             raise DiskError("Only DFS disks can be inserted into an MMB.")
-        inserted = self.insert_slot_bytes(target, target_slot, data, filename)
+        inserted = self.insert_slot_bytes(target, target_slot, data, filename, display_title)
         if source.hfe_read_only:
             self._append_warning(
                 target,
@@ -1665,21 +1684,29 @@ class DiskService:
         self._persist_session(session)
 
     def clear_slot(self, session: ImageSession, slot: int) -> None:
-        slot = self._check_slot(session, slot)
+        self.clear_slots(session, [slot])
+
+    def clear_slots(self, session: ImageSession, slot_numbers: list[int]) -> list[int]:
+        checked = list(dict.fromkeys(self._check_slot(session, int(slot)) for slot in slot_numbers))
+        if not checked:
+            raise DiskError("Select at least one MMB disk to eject.")
         with session.lock, session.path.open("r+b") as image:
-            image.seek(16 + slot * MMB_ENTRY_SIZE)
-            image.write(b"\0" * 15 + b"\xf0")
-            image.seek(MMB_HEADER_SIZE + slot * MMB_SLOT_SIZE)
-            image.write(b"\0" * MMB_SLOT_SIZE)
-        session.slot_cache.pop(slot, None)
-        session.slot_source_names.pop(slot, None)
-        if session.menu_slot == slot:
-            session.menu_slot = None
-            session.menu_type = None
-            session.menu_scanned = True
-            session.menu_entries = None
+            for slot in checked:
+                image.seek(16 + slot * MMB_ENTRY_SIZE)
+                image.write(b"\0" * 15 + b"\xf0")
+                image.seek(MMB_HEADER_SIZE + slot * MMB_SLOT_SIZE)
+                image.write(b"\0" * MMB_SLOT_SIZE)
+        for slot in checked:
+            session.slot_cache.pop(slot, None)
+            session.slot_source_names.pop(slot, None)
+            if session.menu_slot == slot:
+                session.menu_slot = None
+                session.menu_type = None
+                session.menu_scanned = True
+                session.menu_entries = None
         session.dirty = True
         self._persist_session(session)
+        return checked
 
     def protect_slot(self, session: ImageSession, slot: int, writable: bool) -> None:
         self.protect_slots(session, [slot], writable)
@@ -1925,6 +1952,49 @@ class DiskService:
         disk_path = self.resolve(session, slot)
         return self._run_json(["stat", "--as", "json", str(disk_path)])
 
+    def capacity(self, session: ImageSession, slot: int | None) -> dict:
+        """Return authoritative writable capacity for a pane-level filesystem."""
+        if session.kind == "tape":
+            return {
+                "available": False,
+                "reason": "Tape images do not have a fixed free-space capacity.",
+            }
+        if session.kind == "mmb" and slot is None:
+            slots = self.list_slots(session)
+            used = sum(bool(item["formatted"]) for item in slots)
+            total = len(slots)
+            return {
+                "available": True,
+                "unit": "slots",
+                "total": total,
+                "used": used,
+                "free": total - used,
+            }
+
+        reports = self.stat(session, slot).get("reports", {})
+        rows = [
+            row
+            for report in reports.values()
+            for row in report.get("rows", [])
+            if isinstance(row, dict)
+            and isinstance(row.get("size"), int)
+            and isinstance(row.get("free"), int)
+        ]
+        if not rows:
+            return {
+                "available": False,
+                "reason": "This filesystem does not report free-space capacity.",
+            }
+        total = sum(max(0, row["size"]) for row in rows)
+        free = min(total, sum(max(0, row["free"]) for row in rows))
+        return {
+            "available": total > 0,
+            "unit": "bytes",
+            "total": total,
+            "used": total - free,
+            "free": free,
+        }
+
     def validate(self, session: ImageSession, slot: int | None) -> str:
         if session.kind == "tape":
             tape = self._tape(session)
@@ -2023,6 +2093,45 @@ class DiskService:
         with self._locked_sessions(source, target):
             self._run(args)
             self._mark_mutated(target, target_slot)
+
+    def replace_blank_dfs_image(
+        self,
+        target: ImageSession,
+        source: ImageSession,
+        source_name: str,
+        *,
+        target_slot: int | None,
+        target_path: str,
+    ) -> bool:
+        """Install an SSD into a blank SSD without losing its title or catalogue."""
+        if (
+            target.kind != "dfs"
+            or source.kind != "dfs"
+            or target_slot is not None
+            or target_path != "$"
+            or target.path.suffix.lower() != ".ssd"
+            or source.path.suffix.lower() != ".ssd"
+            or self.list_directory(target, "$", None)["entries"]
+        ):
+            return False
+        target_size = target.path.stat().st_size
+        if source.path.stat().st_size > target_size:
+            return False
+        replacement = target.path.parent / f".online-replacement-{uuid.uuid4().hex}.ssd"
+        try:
+            with self._locked_sessions(source, target):
+                self._copy_local_file(source.path, replacement)
+                with replacement.open("ab") as image:
+                    image.truncate(target_size)
+                replacement.replace(target.path)
+                target.name = self.safe_filename(Path(source_name).name)
+                target.dirty = True
+                target.hfe_export_path = None
+                target.finalised_mtime_ns = None
+                self._persist_session(target)
+        finally:
+            replacement.unlink(missing_ok=True)
+        return True
 
     def copy_mmb_slot_to_adfs_directory(
         self,

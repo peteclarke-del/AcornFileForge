@@ -46,6 +46,42 @@ class DiskErrorTests(unittest.TestCase):
     def test_beebscsi_is_a_distinct_target_profile(self) -> None:
         self.assertEqual(DiskService._target_hardware("beebscsi"), "beebscsi")
 
+    def test_capacity_sums_filesystem_partitions(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            image = Path(folder) / "disk.dat"
+            image.write_bytes(b"")
+            service = DiskService(folder)
+            session = ImageSession("c" * 32, "disk.dat", "adfs", image)
+            report = {"reports": {
+                "partition_1": {"rows": [{"size": 1_000_000, "free": 250_000}]},
+                "partition_2": {"rows": [{"size": 500_000, "free": 100_000}]},
+            }}
+            with patch.object(service, "stat", return_value=report):
+                capacity = service.capacity(session, None)
+            self.assertEqual(capacity, {
+                "available": True,
+                "unit": "bytes",
+                "total": 1_500_000,
+                "used": 1_150_000,
+                "free": 350_000,
+            })
+
+    def test_mmb_capacity_counts_empty_slots(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            image = Path(folder) / "small.mmb"
+            header = bytearray(b"\xff" * 8192)
+            header[16 + 15] = 0
+            header[32 + 15] = 1
+            image.write_bytes(header + bytes(3 * 204800))
+            capacity = DiskService(folder).capacity(
+                ImageSession("d" * 32, "small.mmb", "mmb", image),
+                None,
+            )
+            self.assertEqual(capacity["total"], 3)
+            self.assertEqual(capacity["used"], 2)
+            self.assertEqual(capacity["free"], 1)
+            self.assertEqual(capacity["unit"], "slots")
+
     def test_image_rename_preserves_format_and_renames_descriptor_download(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             session_folder = Path(folder) / ("a" * 32)
@@ -673,6 +709,17 @@ ValueError: A concise engine failure"""
 
             with self.assertRaisesRegex(DiskError, "matching DSC"):
                 DiskService.require_writable_geometry(session)
+
+    def test_open_ssd_title_is_preserved_when_inserted_into_mmb(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            service = DiskService(Path(temporary) / "work")
+            target = service.create_blank("mmb", "")
+            source = service.create_blank("ssd", "OLD TITLE")
+            source.name = "GHOULS.ssd"
+
+            service.insert_slot_from_session(target, 236, source, None)
+
+            self.assertEqual(service.list_slots(target)[236]["name"], "GHOULS")
 
 
 if __name__ == "__main__":

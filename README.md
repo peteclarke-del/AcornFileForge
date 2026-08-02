@@ -98,8 +98,11 @@ labelled **Online Library**. It searches enabled catalogues on the server so a
 browser does not need to negotiate cross-site download rules.
 
 The initial machine filter comes from the Workbench hardware profile applied
-to that pane. It is only a default: choose another machine in the Online
-Library whenever an individual search needs a wider or different catalogue.
+to that pane. For panes without an applied profile, the remembered active
+Workbench profile is used as the workspace default. A fresh browser starts with
+Electron Plus 3. It is still only a starting value: choose another machine in
+the Online Library whenever an individual search needs a wider or different
+catalogue.
 
 The built-in catalogue set is:
 
@@ -110,12 +113,18 @@ The built-in catalogue set is:
 - Every Game Going for BBC Model B, B+, Master 128, Master Compact, Electron
   and Archimedes A3000 releases;
 - 8-Bit Software's public-domain catalogue;
+- 0xC0DE and community Electron projects with direct SSD releases;
+- itch.io homebrew searches chosen from the active BBC, Master, Electron,
+  Archimedes or RISC OS workbench filter;
 - the official and third-party RISC OS Open package feeds.
 
 Only records with a confirmed public UEF, SSD, DSD, ADF, HFE, ZIP or RISC OS
 package download appear. The app suppresses gallery pages, documentation-only
 records, DVD-only Electron World entries and catalogue records whose item page
-does not contain supported downloadable media.
+does not contain supported downloadable media. itch.io results are checked at
+their project page and shown only when a supported Acorn disk or tape upload is
+actually present. Its short-lived download address is generated only when you
+install the item.
 
 Choose **Sources…** in the Online Library to enable or disable a catalogue,
 change its URL, or add another compatible provider. Configuration is stored in
@@ -128,7 +137,9 @@ application logic.
 
 The bundled defaults live in `app/catalog_sources.json`. The catalogue engine
 only understands reusable loading stages such as a single page, category crawl
-or machine index, reusable page layouts, and optional media-link resolution.
+or machine index, reusable page layouts, embedded media query parameters, and
+optional link or upload-button resolution. Machine-specific itch.io search
+phrases also live in the source record.
 It does not branch on a catalogue name or identifier. The copy in the work
 volume contains local changes made through **Sources…**.
 
@@ -149,10 +160,20 @@ volume contains local changes made through **Sources…**.
 6. Leave the menu option selected to pass each inserted disk through the usual
    launcher, action and PAGE review. Clear it to keep the disks off-menu.
 
+Dragging or importing an SSD that is already open in another pane carries its
+visible image title into the MMB slot. MMB-to-MMB copies retain the source slot
+title. The title is shortened only to the MMB format's 12-character limit.
+
 Multi-item installs run one download at a time and show the current title.
 **Abort operation** lets the active item reach a safe image boundary, then
 prevents the next download from starting. Completed items remain installed and
 undo checkpoints are retained.
+
+If one download contains the same program in several media formats, the app
+uses the best native disk format once. For example, an SSD is preferred over a
+duplicate UEF tape, so an MMB import does not insert the SSD and then complain
+about the tape. Installing into a blank SSD adopts the source catalogue and
+disk title, padding shortened SSD distributions to the target's normal size.
 
 The catalogue title and publisher seed the review form, while the actual disk
 is still inspected for `SSDMENU`, `!BOOT`, `LOADER`, action and PAGE. An
@@ -161,10 +182,10 @@ catalogue to describe the executable layout of the image.
 
 ### Add online software to DFS, ADFS and RISC OS
 
-For an SSD, DSD or open MMB disk, files from a downloaded disk are copied into
-the current DFS catalogue. Normal seven-character leaf names, catalogue entry
-limits, side selection, free-space checks and existing-file errors still
-apply.
+For a blank SSD, the downloaded SSD catalogue and title are adopted directly.
+For a non-empty SSD, DSD or open MMB disk, files are copied into the current
+DFS catalogue. Normal seven-character leaf names, catalogue entry limits, side
+selection, free-space checks and existing-file errors still apply.
 
 For ADFS, downloaded disk images extract into the current directory by
 default. Select **Create a folder for each downloaded disk** when the software
@@ -194,9 +215,13 @@ file row, MMB slot, or supported image heading still transfers content. Pane
 order is restored after a normal refresh.
 
 **Add Pane** disables while three panes are displayed and becomes available
-again as soon as one is closed. The × at the top-right of a pane closes the
-whole pane, not merely the image inside it. Closing never deletes its private
-working copy: use **Recover previous session** in another pane to reopen it.
+again as soon as one is closed. Each open pane heading contains, in order, the
+orange changed indicator and buttons for **New Blank Image**, **Load New
+Image**, **Save Image**, **Refresh View**, and **Close Pane**. Save is no longer
+duplicated in the file toolbar. The × closes the whole pane, not merely the
+image inside it. A changed image prompts for **Save and close**, **Close without
+saving**, or **Cancel**. Closing never deletes its private working copy: use
+**Recover previous session** in another pane to reopen it.
 Empty panes also have a top-right ×. If every pane is closed, **Add Pane**
 remains available in the header; a fresh browser workspace always begins with
 one pane.
@@ -214,6 +239,13 @@ after the first valid click, which prevents accidental duplicate imports or
 copies. The controls in a pane also disable as soon as a creative,
 destructive, validation, or maintenance action starts. Changes to one image
 are serialized so that two writes cannot modify it at the same time.
+
+The meter at the lower-right of every populated pane shows real filesystem
+usage. It fills green, then orange at 70%, and red at 90%. Hover over it for
+used, free, total, and percentage figures in appropriate units. At an MMB root
+it counts formatted and empty slots; inside an MMB disk it reports that DFS
+slot's byte capacity. UEF tapes show a neutral unavailable meter because tapes
+do not have fixed filesystem free space.
 
 ## Undo and named checkpoints
 
@@ -354,7 +386,15 @@ filing system, MMFS build, Tube state, expected PAGE, menu preference, and ADFS
 validation target. Custom profiles are stored in the browser and the applied
 profile is also persisted with the private image session. The health dashboard
 highlights conflicts such as using the Tube with Electron or low-PAGE MMFS
-software.
+software. The active Workbench profile is remembered and supplies the workspace
+default used by Find Discs and Online Library on panes without their own
+profile. On first use this is Electron Plus 3, and selecting, saving, or applying
+a different profile changes that default.
+
+Online Library search results carry short-lived server-side download tokens.
+They are retained for one hour in the private application work area, so a safe
+container restart does not invalidate a search dialog that is already open.
+applied profile.
 
 Import recipes record the directory naming strategy, group prefix, online
 metadata preference, guarded compatibility rewrites, and whether copied titles
@@ -481,8 +521,9 @@ that makes sense for the target filing system.
   counts as one image. Unrelated text and artwork files are ignored.
 - Drop an SSD, DSD, HFE, or ZIP containing them onto an empty MMB slot to
   insert it. The HFE must contain a DFS disk.
-- Select an empty MMB slot and use **Add disk** to create a formatted blank
-  SSD or DSD directly. This is useful for save disks and user-writable data.
+- Select an empty MMB slot and use **Slot → Add disk** to insert host or open
+  media, or create a formatted blank SSD/DSD directly. This is useful for save
+  disks and user-writable data.
 - Drag an open DFS disk onto an empty MMB slot in another pane.
 - Drag one MMB slot onto another slot to move or swap it.
 - Drag an MMB slot onto ADFS to create a named directory containing the slot's
@@ -566,6 +607,14 @@ Destination checks are deliberately conservative:
 
 DSD insertion needs two adjacent empty MMB slots. The two sides become two
 200 KiB SSD slots, which is how MMB stores that content.
+
+When another pane has an SSD, DSD, DFS-formatted HFE, or an individual MMB
+disk open, select one empty destination slot and use **Slot → Import from open
+&lt;filename&gt;**. One command is shown for each other open image. Incompatible
+ADFS images and MMB panes that are still at **All disks** remain visible but
+disabled, with the reason shown beside them. This keeps the operation within
+MMB's DFS-only format restrictions. A DSD imported this way still needs two
+adjacent empty slots.
 
 Use **Slot → Mark read-only** or **Mark read / write** to set protection on
 one disk or every formatted disk in a multiple selection. Empty slots have no

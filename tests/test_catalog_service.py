@@ -6,7 +6,7 @@ import zipfile
 
 from app.catalog_service import CatalogueService, DEFAULT_SOURCES, archive_members
 from app.disk_service import DiskError
-from app.routes.catalog import _spark_metadata
+from app.routes.catalog import _preferred_disk_members, _spark_metadata
 
 
 def source(source_id):
@@ -115,6 +115,41 @@ class CatalogueServiceTests(unittest.TestCase):
         self.assertEqual(rows[0]["artifactType"], "riscos-package")
         self.assertEqual(rows[0]["version"], "0.15-2")
 
+    def test_query_media_tiles_extract_configured_download_parameter(self):
+        body = '''<td><a href="https://player.example/run?dfs&amp;disk0=https://cdn.example/Pyjamarama.ssd"><img></a>
+          <br>Pyjamarama<br><span><a href="https://project.example/pyjamarama">Project page</a></span></td>'''
+        rows = self.service._parse_query_media_tiles(source("0xc0de6502"), body, {})
+        self.assertEqual(rows[0]["title"], "Pyjamarama")
+        self.assertEqual(rows[0]["downloadUrl"], "https://cdn.example/Pyjamarama.ssd")
+        self.assertEqual(rows[0]["pageUrl"], "https://project.example/pyjamarama")
+
+    def test_html_cards_use_configured_upload_resolver(self):
+        body = '''<div class="game_cell"><div class="game_title"><a href="https://maker.example/game">Electron Game</a></div>
+          <div class="game_text">For the Acorn Electron</div><div class="game_author"><a>Homebrew Author</a></div></div>'''
+        rows = self.service._parse_html_cards(source("itch-acorn"), body, {})
+        self.assertEqual(rows[0]["publisher"], "Homebrew Author")
+        self.assertEqual(rows[0]["resolver"], "upload-buttons")
+
+    def test_upload_resolver_suppresses_unrelated_archives_and_keeps_acorn_media(self):
+        configured = source("itch-acorn")
+        row = self.service._parse_html_cards(configured, '''<div class="game_cell"><div class="game_title">
+          <a href="https://maker.example/electron-game">Electron Game</a></div>
+          <div class="game_text">For the Acorn Electron</div><div class="game_author">Maker</div></div>''', {})[0]
+        detail = '''<div class="upload"><a data-upload_id="123">Download</a><div><strong title="Electron Game.ssd">Electron Game.ssd</strong></div></div>
+          <div class="upload"><a data-upload_id="456">Download</a><div><strong title="Windows build.exe">Windows build.exe</strong></div></div>'''
+        resolved = self.service._resolve_upload_buttons(row, detail)
+        self.assertEqual(resolved["downloadRequests"], [{
+            "url": "https://maker.example/electron-game/file/123?source=view_game&as_props=1",
+            "filename": "Electron Game.ssd",
+        }])
+
+    def test_page_loader_uses_configured_machine_query(self):
+        configured = copy.deepcopy(source("itch-acorn"))
+        requested = []
+        self.service._fetch = lambda url, **_options: requested.append(url) or b""
+        self.service._load_page(configured, "arcade", "bbc-b")
+        self.assertEqual(requested, ["https://itch.io/search?q=bbc+micro+arcade"])
+
     def test_source_configuration_is_validated_and_persisted(self):
         rows = self.service.save_sources([{
             "id": "mine", "name": "Mine", "type": "links",
@@ -129,6 +164,15 @@ class CatalogueServiceTests(unittest.TestCase):
         self.assertNotIn("dcford", {row["id"] for row in CatalogueService(self.temporary.name).sources()})
         with self.assertRaises(DiskError):
             self.service.save_sources([{"name": "Unsafe", "url": "file:///etc/passwd"}])
+
+    def test_catalogue_result_survives_service_restart(self):
+        token = "a" * 32
+        expected = {"title": "Chuckie Egg", "downloadUrl": "https://example.test/chuckie.ssd"}
+        self.service._remember_item(token, expected)
+
+        restarted = CatalogueService(self.temporary.name)
+
+        self.assertEqual(restarted.item(token), expected)
 
     def test_new_default_settings_are_merged_without_overwriting_configuration(self):
         configured = copy.deepcopy(source("everygamegoing"))
@@ -171,6 +215,16 @@ class CatalogueServiceTests(unittest.TestCase):
         self.assertEqual(
             archive_members("games.zip", buffer.getvalue()),
             [("games/frak.ssd", b"disk")],
+        )
+
+    def test_native_disk_is_preferred_over_tape_variant_in_same_download(self):
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("Repton-2-Upgraded.ssd", b"ssd")
+            archive.writestr("Repton-2-Upgraded.uef", b"uef")
+        self.assertEqual(
+            _preferred_disk_members("repton-2.zip", buffer.getvalue()),
+            [("Repton-2-Upgraded.ssd", b"ssd")],
         )
 
     def test_sparkfs_metadata_is_preserved(self):

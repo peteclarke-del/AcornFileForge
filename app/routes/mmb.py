@@ -42,6 +42,21 @@ def _refresh_mmc_desktop(service: DiskService, session) -> None:
         refresh_mmc_desktop_catalogue(service, session, slot)
 
 
+def _post_insert_details(service: DiskService, session, slot: int) -> tuple[dict | None, list[str]]:
+    """Keep a completed sector insert successful when optional menu work fails."""
+    warnings = []
+    try:
+        _refresh_mmc_desktop(service, session)
+    except DiskError as exc:
+        warnings.append(f"The disk was inserted, but MMC Desktop could not be refreshed: {exc}")
+    try:
+        metadata = _menu_metadata(service, session, slot)
+    except DiskError as exc:
+        metadata = None
+        warnings.append(f"The disk was inserted, but its menu metadata could not be prepared: {exc}")
+    return metadata, warnings
+
+
 def _next_empty_run(slots: list[dict], cursor: int, length: int) -> int | None:
     while cursor + length <= len(slots):
         if all(slots[number]["empty"] for number in range(cursor, cursor + length)):
@@ -86,11 +101,12 @@ def create_mmb_blueprint(service: DiskService) -> Blueprint:
                 )
             source_name = best_distribution_filename(item.metadata_names)
         service.set_slot_source_name(session, inserted, source_name)
-        _refresh_mmc_desktop(service, session)
+        metadata, warnings = _post_insert_details(service, session, inserted[0])
         return jsonify(
             image=service.summary(session),
             slots=inserted,
-            metadata=_menu_metadata(service, session, inserted[0]),
+            metadata=metadata,
+            warnings=warnings,
         )
 
     @blueprint.post("/api/images/<image_id>/slots/insert-many")
@@ -183,11 +199,12 @@ def create_mmb_blueprint(service: DiskService) -> Blueprint:
             service.get(data["sourceImage"]),
             optional_int(data.get("sourceSlot")),
         )
-        _refresh_mmc_desktop(service, target)
+        metadata, warnings = _post_insert_details(service, target, inserted[0])
         return jsonify(
             image=service.summary(target),
             slots=inserted,
-            metadata=_menu_metadata(service, target, inserted[0]),
+            metadata=metadata,
+            warnings=warnings,
         )
 
     @blueprint.post("/api/images/<image_id>/slots/create-blank")
@@ -214,14 +231,17 @@ def create_mmb_blueprint(service: DiskService) -> Blueprint:
         finally:
             service.discard_session(temporary)
         service.protect_slots(target, inserted, bool(data.get("writable", True)))
-        _refresh_mmc_desktop(service, target)
-        return jsonify(image=service.summary(target), slots=inserted)
+        metadata, warnings = _post_insert_details(service, target, inserted[0])
+        return jsonify(image=service.summary(target), slots=inserted, metadata=metadata, warnings=warnings)
 
     @blueprint.post("/api/images/<image_id>/slots/clear")
     def clear_slot(image_id):
         data = payload()
         session = service.get(image_id)
-        service.clear_slot(session, int(data["slot"]))
+        slots = data.get("slots")
+        if slots is None:
+            slots = [data["slot"]]
+        service.clear_slots(session, [int(slot) for slot in slots])
         _refresh_mmc_desktop(service, session)
         return jsonify(image=service.summary(session))
 

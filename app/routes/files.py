@@ -237,6 +237,15 @@ def create_files_blueprint(
             )
         )
 
+    @blueprint.get("/api/images/<image_id>/capacity")
+    def capacity(image_id):
+        return jsonify(
+            capacity=service.capacity(
+                service.get(image_id),
+                optional_int(request.args.get("slot")),
+            )
+        )
+
     @blueprint.post("/api/images/<image_id>/validate")
     def validate(image_id):
         data = payload()

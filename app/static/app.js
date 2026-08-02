@@ -6,6 +6,7 @@ function newPaneState(image = null) {
     slotName: "",
     path: "$",
     entries: [],
+    capacity: null,
     selected: null,
     selection: [],
     selectionAnchor: null,
@@ -23,6 +24,14 @@ const { api, uploadApi, esc, humanSize, modal, modalContent, setModalAbort, setM
 const formats = window.AcornFormats;
 const OPEN_PANES_STORAGE_KEY = "acorn-file-forge-dynamic-panes";
 let workspacePersistenceReady = false;
+
+const PANE_ICONS = {
+  newImage: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8l4 4V20.5H6z"/><path d="M14 3.5v4h4M9 14h6M12 11v6"/></svg>',
+  loadImage: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 19.5V5.5h6l2 2h8v3"/><path d="M3.5 19.5 6 10.5h15l-2.5 9z"/></svg>',
+  saveImage: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3.5h13l3 3v14H4z"/><path d="M7 3.5v6h9v-6M7.5 20.5v-7h9v7"/></svg>',
+  refreshView: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 8.5A8 8 0 1 0 20 15"/><path d="M19.5 3.5v5h-5"/></svg>',
+  closePane: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.5 6.5 11 11M17.5 6.5l-11 11"/></svg>',
+};
 
 function normalisePage(value) {
   const cleaned = String(value || "").trim().replace(/^&/, "").toUpperCase();
@@ -220,6 +229,77 @@ function paneLabel(index) {
   return `Pane ${index + 1}${panes[index].image ? ` · ${panes[index].image.name}` : " · Empty"}`;
 }
 
+function openDiskPaneSource(index) {
+  const pane = panes[index];
+  if (!pane?.image) return null;
+  if (pane.image.kind === "dfs") {
+    return {
+      image: pane.image.id,
+      slot: null,
+      name: pane.image.name,
+      label: pane.image.name,
+      compatible: true,
+    };
+  }
+  if (pane.image.kind === "mmb" && pane.slot !== null) {
+    return {
+      image: pane.image.id,
+      slot: pane.slot,
+      name: pane.slotName || `Slot ${pane.slot}`,
+      label: `${pane.image.name} · slot ${pane.slot} · ${pane.slotName || "Untitled disk"}`,
+      compatible: true,
+    };
+  }
+  return {
+    image: pane.image.id,
+    slot: null,
+    name: pane.image.name,
+    label: pane.image.name,
+    compatible: false,
+    reason: pane.image.kind === "mmb"
+      ? "Open a disk inside this MMB first"
+      : "MMB slots accept DFS disks only",
+  };
+}
+
+function openDiskImportMarkup(targetIndex) {
+  const emptySlotSelected = Boolean(selectedEntry(targetIndex)?.empty);
+  const sources = otherPaneIndexes(targetIndex)
+    .map(sourceIndex => ({ sourceIndex, source: openDiskPaneSource(sourceIndex) }))
+    .filter(item => item.source);
+  if (!sources.length) {
+    return '<button class="menu-command import-open-disk" disabled><b>↥</b><span>Import from open… <small>No other image is open</small></span></button>';
+  }
+  return sources.map(({ sourceIndex, source }) => {
+    const disabled = !emptySlotSelected || !source.compatible;
+    const reason = !emptySlotSelected
+      ? "Select one empty destination slot"
+      : source.reason || "";
+    return `<button class="menu-command import-open-disk" data-source-pane="${sourceIndex}" ${disabled ? "disabled" : ""} title="${esc(reason || `Import ${source.label} into the selected slot`)}"><b>↥</b><span>Import from open ${esc(source.label)}${reason ? ` <small>${esc(reason)}</small>` : ""}</span></button>`;
+  }).join("");
+}
+
+function refreshOpenDiskImportMenu(targetIndex, menu) {
+  const host = menu.querySelector(".open-disk-imports");
+  if (!host) return;
+  host.innerHTML = openDiskImportMarkup(targetIndex);
+  host.querySelectorAll(".import-open-disk[data-source-pane]").forEach(button => {
+    button.onclick = () => {
+      if (button.disabled) return;
+      const targetSlot = selectedEntry(targetIndex)?.slot;
+      const source = openDiskPaneSource(Number(button.dataset.sourcePane));
+      menu.removeAttribute("open");
+      if (targetSlot == null || !selectedEntry(targetIndex)?.empty) {
+        return toast("Select one empty MMB slot first.", true);
+      }
+      if (!source?.compatible) {
+        return toast(source?.reason || "That pane does not contain an MMB-compatible disk image.", true);
+      }
+      guardedPaneAction(targetIndex, () => insertSessionIntoSlot(targetIndex, targetSlot, source));
+    };
+  });
+}
+
 function paneDragHandle(index) {
   return `<button class="pane-drag-handle" type="button" draggable="true" title="Drag to swap this pane" aria-label="Drag pane ${index + 1} to another position"><b>⠿</b><small>${index + 1}</small></button>`;
 }
@@ -393,6 +473,31 @@ function paneFormat(image) {
   if (image.kind === "tape") return "UEF";
   if (image.kind === "dfs") return image.name.toLowerCase().endsWith(".dsd") ? "DSD" : "SSD";
   return "ADFS";
+}
+
+function capacityMarkup(capacity) {
+  if (!capacity?.available || !capacity.total) {
+    const reason = capacity?.reason || "Free-space information is loading.";
+    return `<span class="capacity unavailable" title="${esc(reason)}" aria-label="${esc(reason)}"><i></i></span>`;
+  }
+  const usedPercent = Math.max(0, Math.min(100, capacity.used * 100 / capacity.total));
+  const level = usedPercent >= 90 ? "critical" : usedPercent >= 70 ? "warning" : "healthy";
+  const details = capacity.unit === "slots"
+    ? `${capacity.free} free slot${capacity.free === 1 ? "" : "s"} of ${capacity.total} · ${capacity.used} used · ${usedPercent.toFixed(1)}% full`
+    : `${humanSize(capacity.free)} free of ${humanSize(capacity.total)} · ${humanSize(capacity.used)} used · ${usedPercent.toFixed(1)}% full`;
+  return `<span class="capacity ${level}" role="progressbar" aria-label="${esc(details)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${usedPercent.toFixed(1)}" title="${esc(details)}" style="--capacity-used:${usedPercent}%"><i></i></span>`;
+}
+
+async function fetchCapacity(imageId, slot = null) {
+  const query = new URLSearchParams();
+  if (slot !== null) query.set("slot", slot);
+  const encoded = query.toString();
+  const suffix = encoded ? `?${encoded}` : "";
+  try {
+    return (await api(`/api/images/${imageId}/capacity${suffix}`)).capacity;
+  } catch (_error) {
+    return null;
+  }
 }
 
 function fullPath(directory, name) {
@@ -607,29 +712,29 @@ function renderPane(index, preserveScroll = false) {
   </details>`;
   const toolbarMarkup = isSlots
     ? `<button class="tool online-library"><b>⌕</b><span>Find Discs</span></button>
-      <details class="tool-menu">
-        <summary class="tool"><b>＋</b><span>Add disk</span></summary>
-        <div class="tool-menu-panel">
-          <button class="menu-command insert-disk" ${selected ? "" : "disabled"}><b>↥</b><span>Insert SSD / DSD / HFE / ZIP…</span></button>
-          <button class="menu-command create-blank-ssd" ${selectedEmptySlot ? "" : "disabled"}><b>○</b><span>Create blank SSD here</span></button>
-          <button class="menu-command create-blank-dsd" ${selectedEmptySlot ? "" : "disabled"}><b>◎</b><span>Create blank DSD here</span></button>
-        </div>
-      </details>
-      <details class="tool-menu">
+      <details class="tool-menu slot-tools">
         <summary class="tool"><b>▣</b><span>Slot</span></summary>
         <div class="tool-menu-panel">
+          <details class="menu-submenu">
+            <summary><b>＋</b><span>Add disk</span><i>›</i></summary>
+            <div class="menu-submenu-panel">
+              <div class="open-disk-imports">${openDiskImportMarkup(index)}</div>
+              <button class="menu-command insert-disk" ${selectedEmptySlot ? "" : "disabled"}><b>↥</b><span>Insert SSD / DSD / HFE / ZIP…</span></button>
+              <button class="menu-command create-blank-ssd" ${selectedEmptySlot ? "" : "disabled"}><b>○</b><span>Create blank SSD here</span></button>
+              <button class="menu-command create-blank-dsd" ${selectedEmptySlot ? "" : "disabled"}><b>◎</b><span>Create blank DSD here</span></button>
+            </div>
+          </details>
           <button class="menu-command rename-file" ${selected?.formatted ? "" : "disabled"}><b>✎</b><span>Rename disk title</span></button>
           <button class="menu-command slot-read-write" ${hasFormattedSelection ? "" : "disabled"}><b>◇</b><span>Mark read / write</span></button>
           <button class="menu-command slot-read-only" ${hasFormattedSelection ? "" : "disabled"}><b>◆</b><span>Mark read-only</span></button>
-          <button class="menu-command delete delete-file" ${selected?.formatted ? "" : "disabled"}><b>×</b><span>Eject disk</span></button>
+          <button class="menu-command delete delete-file" ${hasFormattedSelection ? "" : "disabled"}><b>×</b><span>Eject selected disk${formattedSelection.length === 1 ? "" : "s"}</span></button>
         </div>
       </details>
       ${pane.image.readOnly ? "" : menuTools}
       ${checkpointTools}
       ${analysisTools}
       <span class="toolbar-hint">Drag disks to move or swap slots</span>
-      <span class="tool-spacer"></span>
-      <button class="tool save save-image"><b>↓</b><span>Save MMB</span></button>`
+      <span class="tool-spacer"></span>`
     : `<button class="tool go-up" ${(pane.path === "$" && pane.slot === null) ? "disabled" : ""}><b>↑</b><span>${pane.slot !== null && pane.path === "$" ? "All disks" : "Up"}</span></button>
       ${!isTape && !pane.image.readOnly ? '<button class="tool online-library"><b>⌕</b><span>Online Library</span></button>' : ""}
       ${canEdit ? '<button class="tool import-file"><b>＋</b><span>Add file</span></button>' : ""}
@@ -651,8 +756,7 @@ function renderPane(index, preserveScroll = false) {
           ${isTape ? '<button class="menu-command convert-tape"><b>⇥</b><span>Convert tape to disk</span></button>' : pane.image.readOnly ? "" : '<button class="menu-command compact-image"><b>≋</b><span>Compact filesystem</span></button>'}
         </div>
       </details>
-      <span class="tool-spacer"></span>
-      <button class="tool save save-image"><b>↓</b><span>${isTape ? "Save tape" : "Save image"}</span></button>`;
+      <span class="tool-spacer"></span>`;
 
   host.className = `pane${pane.image.dirty ? " dirty" : ""}`;
   host.innerHTML = `
@@ -660,10 +764,14 @@ function renderPane(index, preserveScroll = false) {
       ${paneDragHandle(index)}
       <span class="format-icon ${kind}">${paneFormat(pane.image)}</span>
       <div class="image-name"><strong class="image-title" role="button" tabindex="0" title="Click to rename ${esc(pane.image.name)}">${esc(pane.image.name)}</strong><small>${esc(location)} · ${humanSize(pane.image.size)}</small></div>
-      <span class="dirty-dot" title="Unsaved edits"></span>
-      <button class="icon-button refresh-image" title="Refresh current view" aria-label="Refresh current view">↻</button>
-      <button class="icon-button replace-image" title="Open another image">↗</button>
-      <button class="icon-button close-image" title="Close pane and keep recovery copy">×</button>
+      <span class="dirty-dot" role="img" aria-label="Changes made" title="Changes made · save before closing"></span>
+      <div class="pane-head-actions" aria-label="Image actions">
+        <button class="icon-button new-image" title="New Blank Image" aria-label="New Blank Image">${PANE_ICONS.newImage}</button>
+        <button class="icon-button replace-image" title="Load New Image" aria-label="Load New Image">${PANE_ICONS.loadImage}</button>
+        <button class="icon-button save-image" title="Save Image" aria-label="Save Image">${PANE_ICONS.saveImage}</button>
+        <button class="icon-button refresh-image" title="Refresh View" aria-label="Refresh View">${PANE_ICONS.refreshView}</button>
+        <button class="icon-button close-image" title="Close Pane" aria-label="Close Pane">${PANE_ICONS.closePane}</button>
+      </div>
     </header>
     <nav class="toolbar" aria-label="File actions">
       ${toolbarMarkup}
@@ -673,7 +781,7 @@ function renderPane(index, preserveScroll = false) {
       ${loadingMarkup(pane)}
       ${rows ? `<table class="file-list${isSlots ? " mmb-slot-list" : ""}"><thead><tr>${isSlots ? "<th>Slot</th><th>Name</th><th>Kind</th><th>Access</th>" : "<th>Name</th><th>Kind</th><th>Size</th><th>Access</th>"}</tr></thead><tbody>${rows}</tbody></table>` : '<div class="empty-list">Nothing here yet.<br>Drop a host file into this pane to add it.</div>'}
     </div>
-    <footer class="pane-foot"><span>${pane.image.readOnly ? "Read-only safe view · " : ""}${selectedKeys.size ? `${selectedKeys.size} selected · ` : ""}${pane.entries.length} ${isSlots ? "formatted or named slots" : "objects"} · ${esc(pane.description || "")}</span><span class="capacity"><i></i></span></footer>`;
+    <footer class="pane-foot"><span>${pane.image.readOnly ? "Read-only safe view · " : ""}${selectedKeys.size ? `${selectedKeys.size} selected · ` : ""}${pane.entries.length} ${isSlots ? "formatted or named slots" : "objects"} · ${esc(pane.description || "")}</span>${capacityMarkup(pane.capacity)}</footer>`;
 
   if (pane.loading || pane.actionPending) {
     host.querySelectorAll("button").forEach(button => {
@@ -681,6 +789,7 @@ function renderPane(index, preserveScroll = false) {
     });
   }
   host.querySelector(".replace-image").onclick = () => chooseImage(index);
+  host.querySelector(".new-image").onclick = () => guardedPaneAction(index, () => showCreateImageModal(index));
   const imageTitle = host.querySelector(".image-title");
   imageTitle.onclick = () => beginImageRename(index);
   imageTitle.onkeydown = event => {
@@ -731,6 +840,7 @@ function renderPane(index, preserveScroll = false) {
   host.querySelectorAll(".tool-menu").forEach(menu => {
     menu.addEventListener("toggle", () => {
       if (!menu.open) return;
+      if (menu.classList.contains("slot-tools")) refreshOpenDiskImportMenu(index, menu);
       host.querySelectorAll(".tool-menu[open]").forEach(other => {
         if (other !== menu) other.removeAttribute("open");
       });
@@ -753,7 +863,14 @@ function renderPane(index, preserveScroll = false) {
   }
   wireDropZone(host, index);
   wirePaneDragHandle(host, index);
-  if (preserveScroll) host.querySelector(".list-wrap").scrollTop = previousScrollTop;
+  const listWrap = host.querySelector(".list-wrap");
+  if (preserveScroll) listWrap.scrollTop = previousScrollTop;
+  if (isSlots) {
+    if (!preserveScroll && pane.mmbScrollTop) listWrap.scrollTop = pane.mmbScrollTop;
+    listWrap.addEventListener("scroll", () => {
+      pane.mmbScrollTop = listWrap.scrollTop;
+    }, { passive: true });
+  }
   rememberOpenPanes();
 }
 
@@ -942,7 +1059,7 @@ function refreshSelectionDisplay(index) {
     const control = host.querySelector(selector);
     if (control) control.disabled = disabled;
   };
-  disable(".insert-disk", !selected);
+  disable(".insert-disk", !selected?.empty);
   disable(".create-blank-ssd", !selected?.empty);
   disable(".create-blank-dsd", !selected?.empty);
   disable(".slot-read-write", !formattedSelection.length);
@@ -953,7 +1070,14 @@ function refreshSelectionDisplay(index) {
     ".lock-file",
     !selected || isTape || (isSlots ? !selected.formatted : selected.type === "dir")
   );
-  disable(".delete-file", !selected || isTape || (isSlots && !selected.formatted));
+  disable(
+    ".delete-file",
+    isSlots ? !formattedSelection.length : (!selected || isTape)
+  );
+  const deleteLabel = host.querySelector(".delete-file span");
+  if (deleteLabel && isSlots) {
+    deleteLabel.textContent = `Eject selected disk${formattedSelection.length === 1 ? "" : "s"}`;
+  }
 
   const footer = host.querySelector(".pane-foot > span:first-child");
   if (footer) {
@@ -1018,6 +1142,7 @@ async function transferMmbSlots(index, startSlot, sources) {
         });
       pane.image = data.image;
       if (data.metadata) metadataItems.push(data.metadata);
+      (data.warnings || []).forEach(message => toast(message, true));
     }
     pane.progressCurrent = null;
     pane.progressTotal = null;
@@ -1792,6 +1917,7 @@ async function returnToMmb(index) {
     const data = await api(`/api/images/${pane.image.id}/slots`);
     if (panes[index] !== pane || pane.requestToken !== requestToken || pane.slot !== null) return;
     pane.entries = data.slots;
+    pane.capacity = await fetchCapacity(pane.image.id);
     pane.description = "Select a disk to browse its DFS catalogue";
   } catch (error) {
     if (panes[index] === pane && pane.requestToken === requestToken) toast(error.message, true);
@@ -1821,6 +1947,7 @@ async function refreshCurrentView(index) {
       ]);
       if (panes[index] !== pane || pane.requestToken !== requestToken) return;
       pane.entries = data.slots;
+      pane.capacity = await fetchCapacity(pane.image.id);
       pane.menuDetected = Boolean(menu.detected);
       pane.menuDetectionPending = false;
       setSelection(pane, selected, selectionAnchor);
@@ -2213,22 +2340,44 @@ async function openFiles(index, files, targetHardware = null) {
 }
 
 async function acceptImage(index, image) {
+  const currentPane = panes[index];
+  const preserveMmbRoot = Boolean(
+    currentPane?.image?.id === image.id
+    && currentPane.image.kind === "mmb"
+    && currentPane.slot === null
+  );
+  const preservedSelection = preserveMmbRoot ? selectionKeys(currentPane) : [];
+  const preservedAnchor = preserveMmbRoot ? currentPane.selectionAnchor : null;
+  const preservedScrollTop = preserveMmbRoot
+    ? document.querySelector(`.pane[data-pane="${index}"] .list-wrap`)?.scrollTop || 0
+    : 0;
   panes[index] = newPaneState(image);
   const pane = panes[index];
+  if (preserveMmbRoot) pane.mmbScrollTop = preservedScrollTop;
   const requestToken = ++pane.requestToken;
   renderPane(index);
   if (image.kind === "mmb") {
-    const [data, menu] = await Promise.all([
+    const [data, menu, capacity] = await Promise.all([
       api(`/api/images/${image.id}/slots`),
       api(`/api/images/${image.id}/menu/detected`).catch(() => ({ detected: false })),
+      fetchCapacity(image.id),
     ]);
     if (panes[index] !== pane || pane.requestToken !== requestToken) return;
     pane.entries = data.slots;
+    pane.capacity = capacity;
     pane.menuDetected = Boolean(menu.detected);
     pane.menuDetectionPending = false;
     pane.description = "Select a disk to browse its DFS catalogue";
     pane.loading = false;
+    if (preserveMmbRoot) {
+      const available = new Set(pane.entries.map(entry => String(entry.slot)));
+      setSelection(pane, preservedSelection.filter(key => available.has(key)), preservedAnchor);
+    }
     renderPane(index);
+    if (preserveMmbRoot) {
+      const list = document.querySelector(`.pane[data-pane="${index}"] .list-wrap`);
+      if (list) list.scrollTop = preservedScrollTop;
+    }
   } else {
     await loadDirectory(index);
   }
@@ -2255,13 +2404,17 @@ async function loadDirectory(index, preserveSelection = false) {
     const query = new URLSearchParams({ path: pane.path });
     if (pane.slot !== null) query.set("slot", pane.slot);
     if (pane.side !== null) query.set("side", pane.side);
-    const data = await api(`/api/images/${pane.image.id}/tree?${query}`);
+    const [data, capacity] = await Promise.all([
+      api(`/api/images/${pane.image.id}/tree?${query}`),
+      fetchCapacity(pane.image.id, pane.slot),
+    ]);
     if (
       panes[index] !== pane || pane.requestToken !== requestToken ||
       pane.image.id !== requested.image || pane.slot !== requested.slot ||
       pane.side !== requested.side || pane.path !== requested.path
     ) return;
     pane.entries = data.entries;
+    pane.capacity = capacity;
     pane.description = data.description;
     if (preserveSelection) setSelection(pane, selected, selectionAnchor);
   } catch (error) {
@@ -2279,17 +2432,43 @@ function navigate(index, path) {
   return loadDirectory(index);
 }
 
+function removePane(index) {
+  const pane = panes[index];
+  if (!pane) return;
+  const imageName = pane.image?.name;
+  panes.splice(index, 1);
+  rebuildPaneHosts();
+  rememberOpenPanes();
+  if (imageName) toast(`${imageName} closed · its working copy remains available in Recovery.`);
+}
+
 async function closePane(index) {
   const pane = panes[index];
   if (!pane) return;
   if (panes.some(item => item.loading || item.actionPending)) {
     return toast("Wait for current pane operations to finish before closing a pane.", true);
   }
-  const imageName = pane.image?.name;
-  panes.splice(index, 1);
-  rebuildPaneHosts();
-  rememberOpenPanes();
-  if (imageName) toast(`${imageName} closed · its working copy remains available in Recovery.`);
+  if (!pane.image?.dirty) {
+    removePane(index);
+    return;
+  }
+  let closeAction = "save";
+  showModal(`
+    <h2>Save ${esc(pane.image.name)} before closing?</h2>
+    <p>This working image contains changes. Save a timestamped image and README ZIP now, discard the download, or cancel and keep the pane open.</p>
+    <div class="help-note"><strong>Recovery remains available:</strong> closing a pane does not delete its private server-side working copy.</div>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button danger" data-close-without-saving value="discard">Close without saving</button><button class="button primary" value="save">Save and close</button></div>`,
+  async () => {
+    if (closeAction === "discard") {
+      removePane(index);
+      return;
+    }
+    if (!await saveImage(index)) return false;
+    removePane(index);
+  });
+  modalContent.querySelector("[data-close-without-saving]").onclick = () => {
+    closeAction = "discard";
+  };
 }
 
 function beginImageRename(index) {
@@ -2393,16 +2572,22 @@ function renameSelected(index) {
 function deleteSelected(index) {
   const pane = panes[index];
   const entry = selectedEntry(index);
-  if (!entry) return;
   const isSlot = pane.image.kind === "mmb" && pane.slot === null;
+  const slotEntries = isSlot
+    ? selectedEntries(index).filter(item => item.type === "disk" && item.formatted)
+    : [];
+  if ((!isSlot && !entry) || (isSlot && !slotEntries.length)) return;
+  const diskLabel = slotEntries.length === 1
+    ? `disk ${slotEntries[0].slot} · ${esc(slotEntries[0].name)}`
+    : `${slotEntries.length} selected disks`;
   showModal(`
-    <h2>${isSlot ? `Eject disk ${entry.slot}?` : `Delete ${esc(entry.name)}?`}</h2>
-    <p>${isSlot ? "The slot catalogue entry and its 200 KiB disk data will be cleared." : `This removes the ${entry.type === "dir" ? "directory and everything inside it" : "file"} from the working image.`} Your original image remains untouched.</p>
-    <div class="modal-actions"><button class="button ghost" value="cancel">Keep it</button><button class="button danger" value="delete">${isSlot ? "Eject disk" : "Delete"}</button></div>`,
+    <h2>${isSlot ? `Eject ${diskLabel}?` : `Delete ${esc(entry.name)}?`}</h2>
+    <p>${isSlot ? "Each selected slot catalogue entry and its 200 KiB disk data will be cleared." : `This removes the ${entry.type === "dir" ? "directory and everything inside it" : "file"} from the working image.`} Your original image remains untouched.</p>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Keep it</button><button class="button danger" value="delete">${isSlot ? `Eject ${slotEntries.length} disk${slotEntries.length === 1 ? "" : "s"}` : "Delete"}</button></div>`,
   async () => {
     const endpoint = isSlot ? `/api/images/${pane.image.id}/slots/clear` : `/api/images/${pane.image.id}/delete`;
     const body = isSlot
-      ? { slot: entry.slot }
+      ? { slots: slotEntries.map(item => item.slot) }
       : { slot: pane.slot, side: pane.side, path: fullPath(pane.path, entry.name), recursive: entry.type === "dir" };
     const data = await api(endpoint, {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -3116,23 +3301,12 @@ async function saveImage(index) {
       () => api(`/api/images/${pane.image.id}/download/prepare`, { method: "POST" })
     );
     pane.image = data.image;
-    let downloadFrame = document.querySelector('iframe[name="acorn-download-frame"]');
-    if (!downloadFrame) {
-      downloadFrame = document.createElement("iframe");
-      downloadFrame.name = "acorn-download-frame";
-      downloadFrame.hidden = true;
-      document.body.append(downloadFrame);
-    }
-    const link = document.createElement("a");
-    link.href = `/api/images/${pane.image.id}/download`;
-    link.target = downloadFrame.name;
-    link.hidden = true;
-    document.body.append(link);
-    link.click();
-    link.remove();
-    toast("Timestamped image and README ZIP is ready…");
+    window.location.assign(`/api/images/${pane.image.id}/download`);
+    toast("Timestamped image and README ZIP download started.");
+    return true;
   } catch (error) {
     toast(`Could not save ${pane.image.name}: ${error.message}`, true);
+    return false;
   }
 }
 
@@ -3299,6 +3473,8 @@ function createBlankMmbDisk(index, diskFormat) {
     );
     refreshSelectionDisplay(index);
     toast(`Blank ${diskFormat.toUpperCase()} inserted into slot${data.slots.length > 1 ? "s" : ""} ${data.slots.join(" and ")}`);
+    (data.warnings || []).forEach(message => toast(message, true));
+    if (data.metadata) maybeReviewInsertedMenu(index, data.metadata);
   });
 }
 
@@ -3364,6 +3540,23 @@ const ONLINE_MACHINES = [
   ["electron", "Acorn Electron"], ["archimedes", "Acorn Archimedes"],
   ["risc-os", "RISC OS"]
 ];
+const ONLINE_MACHINE_STORAGE_KEY = "acorn-file-forge-online-machine";
+const ACTIVE_PROFILE_STORAGE_KEY = "acorn-file-forge-active-hardware-profile";
+
+function storedOnlineMachine() {
+  try {
+    const value = localStorage.getItem(ONLINE_MACHINE_STORAGE_KEY) || "";
+    return ONLINE_MACHINES.some(([machine]) => machine === value) ? value : "";
+  } catch (_error) {
+    return "";
+  }
+}
+
+function rememberOnlineMachine(value) {
+  if (ONLINE_MACHINES.some(([machine]) => machine === value)) {
+    localStorage.setItem(ONLINE_MACHINE_STORAGE_KEY, value);
+  }
+}
 
 function onlineMachineFromProfile(profile = {}) {
   const configured = String(profile.catalogMachine || "").toLowerCase();
@@ -3378,9 +3571,26 @@ function onlineMachineFromProfile(profile = {}) {
   return "";
 }
 
+function activeWorkbenchProfile(profiles = storedCollection(PROFILE_STORAGE_KEY, BUILTIN_PROFILES)) {
+  const requested = Number.parseInt(localStorage.getItem(ACTIVE_PROFILE_STORAGE_KEY) || "0", 10);
+  const index = Number.isInteger(requested) && requested >= 0 && requested < profiles.length
+    ? requested
+    : 0;
+  return { index, profile: profiles[index] || BUILTIN_PROFILES[0] };
+}
+
+function setActiveWorkbenchProfile(index, profile) {
+  localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, String(index));
+  rememberOnlineMachine(onlineMachineFromProfile(profile) || "all");
+}
+
 function defaultOnlineMachine(pane) {
   const profileMachine = onlineMachineFromProfile(pane.image?.hardwareProfile);
   if (profileMachine) return profileMachine;
+  const workbenchProfileMachine = onlineMachineFromProfile(activeWorkbenchProfile().profile);
+  if (workbenchProfileMachine) return workbenchProfileMachine;
+  const workbenchMachine = storedOnlineMachine();
+  if (workbenchMachine) return workbenchMachine;
   const hardware = String(pane.image?.targetHardware || "").toLowerCase();
   if (hardware.includes("electron")) return "electron";
   if (hardware.includes("risc")) return "risc-os";
@@ -3402,7 +3612,7 @@ async function showOnlineSources(index) {
   </fieldset>`).join("");
   const closed = showModal(`<div class="modal-heading"><span class="modal-kicker">ONLINE LIBRARY</span><h2>Catalogue sources</h2><p>Enable, disable or relocate a provider. Provider settings contain its query templates, categories and machine IDs, so site changes can be handled without changing application code.</p></div>
     <div class="online-source-list">${rows}</div>
-    <fieldset class="online-new-source"><legend>Add a compatible provider</legend><label>Name<input name="newName" placeholder="My Acorn archive"></label><label>URL<input name="newUrl" type="url" placeholder="https://…"></label><label>Loading strategy<select name="newLoader"><option value="page">Single page</option><option value="category-crawl">Category crawl</option><option value="machine-index">Machine indexes</option></select></label><label>Page layout<select name="newParser"><option value="thumbnail-cards">Thumbnail cards</option><option value="section-catalogue">Section catalogue</option><option value="function-calls">Function-call records</option><option value="item-rows">Linked item rows</option><option value="zip-links">ZIP download links</option><option value="package-paragraphs">Package paragraphs</option><option value="links">Plain links</option></select></label><label>Machines<input name="newMachines" placeholder="bbc-b,electron"></label><label class="online-provider-options">Provider settings (JSON)<textarea name="newOptions" rows="5">{}</textarea></label></fieldset>
+    <fieldset class="online-new-source"><legend>Add a compatible provider</legend><label>Name<input name="newName" placeholder="My Acorn archive"></label><label>URL<input name="newUrl" type="url" placeholder="https://…"></label><label>Loading strategy<select name="newLoader"><option value="page">Single page</option><option value="category-crawl">Category crawl</option><option value="machine-index">Machine indexes</option></select></label><label>Page layout<select name="newParser"><option value="thumbnail-cards">Thumbnail cards</option><option value="section-catalogue">Section catalogue</option><option value="function-calls">Function-call records</option><option value="item-rows">Linked item rows</option><option value="query-media-tiles">Media links in query parameters</option><option value="html-cards">Configurable HTML cards</option><option value="zip-links">ZIP download links</option><option value="package-paragraphs">Package paragraphs</option><option value="links">Plain links</option></select></label><label>Machines<input name="newMachines" placeholder="bbc-b,electron"></label><label class="online-provider-options">Provider settings (JSON)<textarea name="newOptions" rows="5">{}</textarea></label></fieldset>
     <div class="modal-actions"><button class="button" type="button" data-back-library>Back</button><button class="button primary" type="submit">Save sources</button></div>`, async form => {
       const sources = data.sources.map((source, offset) => ({
         id: form.get(`id-${offset}`), name: form.get(`name-${offset}`), url: form.get(`url-${offset}`),
@@ -3504,12 +3714,12 @@ async function showOnlineLibrary(index) {
     resultHost.querySelectorAll('[name="catalogItem"]').forEach(input => input.onchange = () => { installButton.disabled = !resultHost.querySelector('[name="catalogItem"]:checked'); });
     installButton.disabled = !resultHost.querySelector('[name="catalogItem"]:checked');
   };
-  const runSearch = async () => {
+  const runSearch = async (requestedMachine = null) => {
     searchButton.disabled = true; installButton.disabled = true;
     status.textContent = "Contacting enabled catalogues…";
     resultHost.innerHTML = '<div class="online-loading">Searching the Online Library…</div>';
     try {
-      const parameters = new URLSearchParams({ q: modalContent.querySelector('[name="query"]').value, machine: modalContent.querySelector('[name="machine"]').value, scope: modalContent.querySelector('[name="scope"]').value, path: pane.path });
+      const parameters = new URLSearchParams({ q: modalContent.querySelector('[name="query"]').value, machine: requestedMachine || modalContent.querySelector('[name="machine"]').value, scope: modalContent.querySelector('[name="scope"]').value, path: pane.path });
       if (pane.slot !== null) parameters.set("slot", pane.slot);
       const data = await api(`/api/images/${pane.image.id}/catalog/search?${parameters}`);
       resultItems = data.items.filter(item => item.downloadable);
@@ -3521,10 +3731,10 @@ async function showOnlineLibrary(index) {
       status.textContent = "Search failed"; resultHost.innerHTML = `<div class="help-warning">${esc(error.message)}</div>`;
     } finally { searchButton.disabled = false; }
   };
-  searchButton.onclick = runSearch;
+  searchButton.onclick = () => runSearch();
   modalContent.querySelector(".online-sources").onclick = () => showOnlineSources(index);
   modalContent.querySelector('[name="query"]').onkeydown = event => { if (event.key === "Enter") { event.preventDefault(); runSearch(); } };
-  runSearch();
+  runSearch(machine);
 }
 
 async function insertSessionIntoSlot(index, slot, source) {
@@ -3537,6 +3747,7 @@ async function insertSessionIntoSlot(index, slot, source) {
     pane.image = data.image;
     await acceptImage(index, pane.image);
     toast(`Disk inserted into slot${data.slots.length > 1 ? "s" : ""} ${data.slots.join(" and ")}`);
+    (data.warnings || []).forEach(message => toast(message, true));
     if (data.metadata) maybeReviewInsertedMenu(index, data.metadata);
   } catch (error) { toast(error.message, true); }
 }
@@ -5036,10 +5247,10 @@ function showHelp() {
                 <li>The target is disabled when it does not apply, fixed to BeebSCSI for DAT/DSC, and fixed to Archimedes / RISC OS for HDF or RAW. Normal ADFS S/M/L floppies retain a target choice because their geometry can be used by several Acorn systems.</li>
                 <li>MMB has no bank-wide disk title, so that field is disabled. Titles belong to the individual disks you create or insert in its slots.</li>
                 <li>Select <strong>Create image</strong>. The formatted image opens immediately as an editable working copy.</li>
-                <li>Add content, then use <strong>Save image</strong> to download it.</li>
+                <li>Add content, then use the <strong>Save Image</strong> button in the pane heading to download it.</li>
               </ol>
             </div>
-            <div class="help-note"><strong>Replacing an open image:</strong> use the ↗ button in the pane heading. If the current working copy has unsaved edits, confirm only after downloading it or deciding to discard it.</div>
+            <div class="help-note"><strong>Pane heading actions:</strong> after the orange changed indicator, the buttons create a New Blank Image, Load New Image, Save Image, Refresh View, and Close Pane. The × close button offers Save and close, Close without saving, or Cancel whenever the image has changes.</div>
             <h4>Which new format should I choose?</h4>
             <div class="help-table-wrap"><table class="help-table">
               <thead><tr><th>Format</th><th>Best used for</th><th>Important limit</th></tr></thead>
@@ -5063,10 +5274,11 @@ function showHelp() {
               <li>Use the numbered grip at the left of a pane heading and drag it onto another pane to swap their positions.</li>
               <li>The complete pane moves with its image, current directory or MMB slot, selection and scroll position.</li>
               <li>An empty pane is a convenient scratch area for creating an SSD, DSD, MMB, ADFS floppy, BeebSCSI DAT/DSC pair or other supported image.</li>
-              <li>Select × at the top-right to close that whole pane. The server working copy remains available through Recovery.</li>
+              <li>Select × at the top-right to close that whole pane. Save changed images from the prompt, deliberately close without saving a download, or cancel. The server working copy remains available through Recovery.</li>
               <li>The current pane count, order and open images are remembered across a normal page refresh. A completely fresh workspace starts with one pane.</li>
             </ol>
             <div class="help-note"><strong>Two different drag handles:</strong> drag the numbered grip to rearrange panes. Drag file rows, MMB slots or a supported image heading to transfer content between images.</div>
+            <div class="help-note"><strong>Free-space meter:</strong> the lower-right bar uses the image filesystem's real allocation data. Green means under 70% used, orange means 70% or more, and red means 90% or more. Hover over it for used, free and total values. An MMB root counts disk slots; opening one of its disks switches the meter to that slot's DFS bytes. UEF tapes have no fixed free-space capacity and show a neutral striped meter.</div>
             <h4>Navigate an image</h4>
             <ol>
               <li>Double-click a directory to enter it. Double-click a file to download that file.</li>
@@ -5161,7 +5373,7 @@ function showHelp() {
                 <li>Use <strong>Add file</strong>, or drag selected files from another pane.</li>
                 <li>Review shortened names and Acorn load/execute addresses before confirming each import.</li>
                 <li>Use <strong>Edit</strong> to rename, move between DFS directory prefixes, lock or delete files.</li>
-                <li>Use <strong>Tools → Check filesystem</strong>, optionally compact it, then <strong>Save image</strong>.</li>
+                <li>Use <strong>Tools → Check filesystem</strong>, optionally compact it, then select <strong>Save Image</strong> in the pane heading.</li>
               </ol>
             </div>
             <h4>DFS rules enforced by the app</h4>
@@ -5182,7 +5394,7 @@ function showHelp() {
               <li>Open an HFE normally, or create an HFE-wrapped DFS/ADFS floppy from <strong>Create new disk image</strong>.</li>
               <li>Check the opening warning. A clean HFE v1 disk is editable through the usual file tools.</li>
               <li>HFE v2/v3, weak-bit, bad-sector, protected or advanced timing images open as a clearly labelled read-only safe view. Export or drag files from them without changing their tracks.</li>
-              <li>For an editable HFE, make the required changes and select <strong>Save image</strong>.</li>
+              <li>For an editable HFE, make the required changes and select <strong>Save Image</strong> in the pane heading.</li>
               <li>The app writes changed sectors into a copy of the original track layout, decodes that result, and compares every sector with the working filesystem. A mismatch blocks the download and leaves the original HFE intact.</li>
             </ol>
             <div class="help-note"><strong>What the pane shows:</strong> the format badge reads HFE, while the directory rules, sides and capacity come from its decoded DFS or ADFS filesystem. Advanced images show <strong>Read-only safe view</strong> and hide editing, compaction and menu-writing controls.</div>
@@ -5190,12 +5402,12 @@ function showHelp() {
           </section>
           <section id="help-mmb">
             <h3>MMB disk banks: slots and embedded disks</h3>
-            <figure><img src="/help/mmb-actions.png" alt="MMB Add disk, Slot and Menu dropdowns"><figcaption>Every physical slot is listed. Add disk creates or inserts media, Slot changes the selected slots, and Menu manages the Universal Menu.</figcaption></figure>
+            <figure><img src="/help/mmb-actions.png" alt="MMB Slot and Menu dropdowns"><figcaption>Every physical slot is listed. Slot contains the Add disk submenu and selected-slot actions; Menu manages the installed menu program.</figcaption></figure>
             <div class="help-task">
               <h4>Insert SSD, DSD or HFE image files and ZIP distributions</h4>
               <ol>
                 <li>Select the first empty destination slot.</li>
-                <li>Open <strong>Add disk → Insert SSD / DSD / HFE / ZIP</strong>.</li>
+                <li>Open <strong>Slot → Add disk → Insert SSD / DSD / HFE / ZIP</strong>.</li>
                 <li>Select one or several SSD/DSD/HFE files, or ZIP files containing them. Every supported ZIP member is imported in archive order and unrelated documentation or artwork is ignored.</li>
                 <li>A DSD needs two adjacent empty slots. Its two sides occupy two SSD-sized MMB slots.</li>
                 <li>Review the allocation message and, if a menu is installed, review or skip each offered menu entry.</li>
@@ -5205,9 +5417,19 @@ function showHelp() {
               <h4>Create a blank writable disk in a slot</h4>
               <ol>
                 <li>Select an empty slot.</li>
-                <li>Choose <strong>Add disk → Create blank SSD here</strong> or <strong>Create blank DSD here</strong>.</li>
+                <li>Choose <strong>Slot → Add disk → Create blank SSD here</strong> or <strong>Create blank DSD here</strong>.</li>
                 <li>Enter the disk title and choose whether it is read/write.</li>
                 <li>Select <strong>Create and insert</strong>. Blank formatted disks are useful for saved games and user data.</li>
+              </ol>
+            </div>
+            <div class="help-task">
+              <h4>Import a disk that is already open in another pane</h4>
+              <ol>
+                <li>Open an SSD, DSD, DFS-formatted HFE, or an individual disk inside another MMB pane.</li>
+                <li>In the destination MMB, return to <strong>All disks</strong> and select one empty slot.</li>
+                <li>Choose <strong>Slot → Add disk → Import from open &lt;filename&gt;</strong>. Each other open image has its own entry. The visible SSD/DSD image title becomes the destination slot title; an MMB source keeps its existing slot title.</li>
+                <li>Entries for incompatible ADFS filesystems or an MMB still showing <strong>All disks</strong> are disabled and explain why. MMB can contain DFS disk sectors only.</li>
+                <li>Review any installed-menu metadata offered after the disk is inserted. A DSD still requires two adjacent empty slots.</li>
               </ol>
             </div>
             <div class="help-task">
@@ -5226,7 +5448,7 @@ function showHelp() {
                 <li>Use <strong>Slot → Rename disk title</strong> for a single disk.</li>
                 <li>Use <strong>Mark read-only</strong> or <strong>Mark read / write</strong> for every selected formatted disk.</li>
                 <li>Drag one disk onto another position in the same MMB to move or swap it. Drag several selected disks onto an empty slot to move the batch.</li>
-                <li>Use <strong>Slot → Eject disk</strong> to clear the selected slot after confirmation. Ejecting removes both its catalogue entry and disk data from the working MMB.</li>
+                <li>Select one or several formatted slots, then use <strong>Slot → Eject selected disks</strong>. One confirmation clears every selected catalogue entry and its disk data. The list keeps its selection area and scroll position after slot actions.</li>
               </ol>
             </div>
             <div class="help-note"><strong>Empty slots are intentional:</strong> they stay visible so images can be dropped precisely. An unformatted empty slot has no read-only/read-write state.</div>
@@ -5237,12 +5459,13 @@ function showHelp() {
             <p class="help-lead">The Online Library uses the same format checks, metadata review, undo point and menu workflow as a file selected from your computer. A link is never treated as an installable image unless its source provides a direct supported download.</p>
             <div class="help-task"><h4>Add disks to an MMB</h4><ol>
               <li>Open the MMB at <strong>All disks</strong>. Optionally select one or more empty slots.</li>
-              <li>Choose <strong>Find Discs</strong>. Its initial machine comes from the Workbench profile applied to this pane. Change it when this search needs another machine, then search by title, publisher or keyword. Leave the search blank to browse the current catalogue page.</li>
+              <li>Choose <strong>Find Discs</strong>. Its initial machine comes from the Workbench profile applied to this pane, or the remembered active Workbench profile when the pane has none. Change it when this search needs another machine, then search by title, publisher or keyword. Leave the search blank to browse the current catalogue page. Search results remain installable for one hour and survive a normal app restart.</li>
               <li>Select the <strong>Title</strong>, <strong>Publisher</strong>, <strong>Year</strong> or <strong>Source</strong> heading to sort. The active heading shows ↑ for ascending or ↓ for descending; select it again to reverse the order. Checked results stay selected while sorting.</li>
               <li>Use <strong>Not already present</strong> to hide likely matches found by disk title or remembered distribution filename. This is a helpful duplicate check, not a checksum guarantee.</li>
               <li>Select several downloadable results. If you did not select empty slots, set a starting slot; the app finds the next suitable empty run and wraps around safely. DSD images still require two adjacent slots.</li>
               <li>Leave <strong>Offer installed disks to the detected menu</strong> selected to review the title, publisher, launcher, action and PAGE after insertion. Clear it for intentionally off-menu disks.</li>
               <li>During a multi-item install, <strong>Abort operation</strong> stops before the next download. The item already in progress finishes at a safe image boundary.</li>
+              <li>If an archive contains the same release as both SSD and UEF, the native SSD is selected once. Installing into a blank SSD adopts its catalogue and title; shortened SSD files are safely padded to the target's standard geometry.</li>
             </ol></div>
             <div class="help-task"><h4>Add files or applications to an open disk</h4><ol>
               <li>Open an SSD/DSD disk, an MMB slot, an ADFS directory, or a RISC OS image and choose <strong>Online Library</strong>.</li>
@@ -5251,9 +5474,10 @@ function showHelp() {
               <li>RISC OS Open packages install only into ADFS/RISC OS images. Application directories are retained, package-control files are omitted, and SparkFS load, execute and filetype metadata is preserved.</li>
             </ol></div>
             <h4>Sources, availability and safety</h4><ul>
-              <li>Built-in sources are the Complete BBC Micro Games Archive, every public media category in Acorn Electron World, Every Game Going, 8-Bit Software, and the official plus third-party RISC OS Open package feeds.</li>
+              <li>Built-in sources are the Complete BBC Micro Games Archive, every public media category in Acorn Electron World, Every Game Going, 8-Bit Software, 0xC0DE and community Electron SSD projects, cautious itch.io Acorn searches, and the official plus third-party RISC OS Open package feeds.</li>
               <li>Professional, public-domain, companion, EUG, featured, unfinished and unreleased Electron World categories are indexed. DVD-only entries and records without a supported public download are omitted.</li>
               <li>Every Game Going maps BBC B, B+, Master 128/Compact, Electron and Archimedes A3000 machine IDs from provider settings. Each matching item page is checked for actual downloadable media before it is displayed.</li>
+              <li>itch.io uses the selected workbench machine to search for BBC Micro, BBC Master, Acorn Electron, Acorn Archimedes or RISC OS software. Unrelated acorn-themed games are suppressed: a project is displayed only after its page is found to contain a supported Acorn disk or tape upload. A fresh short-lived download is requested when Install is selected.</li>
               <li>Choose <strong>Sources…</strong> to edit a provider's URL, loading strategy, page layout, category roots, query templates, machine IDs, validation limit and cache settings. The engine applies generic configured stages and never branches on a catalogue name. The editable JSON is stored in <code>catalog-sources.json</code>.</li>
               <li>Downloads are size-limited, cached briefly and checked for ZIP path traversal. A failed source is reported below the usable results instead of cancelling the complete search.</li>
             </ul>
@@ -5300,7 +5524,7 @@ function showHelp() {
               <li>In the pairing dialog, the chosen file is already retained. Select only the missing companion.</li>
               <li>Confirm that both base names match, for example <code>SCSI0.dat</code> and <code>SCSI0.dsc</code>, then select <strong>Open DAT + DSC</strong>.</li>
               <li>Traverse, create, add, rename, move, lock and delete content using the normal ADFS controls.</li>
-              <li>Select <strong>Save image</strong>. The application streams a hardware-ready ZIP containing <code>BeebSCSI0/scsi0.dat</code> and <code>BeebSCSI0/scsi0.dsc</code>.</li>
+              <li>Select <strong>Save Image</strong> in the pane heading. The application streams a hardware-ready ZIP containing <code>BeebSCSI0/scsi0.dat</code> and <code>BeebSCSI0/scsi0.dsc</code>.</li>
               <li>Extract the ZIP into the root of the BeebSCSI SD card. Keep the <code>BeebSCSI0</code> directory itself. The firmware does not look for DAT/DSC files directly in the SD-card root.</li>
             </ol>
             <div class="help-note"><strong>Why the target matters:</strong> official 8-bit ADFS requires matching <code>Hugo</code> directory headers, footers and parent sequence copies. An edited old-map volume must also receive a new two-byte disc ID, otherwise ADFS can retain state belonging to the original volume and report <em>Broken directory</em> or <em>Disc changed</em>. The BeebSCSI target performs those checks, advances the disc ID and rebuilds its map checksum before download.</div>
@@ -5550,7 +5774,7 @@ function showHelp() {
             </ol></div>
             <div class="help-task"><h4>Profiles, recipes and projects</h4><ol>
               <li>Choose <strong>Workbench → Hardware profiles</strong>. Start from Electron Plus 3, BBC MMFS, BeebSCSI, Master ADFS or RISC OS, choose its Online Library filter, then save or apply the profile to an open image.</li>
-              <li>A profile records machine, Online Library filter, filing system, MMFS build, Tube state, expected PAGE and validation target. The applied filter becomes the default for that pane's next Online Library search, where it can still be changed normally.</li>
+              <li>A profile records machine, Online Library filter, filing system, MMFS build, Tube state, expected PAGE and validation target. An applied profile controls that pane. The active Workbench profile is remembered and becomes the workspace default for panes without an applied profile. On first use this is Electron Plus 3. Selecting, saving or applying another profile changes the default, and Find Discs and Online Library use it on their very first search.</li>
               <li>Choose <strong>Import recipes</strong> to save naming, group prefix, online metadata, compatibility and menu choices. Saved recipes appear in the MMB-to-ADFS planner.</li>
               <li>Choose <strong>Portable project</strong> to export the current pane order, session references, paths, profiles, recipes and theme. Import it on the same retained installation to restore the working context.</li>
             </ol></div>
@@ -5568,7 +5792,7 @@ function showHelp() {
               <h4>Keep your changes</h4>
               <ol>
                 <li>Look for the orange changed dot in the pane heading.</li>
-                <li>Select <strong>Save image</strong> or <strong>Save MMB</strong>.</li>
+                <li>Select the <strong>Save Image</strong> icon in the pane heading.</li>
                 <li>The app validates and finalises the working copy before starting the download. Any failure remains inside the app instead of replacing the page with a JSON response.</li>
                 <li>Every save is a ZIP named with the image name and current date/time. This avoids duplicate <code>-edited</code> downloads.</li>
                 <li>Every ZIP contains <code>README.md</code> with checksums, target hardware, compatibility warnings, practical restore notes and a complete catalogue. MMB documentation includes all 511 slots, including empty slots, access state and each disk's DFS files.</li>
@@ -5579,7 +5803,7 @@ function showHelp() {
             <div class="help-task">
               <h4>Recover after a refresh or interrupted download</h4>
               <ol>
-                <li>Use any empty pane. If none is displayed, select <strong>Add Pane</strong>. If three are occupied, close one after saving or use its ↗ heading button to open a replacement.</li>
+                <li>Use any empty pane. If none is displayed, select <strong>Add Pane</strong>. If three are occupied, close one after saving or use its <strong>Load New Image</strong> heading button to open a replacement.</li>
                 <li>Select <strong>Recover previous session</strong>.</li>
                 <li>Choose the retained working image. The newest session is selected first and each entry shows its name, size and last-change time.</li>
                 <li>Select <strong>Recover session</strong>. Completed edits, the DAT/DSC pairing and the target-hardware profile are restored.</li>
@@ -5599,7 +5823,7 @@ function showHelp() {
             <div class="help-task">
               <h4>Close or discard a working image</h4>
               <ol>
-                <li>Select × in the pane heading, or on an empty pane, to remove that whole pane from the workspace. This only detaches an image and keeps its server-side working copy.</li>
+                <li>Select × in the pane heading, or on an empty pane, to remove that whole pane from the workspace. A changed image offers Save and close, Close without saving, or Cancel. Closing only detaches the image and keeps its server-side working copy.</li>
                 <li>Use <strong>Recover previous session</strong> to reopen the image with its completed changes.</li>
                 <li>To remove retained storage permanently, use <strong>Clear selected</strong> in the recovery dialog and confirm the deletion.</li>
               </ol>
@@ -5991,6 +6215,7 @@ async function importProjectFile(file) {
 
 function renderWorkbench(section = "profiles") {
   const profiles = storedCollection(PROFILE_STORAGE_KEY, BUILTIN_PROFILES);
+  const activeProfile = activeWorkbenchProfile(profiles);
   const recipes = storedCollection(RECIPE_STORAGE_KEY, []);
   const imageOptions = panes.map((pane, index) => pane.image ? `<option value="${index}">${esc(paneLabel(index))}</option>` : "").join("");
   showModal(`<div class="workbench-dialog"><header><div><small>ACORN FILE FORGE</small><h2>Workbench</h2></div><select name="workbenchSection"><option value="profiles" ${section === "profiles" ? "selected" : ""}>Hardware profiles</option><option value="recipes" ${section === "recipes" ? "selected" : ""}>Import recipes</option><option value="project" ${section === "project" ? "selected" : ""}>Portable project</option></select></header>
@@ -6003,14 +6228,14 @@ function renderWorkbench(section = "profiles") {
     );
   }
   modalContent.querySelector('[name="workbenchSection"]').onchange = event => renderWorkbench(event.target.value);
-  if (section === "profiles") wireProfileWorkbench(profiles);
+  if (section === "profiles") wireProfileWorkbench(profiles, activeProfile.index);
   if (section === "recipes") wireRecipeWorkbench(recipes);
   modalContent.querySelector("[data-export-project]")?.addEventListener("click", () => downloadDocument(`acorn-file-forge-${new Date().toISOString().replace(/[:.]/g, "-")}.aff-project.json`, JSON.stringify(projectDocument(), null, 2)));
   modalContent.querySelector("[data-import-project]")?.addEventListener("change", async event => { try { await importProjectFile(event.target.files[0]); modal.close(); } catch (error) { toast(error.message, true); } });
 }
 
-function wireProfileWorkbench(profiles) {
-  let selectedIndex = 0;
+function wireProfileWorkbench(profiles, initialIndex = 0) {
+  let selectedIndex = initialIndex;
   const fill = profile => {
     modalContent.querySelector('[name="profileName"]').value = profile.name || "";
     modalContent.querySelector('[name="profileMachine"]').value = profile.machine || "";
@@ -6022,16 +6247,31 @@ function wireProfileWorkbench(profiles) {
     modalContent.querySelector('[name="profileTube"]').checked = Boolean(profile.tube);
   };
   const read = () => ({ name: modalContent.querySelector('[name="profileName"]').value.trim() || "My Acorn setup", machine: modalContent.querySelector('[name="profileMachine"]').value.trim(), catalogMachine: modalContent.querySelector('[name="profileCatalogMachine"]').value, filingSystem: modalContent.querySelector('[name="profileFs"]').value.trim(), targetHardware: modalContent.querySelector('[name="profileTarget"]').value, mmfsBuild: modalContent.querySelector('[name="profileMmfs"]').value.trim(), page: modalContent.querySelector('[name="profilePage"]').value.trim(), tube: modalContent.querySelector('[name="profileTube"]').checked, menuType: "universal" });
-  modalContent.querySelectorAll("[data-profile-index]").forEach(button => button.onclick = () => { selectedIndex = Number(button.dataset.profileIndex); fill(profiles[selectedIndex]); });
-  modalContent.querySelector("[data-save-profile]").onclick = () => { profiles[selectedIndex] = read(); saveCollection(PROFILE_STORAGE_KEY, profiles); renderWorkbench("profiles"); toast("Hardware profile saved"); };
+  modalContent.querySelectorAll("[data-profile-index]").forEach(button => button.onclick = () => {
+    selectedIndex = Number(button.dataset.profileIndex);
+    fill(profiles[selectedIndex]);
+    setActiveWorkbenchProfile(selectedIndex, profiles[selectedIndex]);
+  });
+  modalContent.querySelector('[name="profileCatalogMachine"]').onchange = event => rememberOnlineMachine(event.target.value);
+  modalContent.querySelector("[data-save-profile]").onclick = () => {
+    profiles[selectedIndex] = read();
+    setActiveWorkbenchProfile(selectedIndex, profiles[selectedIndex]);
+    saveCollection(PROFILE_STORAGE_KEY, profiles);
+    renderWorkbench("profiles");
+    toast("Hardware profile saved");
+  };
   modalContent.querySelector("[data-apply-profile]").onclick = async () => {
     const index = Number(modalContent.querySelector('[name="profilePane"]').value);
     const pane = panes[index]; const profile = read();
     const data = await api(`/api/images/${pane.image.id}/hardware-profile`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(profile) });
+    setActiveWorkbenchProfile(selectedIndex, profile);
     pane.image = data.image; renderPane(index); modal.close();
     toast(`${profile.name} applied to ${pane.image.name}${profile.tube ? " · Tube compatibility warnings enabled" : ""}`);
   };
-  if (profiles[0]) fill(profiles[0]);
+  if (profiles[selectedIndex]) {
+    fill(profiles[selectedIndex]);
+    setActiveWorkbenchProfile(selectedIndex, profiles[selectedIndex]);
+  }
 }
 
 function wireRecipeWorkbench(recipes) {

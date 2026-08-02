@@ -138,7 +138,13 @@ def create_app() -> Flask:
         checkpoint_session = getattr(g, "undo_checkpoint_session", None)
         checkpoint_token = getattr(g, "undo_checkpoint_token", None)
         if checkpoint_session is not None and checkpoint_token is not None:
-            service.finish_automatic_checkpoint(checkpoint_session, checkpoint_token)
+            try:
+                if response.status_code >= 400:
+                    service.rollback_automatic_checkpoint(checkpoint_session, checkpoint_token)
+                else:
+                    service.finish_automatic_checkpoint(checkpoint_session, checkpoint_token)
+            except Exception:
+                application.logger.exception("Could not finalise the automatic image checkpoint")
         response.headers["X-Acorn-Session-Owner"] = g.session_owner_id
         if getattr(g, "set_owner_cookie", False):
             response.set_cookie(

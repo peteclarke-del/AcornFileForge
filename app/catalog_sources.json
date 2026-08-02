@@ -79,6 +79,58 @@
     "options": {"loader": "page", "parser": "zip-links", "defaultPublisher": "8-Bit Software"}
   },
   {
+    "id": "0xc0de6502",
+    "name": "0xC0DE Electron projects",
+    "type": "configured",
+    "url": "https://0xc0de6502.github.io/",
+    "machines": ["electron"],
+    "enabled": true,
+    "direct": true,
+    "options": {
+      "loader": "page",
+      "parser": "query-media-tiles",
+      "mediaQueryParameter": "disk0",
+      "defaultPublisher": "0xC0DE and community",
+      "cacheSeconds": 86400
+    }
+  },
+  {
+    "id": "itch-acorn",
+    "name": "itch.io Acorn computer downloads",
+    "type": "configured",
+    "url": "https://itch.io/search",
+    "machines": ["bbc-b", "bbc-b-plus", "master", "electron", "archimedes", "risc-os"],
+    "enabled": true,
+    "direct": true,
+    "options": {
+      "loader": "page",
+      "parser": "html-cards",
+      "queryTemplate": "?q={machineQuery}+{query}",
+      "machineQueries": {
+        "bbc-b": "bbc micro",
+        "bbc-b-plus": "bbc micro",
+        "master": "bbc master",
+        "electron": "acorn electron",
+        "archimedes": "acorn archimedes",
+        "risc-os": "risc os acorn",
+        "all": "acorn computer"
+      },
+      "cardClass": "game_cell",
+      "titleClass": "game_title",
+      "descriptionClass": "game_text",
+      "publisherClass": "game_author",
+      "resolver": "upload-buttons",
+      "resolverOptions": {
+        "mediaExtensions": ["ssd", "dsd", "uef", "adf", "hfe"],
+        "archiveTerms": ["acorn electron", "bbc micro", "archimedes", "risc os"],
+        "requestTemplate": "{pageUrl}/file/{uploadId}?source=view_game&as_props=1"
+      },
+      "resultValidationLimit": 40,
+      "detailThreads": 6,
+      "cacheSeconds": 3600
+    }
+  },
+  {
     "id": "riscos-rool",
     "name": "RISC OS Open packages",
     "type": "configured",

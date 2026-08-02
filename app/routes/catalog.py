@@ -34,6 +34,20 @@ def _disk_members(filename: str, content: bytes) -> list[tuple[str, bytes]]:
     ]
 
 
+def _preferred_disk_members(filename: str, content: bytes) -> list[tuple[str, bytes]]:
+    """Keep every disk in the best available format, not duplicate tape variants."""
+    members = _disk_members(filename, content)
+    if not members:
+        return []
+    priority = {".ssd": 0, ".dsd": 1, ".hfe": 2, ".uef": 3}
+    best = min(priority.get(Path(name).suffix.lower(), 99) for name, _data in members)
+    return [
+        (name, data)
+        for name, data in members
+        if priority.get(Path(name).suffix.lower(), 99) == best
+    ]
+
+
 def _copy_disk_files(service: DiskService, source, target, target_slot, target_path, target_side):
     sides = [0, 2] if source.path.name.lower().endswith(".dsd") else [None]
     copied = 0
@@ -159,7 +173,7 @@ def create_catalog_blueprint(service: DiskService, work_dir: Path) -> Blueprint:
                     count = _install_riscos_package(service, target, target_path, content)
                     results.append({"id": item_id, "title": item["title"], "installed": count, "slots": [], "metadata": None})
                     continue
-                members = _disk_members(filename, content)
+                members = _preferred_disk_members(filename, content)
                 if not members:
                     raise DiskError("No supported SSD, DSD, HFE or UEF image was found in the download.")
                 for member_name, member_data in members:
@@ -191,7 +205,16 @@ def create_catalog_blueprint(service: DiskService, work_dir: Path) -> Blueprint:
                         destination = service.extract_image_to_adfs_directory(source, target, target_path, directory, create_directory=create_dir)
                         results.append({"id": item_id, "title": item["title"], "installed": 1, "path": destination, "slots": [], "metadata": None})
                     else:
-                        count = _copy_disk_files(service, source, target, target_slot, target_path, target_side)
+                        if service.replace_blank_dfs_image(
+                            target,
+                            source,
+                            member_name,
+                            target_slot=target_slot,
+                            target_path=target_path,
+                        ):
+                            count = len(service.list_directory(target, "$", None)["entries"])
+                        else:
+                            count = _copy_disk_files(service, source, target, target_slot, target_path, target_side)
                         results.append({"id": item_id, "title": item["title"], "installed": count, "slots": [], "metadata": None})
                     service.discard_session(source); source = None
             except DiskError as exc:
