@@ -115,7 +115,7 @@ def create_app() -> Flask:
             SESSION_OWNER.reset(token)
 
     application.register_blueprint(
-        create_images_blueprint(service, ROOT / "static")
+        create_images_blueprint(service, ROOT / "static", operations)
     )
     application.register_blueprint(create_files_blueprint(service, WORK_DIR, operations))
     application.register_blueprint(create_catalog_blueprint(service, WORK_DIR))

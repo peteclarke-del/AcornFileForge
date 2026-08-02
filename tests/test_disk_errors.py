@@ -82,6 +82,40 @@ class DiskErrorTests(unittest.TestCase):
             self.assertEqual(capacity["free"], 1)
             self.assertEqual(capacity["unit"], "slots")
 
+    def test_beebscsi_download_reports_preparation_phases(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            image = Path(folder) / "scsi0.dat"
+            descriptor = Path(folder) / "scsi0.dsc"
+            image.write_bytes(b"image")
+            descriptor.write_bytes(b"descriptor")
+            service = DiskService(folder)
+            session = ImageSession(
+                "e" * 32,
+                "scsi0.dat",
+                "adfs",
+                image,
+                descriptor_name="scsi0.dsc",
+                descriptor_path=descriptor,
+            )
+            progress = []
+            with (
+                patch.object(service, "_apply_target_hardware"),
+                patch.object(service, "_normalise_beebscsi_dat_size"),
+                patch.object(service, "_finalise_beebscsi_directories", return_value=0),
+                patch.object(service, "_advance_beebscsi_disc_id", return_value=False),
+                patch.object(service, "_validate_created_beebscsi_pair"),
+            ):
+                result = service.prepare_download(
+                    session,
+                    lambda message, current=None, total=None: progress.append(
+                        (message, current, total)
+                    ),
+                )
+
+            self.assertEqual(result, image)
+            self.assertEqual([item[1] for item in progress], [0, 1, 2, 3, 4, 5])
+            self.assertTrue(all(item[2] == 5 for item in progress))
+
     def test_image_rename_preserves_format_and_renames_descriptor_download(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             session_folder = Path(folder) / ("a" * 32)

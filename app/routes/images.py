@@ -15,12 +15,17 @@ from ..formats import (
     TAPE_EXTENSIONS,
 )
 from ..menu_service import best_distribution_filename
+from ..operations import OperationCancelled, OperationRegistry
 from ..readme_service import timestamped_archive_name, write_download_readme
 from ..streaming_zip import stream_stored_zip
 from .common import optional_int, payload
 
 
-def create_images_blueprint(service: DiskService, static_dir: Path) -> Blueprint:
+def create_images_blueprint(
+    service: DiskService,
+    static_dir: Path,
+    operations: OperationRegistry,
+) -> Blueprint:
     blueprint = Blueprint("images", __name__)
 
     @blueprint.get("/")
@@ -206,9 +211,26 @@ def create_images_blueprint(service: DiskService, static_dir: Path) -> Blueprint
 
     @blueprint.post("/api/images/<image_id>/download/prepare")
     def prepare_image_download(image_id):
+        data = payload()
+        operation_id = data.get("operationId")
         session = service.get(image_id)
-        service.prepare_download(session)
-        return jsonify(image=service.summary(session), ready=True)
+        if operation_id:
+            operations.start(operation_id, "Preparing image download")
+        try:
+            service.prepare_download(
+                session,
+                lambda message, current=None, total=None: operations.update(
+                    operation_id, message, current, total
+                ),
+            )
+            operations.finish(operation_id, "Image download is ready")
+            return jsonify(image=service.summary(session), ready=True)
+        except OperationCancelled as exc:
+            operations.cancelled(operation_id, str(exc))
+            raise
+        except Exception as exc:
+            operations.fail(operation_id, str(exc))
+            raise
 
     @blueprint.post("/api/images/<image_id>/convert")
     def convert_image(image_id):

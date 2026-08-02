@@ -226,6 +226,15 @@ Empty panes also have a top-right ×. If every pane is closed, **Add Pane**
 remains available in the header; a fresh browser workspace always begins with
 one pane.
 
+After image validation, Save starts a native timestamped ZIP download and
+opens a small confirmation dialog containing a direct **Download ZIP** link.
+If a browser suppresses the automatic handoff after a long DAT/DSC validation,
+use that link without returning to the work pane or risking the current session.
+Large saves show a foreground progress dialog while hardware checks, geometry,
+directory copies, the free-space map, and the final DAT/DSC pair are prepared.
+Once ZIP streaming begins, transfer progress moves to the browser's download
+panel so the application does not buffer a large image in memory.
+
 Click the image filename in any pane heading to rename the working image.
 Press Enter or click elsewhere to keep the new name, or press Escape to cancel.
 The media extension is preserved automatically, and a BeebSCSI DAT rename also

@@ -810,11 +810,23 @@ class DiskService:
             session.finalised_mtime_ns = session.path.stat().st_mtime_ns
             return True
 
-    def prepare_download(self, session: ImageSession) -> Path:
+    def prepare_download(
+        self,
+        session: ImageSession,
+        progress: Callable[[str, int | None, int | None], None] | None = None,
+    ) -> Path:
         """Finalise an image so the downloaded bytes are hardware-ready."""
+        report = progress or (lambda _message, _current=None, _total=None: None)
+        is_beebscsi = bool(
+            session.descriptor_path and session.path.suffix.lower() == ".dat"
+        )
+        total = 5 if is_beebscsi else 2
+        report("Applying the selected hardware profile", 0, total)
         self._apply_target_hardware(session)
-        if session.descriptor_path and session.path.suffix.lower() == ".dat":
+        if is_beebscsi:
+            report("Checking DAT size against the DSC geometry", 1, total)
             self._normalise_beebscsi_dat_size(session)
+            report("Checking old-ADFS directory copies", 2, total)
             repairs = self._finalise_beebscsi_directories(session)
             if repairs:
                 self._append_warning(
@@ -822,15 +834,23 @@ class DiskService:
                     f"Repaired {repairs} old-ADFS directory sequence field"
                     f"{'s' if repairs != 1 else ''} for 8-bit hardware.",
                 )
+            report("Updating the ADFS disc identity and map checksum", 3, total)
             if self._advance_beebscsi_disc_id(session):
                 self._append_warning(
                     session,
                     "Advanced the ADFS disc ID and rebuilt its map checksum so "
                     "8-bit ADFS recognises the edited volume as changed.",
                 )
+            report("Validating the final DAT and DSC pair", 4, total)
             self._validate_created_beebscsi_pair(session)
+            report("The hardware-ready pair is prepared", total, total)
         if session.hfe_original_path:
-            return self._prepare_hfe_download(session)
+            report("Encoding and verifying the HFE image", 1, total)
+            output = self._prepare_hfe_download(session)
+            report("The hardware-ready image is prepared", total, total)
+            return output
+        if not is_beebscsi:
+            report("The hardware-ready image is prepared", total, total)
         return session.path
 
     def _prepare_hfe_download(self, session: ImageSession) -> Path:

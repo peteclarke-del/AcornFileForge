@@ -3292,19 +3292,62 @@ async function validateImage(index) {
   } catch (error) { toast(error.message, true); }
 }
 
+function triggerImageDownload(url) {
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "";
+  link.hidden = true;
+  document.body.append(link);
+  link.click();
+  setTimeout(() => link.remove(), 1000);
+}
+
+function showDownloadReady(image, url) {
+  modal.classList.remove("busy", "failed");
+  showModal(`
+    <div class="modal-heading"><span class="modal-kicker">SAVE IMAGE</span><h2>Your download is ready</h2></div>
+    <p>The timestamped ZIP contains <strong>${esc(image.name)}</strong>, its matching DSC file when required, and a technical README.</p>
+    <div class="help-note"><strong>Did the automatic download not appear?</strong> Select Download ZIP below. This direct link remains available until you close this message.</div>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Close</button><a class="button primary download-ready-link" href="${esc(url)}" download>Download ZIP</a></div>
+  `, null, { replace: modal.open });
+  modalContent.querySelector(".download-ready-link").onclick = () => {
+    toast("Download requested. Check the browser download list if it does not appear immediately.");
+  };
+}
+
 async function saveImage(index) {
   const pane = panes[index];
+  const existingDialog = modal.open;
   try {
-    const data = await paneOperation(
+    if (!existingDialog) {
+      showModal('<div class="analysis-loading"><span class="modal-progress-icon">↻</span><h2>Preparing download</h2></div>');
+      modal.classList.add("busy");
+      setModalProgress({
+        title: pane.image.hasDescriptor ? "Preparing DAT + DSC download" : "Preparing image download",
+        message: "Starting hardware and filesystem checks…",
+        details: [
+          { label: "Large images", value: "This may take a while; keep this page open" },
+          { label: "Next", value: "Your browser will show the byte-transfer progress when the ZIP starts" },
+        ],
+      }, 0, pane.image.hasDescriptor ? 5 : 2);
+    }
+    const data = await trackedPaneOperation(
       index,
       pane.image.hasDescriptor ? "Validating DAT + DSC before download…" : "Validating image before download…",
-      () => api(`/api/images/${pane.image.id}/download/prepare`, { method: "POST" })
+      operationId => api(`/api/images/${pane.image.id}/download/prepare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operationId }),
+      })
     );
     pane.image = data.image;
-    window.location.assign(`/api/images/${pane.image.id}/download`);
+    const downloadUrl = `/api/images/${pane.image.id}/download`;
+    triggerImageDownload(downloadUrl);
+    if (!existingDialog) showDownloadReady(pane.image, downloadUrl);
     toast("Timestamped image and README ZIP download started.");
     return true;
   } catch (error) {
+    if (!existingDialog && modal.open) modal.close();
     toast(`Could not save ${pane.image.name}: ${error.message}`, true);
     return false;
   }
@@ -5524,7 +5567,7 @@ function showHelp() {
               <li>In the pairing dialog, the chosen file is already retained. Select only the missing companion.</li>
               <li>Confirm that both base names match, for example <code>SCSI0.dat</code> and <code>SCSI0.dsc</code>, then select <strong>Open DAT + DSC</strong>.</li>
               <li>Traverse, create, add, rename, move, lock and delete content using the normal ADFS controls.</li>
-              <li>Select <strong>Save Image</strong> in the pane heading. The application streams a hardware-ready ZIP containing <code>BeebSCSI0/scsi0.dat</code> and <code>BeebSCSI0/scsi0.dsc</code>.</li>
+              <li>Select <strong>Save Image</strong> in the pane heading. A foreground progress dialog reports hardware checks, DAT geometry, directory verification, the map checksum, and final pair validation. The application then streams a hardware-ready ZIP containing <code>BeebSCSI0/scsi0.dat</code> and <code>BeebSCSI0/scsi0.dsc</code>. Transfer progress appears in the browser download panel; if the automatic download does not begin, use the direct <strong>Download ZIP</strong> link in the ready dialog.</li>
               <li>Extract the ZIP into the root of the BeebSCSI SD card. Keep the <code>BeebSCSI0</code> directory itself. The firmware does not look for DAT/DSC files directly in the SD-card root.</li>
             </ol>
             <div class="help-note"><strong>Why the target matters:</strong> official 8-bit ADFS requires matching <code>Hugo</code> directory headers, footers and parent sequence copies. An edited old-map volume must also receive a new two-byte disc ID, otherwise ADFS can retain state belonging to the original volume and report <em>Broken directory</em> or <em>Disc changed</em>. The BeebSCSI target performs those checks, advances the disc ID and rebuilds its map checksum before download.</div>
@@ -5792,7 +5835,7 @@ function showHelp() {
               <h4>Keep your changes</h4>
               <ol>
                 <li>Look for the orange changed dot in the pane heading.</li>
-                <li>Select the <strong>Save Image</strong> icon in the pane heading.</li>
+                <li>Select the <strong>Save Image</strong> icon in the pane heading. After validation, use the ready dialog's direct <strong>Download ZIP</strong> link if the automatic download does not appear.</li>
                 <li>The app validates and finalises the working copy before starting the download. Any failure remains inside the app instead of replacing the page with a JSON response.</li>
                 <li>Every save is a ZIP named with the image name and current date/time. This avoids duplicate <code>-edited</code> downloads.</li>
                 <li>Every ZIP contains <code>README.md</code> with checksums, target hardware, compatibility warnings, practical restore notes and a complete catalogue. MMB documentation includes all 511 slots, including empty slots, access state and each disk's DFS files.</li>
