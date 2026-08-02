@@ -95,7 +95,7 @@ def create_images_blueprint(service: DiskService, static_dir: Path) -> Blueprint
         session = service.get(image_id)
         allowed = {
             "name", "machine", "filingSystem", "mmfsBuild", "tube",
-            "page", "menuType", "notes", "targetHardware",
+            "page", "menuType", "notes", "targetHardware", "catalogMachine",
         }
         profile = {
             key: value

@@ -63,7 +63,8 @@ they will not be committed or packaged.
 The current build supports the editing and transfer workflows described in
 this guide, including one to three rearrangeable panes, undo and named
 checkpoints, browser-private recovery, background job tracking, MMB and ADFS
-menu maintenance, HFE handling, UEF extraction and hardware-aware ADFS checks.
+menu maintenance, HFE handling, UEF extraction, an Online Library and
+hardware-aware ADFS checks.
 The application is useful today, but disk images can contain unusual loaders,
 copy protection and filesystem variants. Keep a known-good source image and
 test important downloads before putting them onto real hardware.
@@ -86,6 +87,105 @@ reports and proposed improvements can be raised in the
 
 Uploads are copied into an isolated workspace. Editing an image never writes
 back to the original file selected in the browser.
+
+## Online Library
+
+![Online Library search and multi-selection](app/static/help/online-library.png)
+
+Every writable media pane has an Online Library action. At the root of an MMB
+it is labelled **Find Discs**; inside DFS, ADFS and RISC OS filesystems it is
+labelled **Online Library**. It searches enabled catalogues on the server so a
+browser does not need to negotiate cross-site download rules.
+
+The initial machine filter comes from the Workbench hardware profile applied
+to that pane. It is only a default: choose another machine in the Online
+Library whenever an individual search needs a wider or different catalogue.
+
+The built-in catalogue set is:
+
+- Complete BBC Micro Games Archive for directly downloadable SSD and DSD
+  releases, including recent homebrew represented by that archive;
+- all public media categories in Acorn Electron World, including professional,
+  public-domain, companion, EUG, featured, unfinished and unreleased software;
+- Every Game Going for BBC Model B, B+, Master 128, Master Compact, Electron
+  and Archimedes A3000 releases;
+- 8-Bit Software's public-domain catalogue;
+- the official and third-party RISC OS Open package feeds.
+
+Only records with a confirmed public UEF, SSD, DSD, ADF, HFE, ZIP or RISC OS
+package download appear. The app suppresses gallery pages, documentation-only
+records, DVD-only Electron World entries and catalogue records whose item page
+does not contain supported downloadable media.
+
+Choose **Sources…** in the Online Library to enable or disable a catalogue,
+change its URL, or add another compatible provider. Configuration is stored in
+the persistent work volume as `catalog-sources.json`. Each provider record
+contains its loading and parsing settings, including query templates, Electron
+category roots, crawl paths, machine IDs, cache durations and validation
+limits. Item and download path rules are configurable too.
+Site-specific URLs and IDs therefore live in source configuration rather than
+application logic.
+
+The bundled defaults live in `app/catalog_sources.json`. The catalogue engine
+only understands reusable loading stages such as a single page, category crawl
+or machine index, reusable page layouts, and optional media-link resolution.
+It does not branch on a catalogue name or identifier. The copy in the work
+volume contains local changes made through **Sources…**.
+
+### Add online disks to an MMB
+
+1. Open the MMB at **All disks** and optionally select several empty slots.
+2. Choose **Find Discs**, select a machine and search by title, publisher or
+   keyword. A blank search browses the catalogue's current page.
+3. Select the Title, Publisher, Year or Source heading to sort the results.
+   The active heading shows ↑ for ascending or ↓ for descending order; select
+   it again to reverse the order.
+4. Choose **Not already present** to hide likely duplicates detected from MMB
+   disk titles and remembered distribution filenames, or **All results** to
+   include them.
+5. Select several downloadable results. Selected empty slots are preferred.
+   Otherwise the app scans from the requested starting slot, wraps safely and
+   finds the next suitable run. DSD images still need two adjacent slots.
+6. Leave the menu option selected to pass each inserted disk through the usual
+   launcher, action and PAGE review. Clear it to keep the disks off-menu.
+
+Multi-item installs run one download at a time and show the current title.
+**Abort operation** lets the active item reach a safe image boundary, then
+prevents the next download from starting. Completed items remain installed and
+undo checkpoints are retained.
+
+The catalogue title and publisher seed the review form, while the actual disk
+is still inspected for `SSDMENU`, `!BOOT`, `LOADER`, action and PAGE. An
+installed menu therefore receives proper source metadata without trusting a
+catalogue to describe the executable layout of the image.
+
+### Add online software to DFS, ADFS and RISC OS
+
+For an SSD, DSD or open MMB disk, files from a downloaded disk are copied into
+the current DFS catalogue. Normal seven-character leaf names, catalogue entry
+limits, side selection, free-space checks and existing-file errors still
+apply.
+
+For ADFS, downloaded disk images extract into the current directory by
+default. Select **Create a folder for each downloaded disk** when the software
+is self-contained or when several images would otherwise clash. The existing
+DFS-to-ADFS loader checks and compatibility reporting apply to these imports
+too.
+
+RISC OS Open packages install only into ADFS or RISC OS images. The installer
+preserves application directory structure and SparkFS load, execute and
+filetype metadata, while omitting the package manager's `RiscPkg` control
+directory. Older ADFS formats can still reject long RISC OS names, which is a
+filesystem restriction rather than a download failure.
+
+Small remote catalogue pages are cached for 15 minutes. The larger Electron
+World and Every Game Going indexes default to 24 hours, which can be changed in
+their provider settings. Selected result tokens expire after an hour. Downloads
+have fixed size limits, ZIP expansion is bounded, and path traversal members
+are ignored. One unavailable source is reported under the remaining results
+rather than cancelling a multi-source search. Availability in a catalogue does
+not change a program's licence, so use the source page for permissions, payment
+and release notes.
 
 Drag the numbered grip at the left of a pane heading onto another pane to swap
 their positions. The image, current directory or MMB slot, selection, and scroll
@@ -249,11 +349,12 @@ side variants. It reports candidates rather than deleting anything.
 
 The header **Workbench** includes reusable hardware profiles for Electron Plus
 3, BBC Micro with paged MMFS, BBC/Master BeebSCSI, Master ADFS, and
-Archimedes/RISC OS. A profile records the machine, filing system, MMFS build,
-Tube state, expected PAGE, menu preference, and ADFS validation target. Custom
-profiles are stored in the browser and the applied profile is also persisted
-with the private image session. The health dashboard highlights conflicts such
-as using the Tube with Electron or low-PAGE MMFS software.
+Archimedes/RISC OS. A profile records the machine, Online Library filter,
+filing system, MMFS build, Tube state, expected PAGE, menu preference, and ADFS
+validation target. Custom profiles are stored in the browser and the applied
+profile is also persisted with the private image session. The health dashboard
+highlights conflicts such as using the Tube with Electron or low-PAGE MMFS
+software.
 
 Import recipes record the directory naming strategy, group prefix, online
 metadata preference, guarded compatibility rewrites, and whether copied titles

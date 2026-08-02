@@ -268,7 +268,7 @@ dialog:has(.wide-analysis), dialog:has(.workbench-dialog), dialog:has(.file-insp
 .inspector-commands { min-height: 260px; max-height: 420px; overflow: auto; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }.inspector-commands p { display: flex; gap: 12px; }.inspector-commands b { color: var(--teal); }
 .duplicate-groups { grid-template-columns: repeat(auto-fit,minmax(260px,1fr)); }.duplicate-groups article { display: grid; gap: 5px; padding: 9px; border: 1px solid var(--line); border-radius: 8px; }.duplicate-groups small { color: var(--muted); font: 9px/1.5 DM Mono, monospace; }
 .job > b { padding: 4px 6px; border-radius: 5px; background: var(--line); font: 700 8px DM Mono, monospace; text-transform: uppercase; }.job.running > b { background: var(--teal); color: white; }.job.failed > b, .job.interrupted > b { background: #b33d2b; color: white; }.job button { border: 0; background: transparent; color: #a43727; cursor: pointer; font-weight: 700; }
-.workbench-dialog { display: grid; gap: 14px; }.workbench-dialog > header select { min-width: 190px; padding: 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); color: var(--ink); }.workbench-grid { display: grid; grid-template-columns: minmax(190px,.75fr) minmax(320px,1.25fr); gap: 14px; min-height: 460px; }.workbench-grid aside { display: grid; align-content: start; gap: 5px; max-height: 58vh; overflow: auto; }.workbench-grid aside button { display: grid; gap: 3px; padding: 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); color: var(--ink); text-align: left; cursor: pointer; }.workbench-grid aside small { color: var(--muted); font: 9px DM Mono, monospace; }.workbench-grid section { padding: 0 6px; overflow: auto; max-height: 60vh; }.project-tools { min-height: 360px; display: grid; place-content: center; gap: 20px; text-align: center; }.project-tools p { max-width: 620px; color: var(--muted); line-height: 1.6; }
+.workbench-dialog { display: grid; gap: 14px; }.workbench-dialog > header select { min-width: 190px; padding: 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); color: var(--ink); }.workbench-grid { display: grid; grid-template-columns: minmax(190px,.75fr) minmax(320px,1.25fr); gap: 14px; min-height: 460px; }.workbench-grid aside { display: grid; align-content: start; gap: 5px; max-height: 58vh; overflow: auto; }.workbench-grid aside button { display: grid; gap: 3px; padding: 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); color: var(--ink); text-align: left; cursor: pointer; }.workbench-grid aside small { color: var(--muted); font: 9px DM Mono, monospace; }.workbench-grid section { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); align-content: start; gap: 0 10px; padding: 0 6px; overflow: auto; max-height: 60vh; }.workbench-grid section > .field { margin: 7px 0; }.workbench-grid section > .check-field, .workbench-grid section > .modal-actions { grid-column: 1 / -1; }.project-tools { min-height: 360px; display: grid; place-content: center; gap: 20px; text-align: center; }.project-tools p { max-width: 620px; color: var(--muted); line-height: 1.6; }
 body:has(dialog[open].busy) .pane .loading { display: none; }
 body:has(dialog[open].failed) .pane .loading { display: none; }
 .modal-progress-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 50%; background: var(--blue); color: white; font-size: 26px; animation: modal-progress-spin 1.2s linear infinite; }
@@ -570,6 +570,10 @@ dialog:has(.bulk-copy-planner) form { padding: 22px; }
   .list-wrap { height: 420px; min-height: 320px; }
 }
 @media (max-width: 700px) {
+  .workbench-grid { grid-template-columns: 1fr; min-height: 0; }
+  .workbench-grid aside { max-height: 180px; }
+  .workbench-grid section { grid-template-columns: 1fr; max-height: none; }
+  .workbench-grid section > .field, .workbench-grid section > .check-field, .workbench-grid section > .modal-actions { grid-column: 1; }
   .bulk-copy-planner { height: calc(100vh - 48px); min-height: 0; }
   .bulk-planner-heading { display: grid; }
   .bulk-summary { width: 100%; }
@@ -646,3 +650,40 @@ html[data-theme="dark"] .disk-illustration { background: #5b8ff1; border-color: 
 html[data-theme="dark"] .disk-illustration:before,
 html[data-theme="dark"] .disk-illustration span { border-color: #dce8ed; }
 html[data-theme="dark"] .brand-mark { filter: drop-shadow(2px 2px 0 rgba(0,0,0,.45)); }
+
+dialog:has(.online-library-heading), dialog:has(.online-source-list) { width: min(1180px, calc(100vw - 28px)); }
+.online-library-heading { margin-bottom: 16px; }
+.online-search-bar { display: grid; grid-template-columns: 190px minmax(260px,1fr) 170px auto auto; align-items: end; gap: 10px; }
+.online-search-bar label, .online-install-options label, .online-source-row label, .online-new-source label { display: grid; gap: 5px; color: var(--muted); font: 700 9px DM Mono,monospace; letter-spacing: .07em; text-transform: uppercase; }
+.online-search-bar input, .online-search-bar select, .online-install-options input, .online-source-row input, .online-source-row textarea, .online-new-source input, .online-new-source select, .online-new-source textarea { min-width: 0; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); background: var(--paper); }
+.online-status { margin: 14px 0 8px; color: var(--teal); font: 700 10px DM Mono,monospace; }
+.online-results { height: min(48vh,520px); overflow: auto; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); }
+.online-loading { height: 100%; display: grid; place-content: center; color: var(--muted); }
+.online-result-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.online-result-table th { position: sticky; top: 0; z-index: 1; padding: 9px; text-align: left; background: var(--cream); border-bottom: 1px solid var(--line); }
+.online-sort { display: inline-flex; align-items: center; gap: 5px; padding: 0; border: 0; color: inherit; background: transparent; font: inherit; cursor: pointer; }
+.online-sort span { min-width: 10px; color: var(--teal); font-size: 12px; line-height: 1; }
+.online-sort:hover, .online-sort:focus-visible { color: var(--teal); }
+.online-result-table td { padding: 8px 9px; vertical-align: top; border-bottom: 1px solid var(--line); }
+.online-result-table td:nth-child(2) { min-width: 220px; }
+.online-result-table strong, .online-result-table small { display: block; }
+.online-result-table small { max-width: 420px; margin-top: 3px; color: var(--muted); line-height: 1.35; }
+.online-result-table .installed-label { color: var(--teal); }
+.online-result-table tr.already-installed { opacity: .68; }
+.button.tiny { padding: 5px 7px; font-size: 9px; white-space: nowrap; }
+.online-install-options { min-height: 40px; display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: 12px; }
+.online-install-options label.check, .online-source-row label.check { display: flex; align-items: center; gap: 6px; text-transform: none; letter-spacing: 0; }
+.online-install-options input[type="number"] { width: 90px; }
+.field-note { color: var(--muted); font-size: 10px; }
+.online-failures { padding: 9px; color: var(--muted); font-size: 10px; }
+.online-source-list { display: grid; gap: 9px; max-height: 52vh; overflow: auto; margin: 15px 0; }
+.online-source-row { display: grid; grid-template-columns: 90px minmax(180px,.7fr) minmax(300px,1.3fr); gap: 10px; align-items: end; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
+.online-source-row .online-provider-options { grid-column: 1 / -1; }
+.online-provider-options textarea { width: 100%; resize: vertical; font: 10px/1.45 DM Mono,monospace; }
+.online-new-source { display: grid; grid-template-columns: .7fr 1.3fr .7fr; gap: 10px; border: 1px solid var(--line); border-radius: 8px; }
+html[data-theme="dark"] .online-results, html[data-theme="dark"] .online-search-bar input, html[data-theme="dark"] .online-search-bar select, html[data-theme="dark"] .online-install-options input, html[data-theme="dark"] .online-source-row input, html[data-theme="dark"] .online-source-row textarea, html[data-theme="dark"] .online-new-source input, html[data-theme="dark"] .online-new-source select, html[data-theme="dark"] .online-new-source textarea { background: #202d32; color: var(--ink); }
+@media (max-width: 850px) {
+  .online-search-bar { grid-template-columns: 1fr 1fr; }
+  .online-query { grid-column: 1 / -1; }
+  .online-source-row, .online-new-source { grid-template-columns: 1fr; }
+}

@@ -1,0 +1,101 @@
+[
+  {
+    "id": "bbcmicro",
+    "name": "Complete BBC Micro Games Archive",
+    "type": "configured",
+    "url": "https://www.bbcmicro.co.uk/",
+    "machines": ["bbc-b", "bbc-b-plus", "master"],
+    "enabled": true,
+    "direct": true,
+    "options": {
+      "loader": "page",
+      "parser": "thumbnail-cards",
+      "queryTemplate": "index.php?search={query}"
+    }
+  },
+  {
+    "id": "electron-world",
+    "name": "Acorn Electron World complete library",
+    "type": "configured",
+    "url": "https://www.acornelectron.co.uk/c-library.html",
+    "machines": ["electron"],
+    "enabled": true,
+    "direct": true,
+    "options": {
+      "loader": "category-crawl",
+      "parser": "section-catalogue",
+      "categories": [
+        {"name": "Professional Releases", "url": "https://www.acornelectron.co.uk/profs/electron/top_lvl.html", "childPath": "/profs/electron/cats/"},
+        {"name": "Public Domain Releases", "url": "https://www.acornelectron.co.uk/pdworld/electron/top_lvl.html", "childPath": "/pdworld/electron/cats/"},
+        {"name": "Companion Discs", "url": "https://www.acornelectron.co.uk/companions/electron/top_lvl.html", "childPath": "/companions/electron/cats/"},
+        {"name": "Electron User Group Discs", "url": "https://www.acornelectron.co.uk/eug/top_lvl.html", "childPath": "/eug/cats/"},
+        {"name": "Featured Games", "url": "https://www.acornelectron.co.uk/c-featured.html", "parser": "function-calls"},
+        {"name": "Unfinished Games", "url": "https://www.acornelectron.co.uk/unfinished/electron/cats/davee.html"},
+        {"name": "Unreleased Games", "url": "https://www.acornelectron.co.uk/unreleased/electron/cats/optima.html"}
+      ],
+      "downloadTemplate": "https://www.acornelectron.co.uk/featured/archive/{publisher}/DFS/{stem}.zip",
+      "callName": "tabulatE",
+      "callFields": {"publisher": 0, "stem": 3, "title": 4, "description": 7},
+      "cacheSeconds": 86400,
+      "crawlThreads": 8
+    }
+  },
+  {
+    "id": "everygamegoing",
+    "name": "Every Game Going",
+    "type": "configured",
+    "url": "https://www.everygamegoing.com/",
+    "machines": ["bbc-b", "bbc-b-plus", "master", "electron", "archimedes", "risc-os"],
+    "enabled": true,
+    "direct": true,
+    "options": {
+      "loader": "machine-index",
+      "parser": "item-rows",
+      "resolver": "media-links",
+      "landingTemplate": "landingMachineType/items/machine_type_id/{machineId}/paarent_type/games/",
+      "itemPathPrefix": "/litem/",
+      "downloadPathContains": "/download/",
+      "machineProfiles": {
+        "bbc-b": {"ids": [2], "label": "BBC Model B"},
+        "bbc-b-plus": {"ids": [4], "label": "BBC Model B+"},
+        "master": {"ids": [5, 6], "label": "BBC Master 128 / Compact"},
+        "electron": {"ids": [7], "label": "Acorn Electron"},
+        "archimedes": {"ids": [378], "label": "Archimedes A3000"},
+        "risc-os": {"ids": [378], "label": "Archimedes A3000"}
+      },
+      "resultValidationLimit": 120,
+      "cacheSeconds": 86400,
+      "detailThreads": 8
+    }
+  },
+  {
+    "id": "8bs",
+    "name": "8-Bit Software public domain catalogue",
+    "type": "configured",
+    "url": "https://8bs.com/catalogue/8bs.htm",
+    "machines": ["bbc-b", "bbc-b-plus", "master", "electron"],
+    "enabled": true,
+    "direct": true,
+    "options": {"loader": "page", "parser": "zip-links", "defaultPublisher": "8-Bit Software"}
+  },
+  {
+    "id": "riscos-rool",
+    "name": "RISC OS Open packages",
+    "type": "configured",
+    "url": "https://packages.riscosopen.org/packages/pkg/rool",
+    "machines": ["archimedes", "risc-os"],
+    "enabled": true,
+    "direct": true,
+    "options": {"loader": "page", "parser": "package-paragraphs"}
+  },
+  {
+    "id": "riscos-thirdparty",
+    "name": "RISC OS third-party packages",
+    "type": "configured",
+    "url": "https://packages.riscosopen.org/packages/pkg/thirdparty",
+    "machines": ["archimedes", "risc-os"],
+    "enabled": true,
+    "direct": true,
+    "options": {"loader": "page", "parser": "package-paragraphs"}
+  }
+]

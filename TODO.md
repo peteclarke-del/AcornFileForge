@@ -32,7 +32,21 @@ do not get lost in a long local checklist.
   - Save reusable Electron, BBC, Master, BeebSCSI and Archimedes/RISC OS setups.
   - Include filing system, MMFS build, Tube state, PAGE expectations and menu
     preferences.
+  - Set the default Online Library machine filter for each applied profile,
+    while allowing it to be changed for an individual search.
   - Warn when an imported title conflicts with the selected hardware profile.
+
+- [x] Configurable Online Library
+  - Search confirmed downloadable software for BBC, Master, Electron,
+    Archimedes and RISC OS targets from a writable media pane.
+  - Insert several images into MMB slots or extract supported downloads into
+    DFS, ADFS and RISC OS filesystems through the normal checked workflows.
+  - Keep provider URLs, categories, machine IDs, loading strategies, page
+    layouts and media resolution in editable source configuration.
+  - Suppress catalogue-only, gallery-only and unavailable records rather than
+    presenting them as installable software.
+  - Sort results by title, publisher, year or source in ascending or descending
+    order without losing the current multi-selection.
 
 - [x] Menu-entry test runner
   - Verify that every menu record selects the intended disk or directory.

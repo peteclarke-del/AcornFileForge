@@ -606,7 +606,8 @@ function renderPane(index, preserveScroll = false) {
     </div>
   </details>`;
   const toolbarMarkup = isSlots
-    ? `<details class="tool-menu">
+    ? `<button class="tool online-library"><b>⌕</b><span>Find Discs</span></button>
+      <details class="tool-menu">
         <summary class="tool"><b>＋</b><span>Add disk</span></summary>
         <div class="tool-menu-panel">
           <button class="menu-command insert-disk" ${selected ? "" : "disabled"}><b>↥</b><span>Insert SSD / DSD / HFE / ZIP…</span></button>
@@ -630,6 +631,7 @@ function renderPane(index, preserveScroll = false) {
       <span class="tool-spacer"></span>
       <button class="tool save save-image"><b>↓</b><span>Save MMB</span></button>`
     : `<button class="tool go-up" ${(pane.path === "$" && pane.slot === null) ? "disabled" : ""}><b>↑</b><span>${pane.slot !== null && pane.path === "$" ? "All disks" : "Up"}</span></button>
+      ${!isTape && !pane.image.readOnly ? '<button class="tool online-library"><b>⌕</b><span>Online Library</span></button>' : ""}
       ${canEdit ? '<button class="tool import-file"><b>＋</b><span>Add file</span></button>' : ""}
       ${canFolder ? '<button class="tool new-folder"><b>▢</b><span>Folder</span></button>' : ""}
       ${isDsd ? `<button class="tool switch-side"><b>⇄</b><span>Side ${pane.side === 2 ? "2" : "0"}</span></button>` : ""}
@@ -697,6 +699,7 @@ function renderPane(index, preserveScroll = false) {
   host.querySelector(".new-folder")?.addEventListener("click", () => guardedPaneAction(index, () => createFolder(index)));
   host.querySelector(".switch-side")?.addEventListener("click", () => switchDsdSide(index));
   host.querySelector(".insert-disk")?.addEventListener("click", () => guardedPaneAction(index, () => chooseSlotImage(index)));
+  host.querySelector(".online-library")?.addEventListener("click", () => guardedPaneAction(index, () => showOnlineLibrary(index)));
   host.querySelector(".create-blank-ssd")?.addEventListener("click", () => guardedPaneAction(index, () => createBlankMmbDisk(index, "ssd")));
   host.querySelector(".create-blank-dsd")?.addEventListener("click", () => guardedPaneAction(index, () => createBlankMmbDisk(index, "dsd")));
   host.querySelector(".slot-read-write")?.addEventListener("click", () => guardedPaneAction(index, () => setSelectedSlotsWritable(index, true)));
@@ -3355,6 +3358,175 @@ async function queueMenuReviews(index, metadataItems) {
   await showMenuPreview(index, metadataItems.at(-1)?.diskTitle || "");
 }
 
+const ONLINE_MACHINES = [
+  ["all", "All compatible machines"], ["bbc-b", "BBC Micro Model B"],
+  ["bbc-b-plus", "BBC Micro B+"], ["master", "BBC Master"],
+  ["electron", "Acorn Electron"], ["archimedes", "Acorn Archimedes"],
+  ["risc-os", "RISC OS"]
+];
+
+function onlineMachineFromProfile(profile = {}) {
+  const configured = String(profile.catalogMachine || "").toLowerCase();
+  if (ONLINE_MACHINES.some(([value]) => value === configured)) return configured;
+  const profileMachine = String(profile.machine || "").toLowerCase();
+  if (profileMachine.includes("electron")) return "electron";
+  if (profileMachine.includes("archimedes")) return "archimedes";
+  if (profileMachine.includes("risc os")) return "risc-os";
+  if (profileMachine.includes("master") && !profileMachine.includes("bbc")) return "master";
+  if (profileMachine.includes("b+")) return "bbc-b-plus";
+  if (profileMachine.includes("bbc")) return "bbc-b";
+  return "";
+}
+
+function defaultOnlineMachine(pane) {
+  const profileMachine = onlineMachineFromProfile(pane.image?.hardwareProfile);
+  if (profileMachine) return profileMachine;
+  const hardware = String(pane.image?.targetHardware || "").toLowerCase();
+  if (hardware.includes("electron")) return "electron";
+  if (hardware.includes("risc")) return "risc-os";
+  if (hardware.includes("archimedes")) return "archimedes";
+  if (hardware.includes("master")) return "master";
+  return pane.image?.kind === "adfs" ? "all" : "bbc-b";
+}
+
+async function showOnlineSources(index) {
+  const data = await api("/api/catalog/sources");
+  const rows = data.sources.map((source, offset) => `<fieldset class="online-source-row" data-source="${offset}">
+    <label class="check"><input type="checkbox" name="enabled-${offset}" ${source.enabled ? "checked" : ""}> Enabled</label>
+    <label>Name<input name="name-${offset}" value="${esc(source.name)}" required></label>
+    <label>Catalogue URL<input name="url-${offset}" type="url" value="${esc(source.url)}" required></label>
+    <label>Machines<input name="machines-${offset}" value="${esc(source.machines.join(","))}" placeholder="bbc-b,electron"></label>
+    <label class="online-provider-options">Provider settings (JSON)<textarea name="options-${offset}" rows="5">${esc(JSON.stringify(source.options || {}, null, 2))}</textarea></label>
+    <input type="hidden" name="id-${offset}" value="${esc(source.id)}"><input type="hidden" name="type-${offset}" value="${esc(source.type)}">
+    <input type="hidden" name="direct-${offset}" value="${source.direct ? "1" : "0"}">
+  </fieldset>`).join("");
+  const closed = showModal(`<div class="modal-heading"><span class="modal-kicker">ONLINE LIBRARY</span><h2>Catalogue sources</h2><p>Enable, disable or relocate a provider. Provider settings contain its query templates, categories and machine IDs, so site changes can be handled without changing application code.</p></div>
+    <div class="online-source-list">${rows}</div>
+    <fieldset class="online-new-source"><legend>Add a compatible provider</legend><label>Name<input name="newName" placeholder="My Acorn archive"></label><label>URL<input name="newUrl" type="url" placeholder="https://…"></label><label>Loading strategy<select name="newLoader"><option value="page">Single page</option><option value="category-crawl">Category crawl</option><option value="machine-index">Machine indexes</option></select></label><label>Page layout<select name="newParser"><option value="thumbnail-cards">Thumbnail cards</option><option value="section-catalogue">Section catalogue</option><option value="function-calls">Function-call records</option><option value="item-rows">Linked item rows</option><option value="zip-links">ZIP download links</option><option value="package-paragraphs">Package paragraphs</option><option value="links">Plain links</option></select></label><label>Machines<input name="newMachines" placeholder="bbc-b,electron"></label><label class="online-provider-options">Provider settings (JSON)<textarea name="newOptions" rows="5">{}</textarea></label></fieldset>
+    <div class="modal-actions"><button class="button" type="button" data-back-library>Back</button><button class="button primary" type="submit">Save sources</button></div>`, async form => {
+      const sources = data.sources.map((source, offset) => ({
+        id: form.get(`id-${offset}`), name: form.get(`name-${offset}`), url: form.get(`url-${offset}`),
+        type: form.get(`type-${offset}`), machines: String(form.get(`machines-${offset}`) || "").split(",").map(value => value.trim()).filter(Boolean),
+        direct: form.get(`direct-${offset}`) === "1", enabled: form.has(`enabled-${offset}`),
+        options: JSON.parse(String(form.get(`options-${offset}`) || "{}"))
+      }));
+      if (form.get("newName") && form.get("newUrl")) sources.push({
+        id: String(form.get("newName")).toLowerCase().replace(/[^a-z0-9]+/g, "-"), name: form.get("newName"),
+        url: form.get("newUrl"), type: "configured", direct: true, enabled: true,
+        machines: String(form.get("newMachines") || "all").split(",").map(value => value.trim()).filter(Boolean),
+        options: { ...JSON.parse(String(form.get("newOptions") || "{}")), loader: form.get("newLoader"), parser: form.get("newParser") }
+      });
+      await api("/api/catalog/sources", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sources }) });
+      toast("Online catalogue sources saved");
+    }, { replace: true });
+  modalContent.querySelector("[data-back-library]").onclick = () => {
+    modal.close();
+    setTimeout(() => showOnlineLibrary(index), 0);
+  };
+  return closed;
+}
+
+async function showOnlineLibrary(index) {
+  const pane = panes[index];
+  const isMmbRoot = pane.image.kind === "mmb" && pane.slot === null;
+  const selectedEmpty = isMmbRoot
+    ? selectedEntries(index).filter(entry => entry.empty).map(entry => entry.slot)
+    : [];
+  const firstEmpty = isMmbRoot ? pane.entries.find(entry => entry.empty)?.slot ?? 0 : 0;
+  const machine = defaultOnlineMachine(pane);
+  const machineOptions = ONLINE_MACHINES.map(([value, label]) => `<option value="${value}" ${value === machine ? "selected" : ""}>${label}</option>`).join("");
+  showModal(`<div class="modal-heading online-library-heading"><span class="modal-kicker">ONLINE LIBRARY</span><h2>${isMmbRoot ? "Find disk images" : "Find software to install"}</h2><p>Search trusted Acorn archives, select several results, then install them through the same checked workflow as local files.</p></div>
+    <div class="online-search-bar"><label>Machine<select name="machine">${machineOptions}</select></label><label class="online-query">Title, publisher or keyword<input name="query" type="search" placeholder="Leave blank to browse"></label><label>Show<select name="scope"><option value="missing">Not already present</option><option value="all">All results</option></select></label><button class="button online-search" type="button">Search</button><button class="button ghost online-sources" type="button">Sources…</button></div>
+    <div class="online-status">Choose a machine and search the configured catalogues.</div>
+    <div class="online-results" aria-live="polite"></div>
+    <div class="online-install-options">
+      ${isMmbRoot ? `<label>Start at slot<input name="startSlot" type="number" min="0" max="510" value="${selectedEmpty[0] ?? firstEmpty}"></label><span class="field-note">${selectedEmpty.length ? `${selectedEmpty.length} selected empty slot${selectedEmpty.length === 1 ? "" : "s"} will be preferred.` : "The next suitable empty slots will be used."}</span><label class="check"><input type="checkbox" name="addToMenu" checked> Offer installed disks to the detected menu</label>` : ""}
+      ${pane.image.kind === "adfs" ? '<label class="check"><input type="checkbox" name="createDirectory"> Create a folder for each downloaded disk</label><span class="field-note">By default, files are extracted into the current directory.</span>' : ""}
+    </div>
+    <div class="modal-actions"><button class="button" value="cancel">Cancel</button><button class="button primary online-install" type="submit" disabled>${isMmbRoot ? "Insert selected disks" : "Install selected"}</button></div>`, async form => {
+      const itemIds = form.getAll("catalogItem");
+      if (!itemIds.length) { toast("Select one or more downloadable items first.", true); return false; }
+      const titles = new Map([...modalContent.querySelectorAll('[name="catalogItem"]')].map(input => [input.value, input.closest("tr")?.querySelector("strong")?.textContent || input.value]));
+      const results = [];
+      let abortRequested = false;
+      setModalAbort(async () => { abortRequested = true; setModalProgress({ title: "Stopping Online Library install", message: "The current item will finish safely, then no further downloads will start." }, results.length, itemIds.length); });
+      for (let offset = 0; offset < itemIds.length; offset += 1) {
+        if (abortRequested) break;
+        const itemId = itemIds[offset];
+        setModalProgress({ title: "Installing online software", message: `Downloading and checking ${titles.get(itemId)}…`, details: [{ label: "Destination", value: isMmbRoot ? pane.image.name : pane.path }] }, offset, itemIds.length);
+        try {
+          const result = await api(`/api/images/${pane.image.id}/catalog/install`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ itemIds: [itemId], slots: selectedEmpty.slice(offset), startSlot: selectedEmpty[offset] ?? (Number(form.get("startSlot") || firstEmpty) + offset), path: pane.path, slot: pane.slot, side: pane.side, addToMenu: form.has("addToMenu"), createDirectory: form.has("createDirectory") })
+          });
+          pane.image = result.image;
+          results.push(...result.items);
+        } catch (error) {
+          results.push({ id: itemId, title: titles.get(itemId), error: error.message });
+        }
+      }
+      await acceptImage(index, pane.image);
+      const successes = results.filter(item => !item.error);
+      const failures = results.filter(item => item.error);
+      toast(`${successes.length} online item${successes.length === 1 ? "" : "s"} installed${abortRequested ? " before the operation was stopped" : ""}`);
+      failures.forEach(item => toast(`${item.title}: ${item.error}`, true));
+      const reviews = successes.map(item => item.metadata).filter(Boolean);
+      if (reviews.length) setTimeout(() => queueMenuReviews(index, reviews), 80);
+    });
+
+  const searchButton = modalContent.querySelector(".online-search");
+  const installButton = modalContent.querySelector(".online-install");
+  const resultHost = modalContent.querySelector(".online-results");
+  const status = modalContent.querySelector(".online-status");
+  let resultItems = [];
+  let resultFailures = [];
+  let resultSort = { key: "title", direction: "asc" };
+  const renderOnlineResults = () => {
+    const selected = new Set([...resultHost.querySelectorAll('[name="catalogItem"]:checked')].map(input => input.value));
+    const direction = resultSort.direction === "asc" ? 1 : -1;
+    const items = [...resultItems].sort((left, right) => {
+      const compared = String(left[resultSort.key] || "").localeCompare(String(right[resultSort.key] || ""), undefined, { numeric: true, sensitivity: "base" });
+      return compared * direction || String(left.title || "").localeCompare(String(right.title || ""), undefined, { sensitivity: "base" });
+    });
+    const heading = (label, key) => {
+      const active = resultSort.key === key;
+      const arrow = active ? (resultSort.direction === "asc" ? "↑" : "↓") : "";
+      const ariaSort = active ? (resultSort.direction === "asc" ? "ascending" : "descending") : "none";
+      return `<th aria-sort="${ariaSort}"><button class="online-sort" type="button" data-sort="${key}">${label}<span aria-hidden="true">${arrow}</span></button></th>`;
+    };
+    resultHost.innerHTML = items.length ? `<table class="online-result-table"><thead><tr><th></th>${heading("Title", "title")}${heading("Publisher", "publisher")}${heading("Year", "year")}${heading("Source", "sourceName")}<th></th></tr></thead><tbody>${items.map(item => `<tr class="${item.installed ? "already-installed" : ""}"><td><input type="checkbox" name="catalogItem" value="${esc(item.id)}" aria-label="Select ${esc(item.title)}" ${selected.has(item.id) ? "checked" : ""}></td><td><strong>${esc(item.title)}</strong>${item.version ? `<small>Version ${esc(item.version)}</small>` : ""}${item.description ? `<small>${esc(item.description)}</small>` : ""}</td><td>${esc(item.publisher || "Unknown")}</td><td>${esc(item.year || "-")}</td><td><span class="pill">${esc(item.sourceName)}</span>${item.installed ? '<small class="installed-label">Already present</small>' : ""}</td><td><a class="button tiny" href="${esc(item.pageUrl)}" target="_blank" rel="noopener">Details</a></td></tr>`).join("")}</tbody></table>` : '<div class="empty-list">No matching downloadable items were found. Try All results, another machine, or a broader search.</div>';
+    if (resultFailures.length) resultHost.insertAdjacentHTML("beforeend", `<details class="online-failures"><summary>Unavailable sources</summary>${resultFailures.map(item => `<p><b>${esc(item.source)}</b>: ${esc(item.error)}</p>`).join("")}</details>`);
+    resultHost.querySelectorAll("[data-sort]").forEach(button => button.onclick = () => {
+      const key = button.dataset.sort;
+      resultSort = { key, direction: resultSort.key === key && resultSort.direction === "asc" ? "desc" : "asc" };
+      renderOnlineResults();
+    });
+    resultHost.querySelectorAll('[name="catalogItem"]').forEach(input => input.onchange = () => { installButton.disabled = !resultHost.querySelector('[name="catalogItem"]:checked'); });
+    installButton.disabled = !resultHost.querySelector('[name="catalogItem"]:checked');
+  };
+  const runSearch = async () => {
+    searchButton.disabled = true; installButton.disabled = true;
+    status.textContent = "Contacting enabled catalogues…";
+    resultHost.innerHTML = '<div class="online-loading">Searching the Online Library…</div>';
+    try {
+      const parameters = new URLSearchParams({ q: modalContent.querySelector('[name="query"]').value, machine: modalContent.querySelector('[name="machine"]').value, scope: modalContent.querySelector('[name="scope"]').value, path: pane.path });
+      if (pane.slot !== null) parameters.set("slot", pane.slot);
+      const data = await api(`/api/images/${pane.image.id}/catalog/search?${parameters}`);
+      resultItems = data.items.filter(item => item.downloadable);
+      resultFailures = data.failures;
+      resultSort = { key: "title", direction: "asc" };
+      status.textContent = `${resultItems.length} result${resultItems.length === 1 ? "" : "s"}${data.failures.length ? ` · ${data.failures.length} source${data.failures.length === 1 ? "" : "s"} unavailable` : ""}`;
+      renderOnlineResults();
+    } catch (error) {
+      status.textContent = "Search failed"; resultHost.innerHTML = `<div class="help-warning">${esc(error.message)}</div>`;
+    } finally { searchButton.disabled = false; }
+  };
+  searchButton.onclick = runSearch;
+  modalContent.querySelector(".online-sources").onclick = () => showOnlineSources(index);
+  modalContent.querySelector('[name="query"]').onkeydown = event => { if (event.key === "Enter") { event.preventDefault(); runSearch(); } };
+  runSearch();
+}
+
 async function insertSessionIntoSlot(index, slot, source) {
   const pane = panes[index];
   try {
@@ -4829,6 +5001,7 @@ function showHelp() {
           <a href="#help-beebscsi">BeebSCSI DAT/DSC</a>
           <a href="#help-tapes">UEF tapes</a>
           <strong>WORKFLOWS</strong>
+          <a href="#help-online">Find and install online software</a>
           <a href="#help-transfer">Copy and drag between panes</a>
           <a href="#help-mmb-menu">Create an MMB menu</a>
           <a href="#help-adfs-menu">Create an ADFS menu</a>
@@ -5057,6 +5230,34 @@ function showHelp() {
               </ol>
             </div>
             <div class="help-note"><strong>Empty slots are intentional:</strong> they stay visible so images can be dropped precisely. An unformatted empty slot has no read-only/read-write state.</div>
+          </section>
+          <section id="help-online">
+            <h3>Find and install software from the Online Library</h3>
+            <figure><img src="/help/online-library.png" alt="Online Library showing machine, missing-title and multi-selection controls"><figcaption>Search several Acorn catalogues together, compare metadata and install one or many downloadable items.</figcaption></figure>
+            <p class="help-lead">The Online Library uses the same format checks, metadata review, undo point and menu workflow as a file selected from your computer. A link is never treated as an installable image unless its source provides a direct supported download.</p>
+            <div class="help-task"><h4>Add disks to an MMB</h4><ol>
+              <li>Open the MMB at <strong>All disks</strong>. Optionally select one or more empty slots.</li>
+              <li>Choose <strong>Find Discs</strong>. Its initial machine comes from the Workbench profile applied to this pane. Change it when this search needs another machine, then search by title, publisher or keyword. Leave the search blank to browse the current catalogue page.</li>
+              <li>Select the <strong>Title</strong>, <strong>Publisher</strong>, <strong>Year</strong> or <strong>Source</strong> heading to sort. The active heading shows ↑ for ascending or ↓ for descending; select it again to reverse the order. Checked results stay selected while sorting.</li>
+              <li>Use <strong>Not already present</strong> to hide likely matches found by disk title or remembered distribution filename. This is a helpful duplicate check, not a checksum guarantee.</li>
+              <li>Select several downloadable results. If you did not select empty slots, set a starting slot; the app finds the next suitable empty run and wraps around safely. DSD images still require two adjacent slots.</li>
+              <li>Leave <strong>Offer installed disks to the detected menu</strong> selected to review the title, publisher, launcher, action and PAGE after insertion. Clear it for intentionally off-menu disks.</li>
+              <li>During a multi-item install, <strong>Abort operation</strong> stops before the next download. The item already in progress finishes at a safe image boundary.</li>
+            </ol></div>
+            <div class="help-task"><h4>Add files or applications to an open disk</h4><ol>
+              <li>Open an SSD/DSD disk, an MMB slot, an ADFS directory, or a RISC OS image and choose <strong>Online Library</strong>.</li>
+              <li>On DFS, files from the downloaded disk are copied into the current catalogue. Normal DFS filename, capacity and conflict rules apply.</li>
+              <li>On ADFS, a downloaded disk is extracted into the current directory by default. Select <strong>Create a folder</strong> to keep each disk separate.</li>
+              <li>RISC OS Open packages install only into ADFS/RISC OS images. Application directories are retained, package-control files are omitted, and SparkFS load, execute and filetype metadata is preserved.</li>
+            </ol></div>
+            <h4>Sources, availability and safety</h4><ul>
+              <li>Built-in sources are the Complete BBC Micro Games Archive, every public media category in Acorn Electron World, Every Game Going, 8-Bit Software, and the official plus third-party RISC OS Open package feeds.</li>
+              <li>Professional, public-domain, companion, EUG, featured, unfinished and unreleased Electron World categories are indexed. DVD-only entries and records without a supported public download are omitted.</li>
+              <li>Every Game Going maps BBC B, B+, Master 128/Compact, Electron and Archimedes A3000 machine IDs from provider settings. Each matching item page is checked for actual downloadable media before it is displayed.</li>
+              <li>Choose <strong>Sources…</strong> to edit a provider's URL, loading strategy, page layout, category roots, query templates, machine IDs, validation limit and cache settings. The engine applies generic configured stages and never branches on a catalogue name. The editable JSON is stored in <code>catalog-sources.json</code>.</li>
+              <li>Downloads are size-limited, cached briefly and checked for ZIP path traversal. A failed source is reported below the usable results instead of cancelling the complete search.</li>
+            </ul>
+            <div class="help-warning"><strong>Respect each archive and author:</strong> availability in a catalogue does not change a program's licence. Follow the source page for permissions, payment, documentation and the newest release.</div>
           </section>
           <section id="help-adfs">
             <h3>ADFS, Archimedes and RISC OS images</h3>
@@ -5348,8 +5549,8 @@ function showHelp() {
               <li>For MMB, edit the exported JSON menu records carefully and choose <strong>Apply reviewed JSON</strong>. Current records are compared first so a stale manifest cannot overwrite a newer menu.</li>
             </ol></div>
             <div class="help-task"><h4>Profiles, recipes and projects</h4><ol>
-              <li>Choose <strong>Workbench → Hardware profiles</strong>. Start from Electron Plus 3, BBC MMFS, BeebSCSI, Master ADFS or RISC OS, then save or apply the profile to an open image.</li>
-              <li>A profile records machine, filing system, MMFS build, Tube state, expected PAGE and validation target. The health dashboard warns about known conflicts such as Tube use with Electron or low-PAGE MMFS software.</li>
+              <li>Choose <strong>Workbench → Hardware profiles</strong>. Start from Electron Plus 3, BBC MMFS, BeebSCSI, Master ADFS or RISC OS, choose its Online Library filter, then save or apply the profile to an open image.</li>
+              <li>A profile records machine, Online Library filter, filing system, MMFS build, Tube state, expected PAGE and validation target. The applied filter becomes the default for that pane's next Online Library search, where it can still be changed normally.</li>
               <li>Choose <strong>Import recipes</strong> to save naming, group prefix, online metadata, compatibility and menu choices. Saved recipes appear in the MMB-to-ADFS planner.</li>
               <li>Choose <strong>Portable project</strong> to export the current pane order, session references, paths, profiles, recipes and theme. Import it on the same retained installation to restore the working context.</li>
             </ol></div>
@@ -5487,11 +5688,11 @@ const PROFILE_STORAGE_KEY = "acorn-file-forge-hardware-profiles";
 const RECIPE_STORAGE_KEY = "acorn-file-forge-import-recipes";
 
 const BUILTIN_PROFILES = [
-  { name: "Electron Plus 3", machine: "Electron", filingSystem: "ADFS", targetHardware: "electron-plus3", mmfsBuild: "paged", tube: false, page: "E00", menuType: "universal" },
-  { name: "BBC Micro with MMFS", machine: "BBC Micro", filingSystem: "MMFS", targetHardware: "bbc-master", mmfsBuild: "paged", tube: false, page: "E00", menuType: "universal" },
-  { name: "BBC/Master BeebSCSI", machine: "BBC/Master", filingSystem: "ADFS + MMFS", targetHardware: "beebscsi", mmfsBuild: "paged", tube: false, page: "E00", menuType: "universal" },
-  { name: "Master 128 ADFS", machine: "Master 128", filingSystem: "ADFS", targetHardware: "bbc-master", mmfsBuild: "none", tube: false, page: "1900", menuType: "universal" },
-  { name: "Archimedes / RISC OS", machine: "Archimedes", filingSystem: "FileCore", targetHardware: "risc-os", mmfsBuild: "none", tube: false, page: "", menuType: "none" },
+  { name: "Electron Plus 3", machine: "Electron", catalogMachine: "electron", filingSystem: "ADFS", targetHardware: "electron-plus3", mmfsBuild: "paged", tube: false, page: "E00", menuType: "universal" },
+  { name: "BBC Micro with MMFS", machine: "BBC Micro", catalogMachine: "bbc-b", filingSystem: "MMFS", targetHardware: "bbc-master", mmfsBuild: "paged", tube: false, page: "E00", menuType: "universal" },
+  { name: "BBC/Master BeebSCSI", machine: "BBC/Master", catalogMachine: "all", filingSystem: "ADFS + MMFS", targetHardware: "beebscsi", mmfsBuild: "paged", tube: false, page: "E00", menuType: "universal" },
+  { name: "Master 128 ADFS", machine: "Master 128", catalogMachine: "master", filingSystem: "ADFS", targetHardware: "bbc-master", mmfsBuild: "none", tube: false, page: "1900", menuType: "universal" },
+  { name: "Archimedes / RISC OS", machine: "Archimedes", catalogMachine: "archimedes", filingSystem: "FileCore", targetHardware: "risc-os", mmfsBuild: "none", tube: false, page: "", menuType: "none" },
 ];
 
 function storedCollection(key, fallback = []) {
@@ -5795,6 +5996,12 @@ function renderWorkbench(section = "profiles") {
   showModal(`<div class="workbench-dialog"><header><div><small>ACORN FILE FORGE</small><h2>Workbench</h2></div><select name="workbenchSection"><option value="profiles" ${section === "profiles" ? "selected" : ""}>Hardware profiles</option><option value="recipes" ${section === "recipes" ? "selected" : ""}>Import recipes</option><option value="project" ${section === "project" ? "selected" : ""}>Portable project</option></select></header>
     ${section === "profiles" ? `<div class="workbench-grid"><aside>${profiles.map((profile, index) => `<button type="button" data-profile-index="${index}"><b>${esc(profile.name)}</b><small>${esc(profile.machine)} · ${esc(profile.filingSystem)}</small></button>`).join("")}</aside><section><div class="field"><label>Profile name</label><input name="profileName" value="${esc(profiles[0]?.name || "My Acorn setup")}"></div><div class="field"><label>Machine</label><input name="profileMachine" value="${esc(profiles[0]?.machine || "BBC Micro")}"></div><div class="field"><label>Filing system</label><input name="profileFs" value="${esc(profiles[0]?.filingSystem || "MMFS")}"></div><div class="field"><label>Target validation</label><select name="profileTarget"><option value="auto">Automatic</option><option value="electron-plus3">Electron Plus 3</option><option value="bbc-master">BBC / Master ADFS</option><option value="beebscsi">BeebSCSI</option><option value="risc-os">Archimedes / RISC OS</option></select></div><div class="field"><label>MMFS build</label><input name="profileMmfs" value="${esc(profiles[0]?.mmfsBuild || "paged")}"></div><div class="field"><label>Expected PAGE</label><input name="profilePage" value="${esc(profiles[0]?.page || "E00")}"></div><label class="check-field"><input type="checkbox" name="profileTube" ${profiles[0]?.tube ? "checked" : ""}> Tube enabled</label><div class="field"><label>Apply to open pane</label><select name="profilePane">${imageOptions || '<option value="">No open images</option>'}</select></div><div class="modal-actions"><button type="button" class="button" data-save-profile>Save profile</button><button type="button" class="button primary" data-apply-profile ${imageOptions ? "" : "disabled"}>Apply profile</button></div></section></div>` : section === "recipes" ? `<div class="workbench-grid"><aside>${recipes.map((recipe, index) => `<button type="button" data-recipe-index="${index}"><b>${esc(recipe.name)}</b><small>${esc(recipe.naming)} · ${recipe.addMenu ? "menu" : "off-menu"}</small></button>`).join("") || "<p>No saved recipes yet.</p>"}</aside><section><div class="field"><label>Recipe name</label><input name="recipeName" value="Collection import"></div><div class="field"><label>Directory naming</label><select name="recipeNaming"><option value="source">Use source titles</option><option value="generic">DISC-0000 sequence</option></select></div><div class="field"><label>Group prefix</label><input name="recipeGroup" maxlength="10" value="DISCS"></div><label class="check-field"><input type="checkbox" name="recipeOnline" checked> Use online metadata for ambiguous titles</label><label class="check-field"><input type="checkbox" name="recipeCompat" checked> Apply safe DFS to ADFS compatibility rewrites</label><label class="check-field"><input type="checkbox" name="recipeMenu" checked> Offer imported titles to a menu</label><div class="modal-actions"><button type="button" class="button primary" data-save-recipe>Save recipe</button></div></section></div>` : `<div class="project-tools"><p>A project description preserves the pane layout, working session references, current paths, profiles, recipes and theme. Image bytes remain in their private recoverable sessions and normal timestamped save ZIPs.</p><div class="modal-actions"><button type="button" class="button" data-export-project>Export project JSON</button><label class="button primary">Import project JSON<input type="file" accept="application/json,.json" data-import-project hidden></label></div></div>`}
     <div class="modal-actions"><button class="button ghost" value="cancel">Close workbench</button></div></div>`);
+  if (section === "profiles") {
+    modalContent.querySelector('[name="profileMachine"]')?.closest(".field")?.insertAdjacentHTML(
+      "afterend",
+      `<div class="field"><label>Online Library filter</label><select name="profileCatalogMachine">${ONLINE_MACHINES.map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></div>`
+    );
+  }
   modalContent.querySelector('[name="workbenchSection"]').onchange = event => renderWorkbench(event.target.value);
   if (section === "profiles") wireProfileWorkbench(profiles);
   if (section === "recipes") wireRecipeWorkbench(recipes);
@@ -5807,13 +6014,14 @@ function wireProfileWorkbench(profiles) {
   const fill = profile => {
     modalContent.querySelector('[name="profileName"]').value = profile.name || "";
     modalContent.querySelector('[name="profileMachine"]').value = profile.machine || "";
+    modalContent.querySelector('[name="profileCatalogMachine"]').value = onlineMachineFromProfile(profile) || "all";
     modalContent.querySelector('[name="profileFs"]').value = profile.filingSystem || "";
     modalContent.querySelector('[name="profileTarget"]').value = profile.targetHardware || "auto";
     modalContent.querySelector('[name="profileMmfs"]').value = profile.mmfsBuild || "";
     modalContent.querySelector('[name="profilePage"]').value = profile.page || "";
     modalContent.querySelector('[name="profileTube"]').checked = Boolean(profile.tube);
   };
-  const read = () => ({ name: modalContent.querySelector('[name="profileName"]').value.trim() || "My Acorn setup", machine: modalContent.querySelector('[name="profileMachine"]').value.trim(), filingSystem: modalContent.querySelector('[name="profileFs"]').value.trim(), targetHardware: modalContent.querySelector('[name="profileTarget"]').value, mmfsBuild: modalContent.querySelector('[name="profileMmfs"]').value.trim(), page: modalContent.querySelector('[name="profilePage"]').value.trim(), tube: modalContent.querySelector('[name="profileTube"]').checked, menuType: "universal" });
+  const read = () => ({ name: modalContent.querySelector('[name="profileName"]').value.trim() || "My Acorn setup", machine: modalContent.querySelector('[name="profileMachine"]').value.trim(), catalogMachine: modalContent.querySelector('[name="profileCatalogMachine"]').value, filingSystem: modalContent.querySelector('[name="profileFs"]').value.trim(), targetHardware: modalContent.querySelector('[name="profileTarget"]').value, mmfsBuild: modalContent.querySelector('[name="profileMmfs"]').value.trim(), page: modalContent.querySelector('[name="profilePage"]').value.trim(), tube: modalContent.querySelector('[name="profileTube"]').checked, menuType: "universal" });
   modalContent.querySelectorAll("[data-profile-index]").forEach(button => button.onclick = () => { selectedIndex = Number(button.dataset.profileIndex); fill(profiles[selectedIndex]); });
   modalContent.querySelector("[data-save-profile]").onclick = () => { profiles[selectedIndex] = read(); saveCollection(PROFILE_STORAGE_KEY, profiles); renderWorkbench("profiles"); toast("Hardware profile saved"); };
   modalContent.querySelector("[data-apply-profile]").onclick = async () => {
