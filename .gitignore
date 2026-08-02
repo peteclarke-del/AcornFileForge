@@ -1,0 +1,20 @@
+# Local disk images and test collections can be large and may contain software
+# that cannot be redistributed. Keep the whole samples tree out of Git.
+/samples/
+/output/
+
+# Acorn File Forge working data belongs in Docker's named volume.
+/work/
+
+# Python and test caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local editor and operating-system files
+.DS_Store
+.idea/
+.vscode/
+*.swp

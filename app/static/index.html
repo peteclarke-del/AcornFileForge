@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#fff8df">
+  <title>Acorn File Forge</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css?v=20260801.28">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Acorn File Forge home">
+      <img class="brand-mark" src="/favicon.svg" alt="">
+      <span><strong>Acorn File Forge</strong><small>ACORN FILE IMAGE WORKSHOP</small></span>
+    </a>
+    <div class="top-actions">
+      <button class="theme-toggle" id="workbenchButton" type="button"><span aria-hidden="true">⌘</span><b>Workbench</b></button>
+      <button class="theme-toggle jobs-button" id="jobsButton" type="button"><span aria-hidden="true">◴</span><b>Jobs</b><i id="jobsBadge" hidden>0</i></button>
+      <button class="theme-toggle add-pane" id="addPaneButton" type="button"><span aria-hidden="true">＋</span><b>Add Pane</b></button>
+      <button class="theme-toggle" id="helpButton" type="button"><span aria-hidden="true">?</span><b>Help</b></button>
+      <button class="theme-toggle" id="themeToggle" type="button" aria-label="Switch to dark mode"><span aria-hidden="true">◐</span><b>Dark</b></button>
+    </div>
+  </header>
+
+  <main>
+    <section class="workspace" aria-label="Disk image workspace">
+      <div class="panes">
+        <article class="pane" data-pane="0"></article>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast-region" id="toasts" aria-live="polite"></div>
+
+  <dialog id="modal">
+    <form method="dialog">
+      <button class="modal-close" value="cancel" aria-label="Close">×</button>
+      <div id="modalContent"></div>
+      <div id="modalProgress" role="status" aria-live="polite">
+        <span class="modal-progress-icon" aria-hidden="true">↻</span>
+        <h2 id="modalProgressTitle">Operation in progress</h2>
+        <p id="modalProgressMessage">Starting operation…</p>
+        <div id="modalProgressDetails" class="modal-progress-details"></div>
+        <span class="progress" id="modalProgressBar"><i></i></span>
+        <small id="modalProgressCount"></small>
+        <button id="modalAbort" class="button danger modal-abort" type="button" hidden disabled>Abort operation</button>
+      </div>
+      <div id="modalError" class="modal-error" role="alert" aria-live="assertive">
+        <span class="modal-error-icon" aria-hidden="true">!</span>
+        <h2>Operation could not be completed</h2>
+        <p id="modalErrorMessage"></p>
+        <div id="modalErrorDetails" class="modal-progress-details"></div>
+        <div class="modal-actions">
+          <button id="modalErrorBack" class="button" type="button">Back / retry</button>
+          <button id="modalErrorClose" class="button primary" type="button">Close</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <template id="emptyPane">
+    <div class="empty-pane">
+      <button class="icon-button close-empty-pane" type="button" title="Close pane" aria-label="Close pane">×</button>
+      <div class="disk-illustration"><span></span><b></b></div>
+      <h2>Open a disk here</h2>
+      <p>Choose an existing image, create a blank one, or drop an image here.</p>
+      <div class="empty-actions">
+        <button class="button primary pane-open">Open disk image</button>
+        <button class="button pane-new">Create new disk image</button>
+        <button class="button pane-recover">Recover previous session</button>
+      </div>
+      <small>ACORN BBC / MASTER · ELECTRON · ARCHIMEDES / RISC OS</small>
+    </div>
+  </template>
+
+  <script src="/formats.js?v=20260731.19"></script>
+  <script src="/core.js?v=20260802.1"></script>
+  <script src="/app.js?v=20260802.3"></script>
+</body>
+</html>

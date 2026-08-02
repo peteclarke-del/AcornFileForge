@@ -1,0 +1,14 @@
+services:
+  bbc-file-manager:
+    build: .
+    ports:
+      - "8666:8666"
+    environment:
+      BBCFM_WORK_DIR: /app/work
+      ACORN_MAX_UPLOAD_GIB: "8"
+    volumes:
+      - bbcfm-work:/app/work
+    restart: unless-stopped
+
+volumes:
+  bbcfm-work:
