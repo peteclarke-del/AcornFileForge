@@ -34,7 +34,7 @@ If your system still uses the standalone Compose command, replace
 `docker compose` with `docker-compose` in the examples below.
 
 The service listens on port `8666`. Its working images are stored in the
-`bbcfm-work` Docker volume. Files selected in the browser are uploaded into
+`acorn-file-forge-work` Docker volume. Files selected in the browser are uploaded into
 private working sessions; the application does not mount or alter the source
 directory on the host.
 
@@ -69,8 +69,7 @@ The application is useful today, but disk images can contain unusual loaders,
 copy protection and filesystem variants. Keep a known-good source image and
 test important downloads before putting them onto real hardware.
 
-The completed development roadmap is recorded in [TODO.md](TODO.md). Bug
-reports and proposed improvements can be raised in the
+Bug reports and proposed improvements can be raised in the
 [GitHub repository](https://github.com/peteclarke-del/AcornFileForge).
 
 ## The basic workflow
@@ -1278,18 +1277,29 @@ in the [project repository](https://github.com/peteclarke-del/AcornFileForge).
 The Compose defaults are:
 
 ```yaml
-ports:
-  - "8666:8666"
-environment:
-  BBCFM_WORK_DIR: /app/work
-  ACORN_MAX_UPLOAD_GIB: "8"
+services:
+  acorn-file-forge:
+    image: acorn-file-forge:latest
+    container_name: acorn-file-forge
+    ports:
+      - "8666:8666"
+    environment:
+      ACORN_FILE_FORGE_WORK_DIR: /app/work
+      ACORN_MAX_UPLOAD_GIB: "8"
+    volumes:
+      - acorn-file-forge-work:/app/work
 volumes:
-  - bbcfm-work:/app/work
+  acorn-file-forge-work:
+    name: acorn-file-forge-work
+networks:
+  default:
+    name: acorn-file-forge-network
 ```
 
-`BBCFM_WORK_DIR` is retained for compatibility with existing installations.
-It controls internal working storage and does not affect the Acorn File Forge
-branding.
+`ACORN_FILE_FORGE_WORK_DIR` selects the private server-side working directory.
+The Compose service, image, container, volume and network all use explicit
+Acorn File Forge names, so they remain consistent regardless of the checkout
+directory name.
 
 ## Architecture
 

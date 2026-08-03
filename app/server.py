@@ -18,7 +18,7 @@ from .routes.tools import create_tools_blueprint
 
 
 ROOT = Path(__file__).resolve().parent
-WORK_DIR = Path(os.environ.get("BBCFM_WORK_DIR", ROOT.parent / "work"))
+WORK_DIR = Path(os.environ.get("ACORN_FILE_FORGE_WORK_DIR", ROOT.parent / "work"))
 MENU_TEMPLATE_DIR = ROOT / "assets" / "menu_templates"
 
 

@@ -6483,7 +6483,7 @@ function wireRecipeWorkbench(recipes) {
   };
 }
 
-const storedTheme = localStorage.getItem("acorn-file-forge-theme") || localStorage.getItem("bbcfm-theme");
+const storedTheme = localStorage.getItem("acorn-file-forge-theme");
 const initialTheme = storedTheme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
 document.documentElement.dataset.theme = initialTheme;
 const themeToggle = document.querySelector("#themeToggle");
