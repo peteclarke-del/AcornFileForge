@@ -727,7 +727,10 @@ An MMB opens at its slot index, not directly inside slot zero.
 - Double-click a formatted slot to browse its embedded DFS disk.
 - Use **All disks** to return to the MMB index. The slot you came from remains
   selected.
-- Rename, clear, protect, unprotect, move, or swap formatted slots.
+- Rename, clear, protect, unprotect, move, or swap formatted slots. Ejecting
+  one or several disks also removes every associated record from an installed
+  editable Universal or SPI menu. Records remain when another formatted slot
+  still provides the same disk title.
 - Import several SSD, DSD, and DFS-formatted HFE images in one operation. The
   importer walks forward looking for the next suitable empty slot or empty
   pair.

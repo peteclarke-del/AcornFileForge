@@ -11,6 +11,7 @@ from ..formats import DFS_EXTENSIONS, HFE_EXTENSIONS
 from ..menu_service import (
     analyse_disk,
     best_distribution_filename,
+    eject_mmb_slots,
     enrich_if_ambiguous,
     find_menu_slot,
     installed_mmb_menu,
@@ -241,9 +242,9 @@ def create_mmb_blueprint(service: DiskService) -> Blueprint:
         slots = data.get("slots")
         if slots is None:
             slots = [data["slot"]]
-        service.clear_slots(session, [int(slot) for slot in slots])
+        result = eject_mmb_slots(service, session, slots)
         _refresh_mmc_desktop(service, session)
-        return jsonify(image=service.summary(session))
+        return jsonify(image=service.summary(session), **result)
 
     @blueprint.post("/api/images/<image_id>/slots/move")
     def move_slot(image_id):

@@ -2612,7 +2612,9 @@ function deleteSelected(index) {
       await loadDirectory(index);
     }
     toast(isSlot
-      ? `Slot ${entry.slot} is now empty`
+      ? `${data.slots.length === 1 ? `Slot ${data.slots[0]} is` : `Slots ${data.slots.join(", ")} are`} now empty${data.menuEntriesRemoved
+        ? `; ${data.menuEntriesRemoved} associated menu ${data.menuEntriesRemoved === 1 ? "entry" : "entries"} removed`
+        : ""}`
       : `${entry.name} deleted${data.menuEntriesRemoved
         ? `; ${data.menuEntriesRemoved} menu ${data.menuEntriesRemoved === 1 ? "entry" : "entries"} removed`
         : ""}`);
@@ -5501,7 +5503,7 @@ function showHelp() {
                 <li>Use <strong>Slot → Rename disk title</strong> for a single disk.</li>
                 <li>Use <strong>Mark read-only</strong> or <strong>Mark read / write</strong> for every selected formatted disk.</li>
                 <li>Drag one disk onto another position in the same MMB to move or swap it. Drag several selected disks onto an empty slot to move the batch.</li>
-                <li>Select one or several formatted slots, then use <strong>Slot → Eject selected disks</strong>. One confirmation clears every selected catalogue entry and its disk data. The list keeps its selection area and scroll position after slot actions.</li>
+                <li>Select one or several formatted slots, then use <strong>Slot → Eject selected disks</strong>. One confirmation clears every selected catalogue entry and its disk data. Records for those disk titles are removed from an installed Universal or SPI menu in the same operation. If another non-ejected slot has the same title, its records remain available. The list keeps its selection area and scroll position after slot actions.</li>
               </ol>
             </div>
             <div class="help-note"><strong>Empty slots are intentional:</strong> they stay visible so images can be dropped precisely. An unformatted empty slot has no read-only/read-write state.</div>

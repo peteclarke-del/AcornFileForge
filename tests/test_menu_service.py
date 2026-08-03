@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import unittest
 import tempfile
+import threading
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from app.disk_service import (
     DiskError,
@@ -26,6 +27,7 @@ from app.menu_service import (
     configure_mmb_universal_page,
     discover_adfs_menu_paths,
     edit_mmb_menu_entries,
+    eject_mmb_slots,
     enrich_if_ambiguous,
     find_menu_slot,
     installed_mmb_menus,
@@ -62,6 +64,72 @@ class FakeService:
 
 
 class MenuServiceTests(unittest.TestCase):
+    @patch("app.menu_service.edit_mmb_menu_entries")
+    @patch("app.menu_service.parse_mmb_menu_data")
+    @patch("app.menu_service.installed_mmb_menu", return_value=(0, "universal"))
+    def test_bulk_eject_removes_every_menu_record_for_the_selected_disks(
+        self,
+        _installed_menu,
+        parse_menu,
+        edit_entries,
+    ):
+        service = Mock()
+        service.list_slots.return_value = [
+            {"slot": 0, "name": "MENU", "formatted": True},
+            {"slot": 42, "name": "DISC ONE", "formatted": True},
+            {"slot": 43, "name": "DISC TWO", "formatted": True},
+            {"slot": 99, "name": "KEEP", "formatted": True},
+        ]
+        service.clear_slots.return_value = [42, 43]
+        entries = [
+            {"title": "One A", "diskTitle": "DISC ONE"},
+            {"title": "One B", "diskTitle": "DISC ONE"},
+            {"title": "Two", "diskTitle": "DISC TWO"},
+            {"title": "Keep", "diskTitle": "KEEP"},
+        ]
+        parse_menu.return_value = entries
+        session = SimpleNamespace(
+            kind="mmb",
+            lock=threading.RLock(),
+            menu_type="universal",
+        )
+
+        result = eject_mmb_slots(service, session, [42, 43])
+
+        edit_entries.assert_called_once_with(service, session, [entries[3]], entries)
+        service.clear_slots.assert_called_once_with(session, [42, 43])
+        self.assertEqual(result["menuEntriesRemoved"], 3)
+        self.assertEqual(result["slots"], [42, 43])
+
+    @patch("app.menu_service.edit_mmb_menu_entries")
+    @patch("app.menu_service.parse_mmb_menu_data")
+    @patch("app.menu_service.installed_mmb_menu", return_value=(0, "universal"))
+    def test_eject_keeps_menu_records_when_another_slot_has_the_same_title(
+        self,
+        _installed_menu,
+        parse_menu,
+        edit_entries,
+    ):
+        service = Mock()
+        service.list_slots.return_value = [
+            {"slot": 0, "name": "MENU", "formatted": True},
+            {"slot": 42, "name": "SHARED", "formatted": True},
+            {"slot": 43, "name": "SHARED", "formatted": True},
+        ]
+        service.clear_slots.return_value = [42]
+        parse_menu.return_value = [{"title": "Still available", "diskTitle": "SHARED"}]
+        session = SimpleNamespace(
+            kind="mmb",
+            lock=threading.RLock(),
+            menu_type="universal",
+        )
+
+        result = eject_mmb_slots(service, session, [42])
+
+        edit_entries.assert_not_called()
+        service.clear_slots.assert_called_once_with(session, [42])
+        self.assertEqual(result["menuEntriesRemoved"], 0)
+
     def test_uppercase_menu_metadata_is_given_readable_title_case(self):
         self.assertEqual(menu_title_case("3D-MAZE"), "3D-Maze")
         self.assertEqual(

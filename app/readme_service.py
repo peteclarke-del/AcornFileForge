@@ -205,6 +205,7 @@ def build_download_readme(
                 "MMB slot numbering is zero-based. Slot access reflects the MMB catalogue flag, not protection inside individual DFS files.",
                 "Installed menus may depend on exact disk titles, PAGE values and slot mappings. Preserve the menu slot and make a checkpoint before reorganising disks.",
                 "At All disks, Analyse > Check for duplicate games compares installed titles as well as disk content. Removing a menu record does not eject its disk unless that separate choice is confirmed.",
+                "Ejecting one or several disks with Slot > Eject selected disks also removes their associated records from a recognised editable Universal or SPI menu.",
                 "",
                 "## Recognised MMB menus",
                 "",

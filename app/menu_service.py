@@ -2998,3 +2998,62 @@ def edit_mmb_menu_entries(
 
     _write_mmb_databases(service, session, menu_slot, records)
     return {"menuSlot": menu_slot, "entries": len(records)}
+
+
+def eject_mmb_slots(
+    service: DiskService,
+    session: ImageSession,
+    slot_numbers: list[int],
+) -> dict:
+    """Eject MMB disks and remove menu records that can no longer resolve."""
+    if session.kind != "mmb":
+        raise DiskError("MMB slot ejection requires an MMB image.")
+    try:
+        requested = list(dict.fromkeys(int(slot) for slot in slot_numbers))
+    except (TypeError, ValueError) as exc:
+        raise DiskError("The MMB slot selection is invalid.") from exc
+    if not requested:
+        raise DiskError("Select at least one MMB disk to eject.")
+
+    with session.lock:
+        slots = {int(row["slot"]): row for row in service.list_slots(session)}
+        for slot in requested:
+            row = slots.get(slot)
+            if row is None or not row.get("formatted"):
+                raise DiskError(f"MMB slot {slot} is no longer a formatted disk.")
+
+        menu_slot, menu_type = installed_mmb_menu(service, session)
+        removed_entries = []
+        if menu_slot not in requested and menu_type in {
+            "universal", "universal-4r", "spi-game-menu"
+        }:
+            current = parse_mmb_menu_data(
+                service.read_file(session, menu_slot, mmb_menu_data_path(session)),
+                menu_type,
+            )
+            remaining_titles = {
+                str(row.get("name") or "").casefold()
+                for slot, row in slots.items()
+                if slot not in requested and row.get("formatted")
+            }
+            orphaned_titles = {
+                str(slots[slot].get("name") or "").casefold()
+                for slot in requested
+            } - remaining_titles
+            removed_entries = [
+                entry for entry in current
+                if str(entry.get("diskTitle") or "").casefold() in orphaned_titles
+            ]
+            if removed_entries:
+                remaining = [
+                    entry for entry in current
+                    if str(entry.get("diskTitle") or "").casefold() not in orphaned_titles
+                ]
+                edit_mmb_menu_entries(service, session, remaining, current)
+
+        cleared = service.clear_slots(session, requested)
+    return {
+        "slots": cleared,
+        "menuEntriesRemoved": len(removed_entries),
+        "removedEntries": removed_entries,
+    }

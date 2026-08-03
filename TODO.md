@@ -80,6 +80,8 @@ do not get lost in a long local checklist.
     disk labels and show equivalent catalogue content as a separate signal.
   - Select duplicate menu records inline, then separately decide whether to
     keep or eject each associated disk, with extra warnings for multi-game disks.
+  - Keep ordinary single and multi-slot ejection in sync with installed
+    Universal and SPI menu records.
   - Hide installed Online Library results using disk titles, remembered source
     names and installed menu titles without relying on punctuation.
 
