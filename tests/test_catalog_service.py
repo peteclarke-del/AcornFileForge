@@ -3,10 +3,18 @@ import copy
 import tempfile
 import unittest
 import zipfile
+from unittest.mock import Mock, patch
+
+from flask import Flask
 
 from app.catalog_service import CatalogueService, DEFAULT_SOURCES, archive_members
 from app.disk_service import DiskError
-from app.routes.catalog import _preferred_disk_members, _spark_metadata
+from app.routes.catalog import (
+    _catalogue_identities,
+    _preferred_disk_members,
+    _spark_metadata,
+    create_catalog_blueprint,
+)
 
 
 def source(source_id):
@@ -20,6 +28,33 @@ class CatalogueServiceTests(unittest.TestCase):
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def test_online_install_source_name_matches_catalogue_title(self):
+        self.assertIn("jetpac", _catalogue_identities("Jetpac (Ultimate Play The Game).ssd"))
+        self.assertTrue(
+            _catalogue_identities("Repton 2")
+            & _catalogue_identities("REPTON-2 (Superior Software).ssd")
+        )
+
+    @patch("app.routes.catalog.CatalogueService.search")
+    @patch("app.routes.catalog.parse_mmb_menu_data")
+    @patch("app.routes.catalog.installed_mmb_menus")
+    def test_missing_filter_reads_installed_mmb_menu_titles(self, menus, parse_menu, search):
+        service = Mock()
+        service.get.return_value = Mock(kind="mmb", slot_source_names={})
+        service.list_slots.return_value = []
+        service.read_file.return_value = b"menu data"
+        menus.return_value = [{"slot": 0, "type": "universal"}]
+        parse_menu.return_value = [{"title": "Jetpac", "diskTitle": "JETPAC"}]
+        search.return_value = ([{"title": "Jetpac", "pageUrl": "https://example.test/jetpac", "downloadable": True}], [])
+        app = Flask(__name__)
+        app.register_blueprint(create_catalog_blueprint(service, self.temporary.name))
+
+        response = app.test_client().get("/api/images/test/catalog/search?scope=missing")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["items"], [])
+        service.read_file.assert_called_once_with(service.get.return_value, 0, "$.GAMDATA")
 
     def test_parses_bbc_micro_download_cards(self):
         body = '''<div class="thumbnail text-center">

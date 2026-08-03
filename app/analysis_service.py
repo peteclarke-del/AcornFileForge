@@ -254,10 +254,85 @@ def duplicate_report(service, session) -> dict:
         key = re.sub(r"[^a-z0-9]", "", re.sub(r"(?:disc|disk|side|v|rev)[-_ ]?[0-9a-z]+$", "", title.casefold()))
         if key:
             variants[key].append(row)
-    return {
+    result = {
         "exact": [items for items in exact.values() if len(items) > 1],
         "variants": [items for items in variants.values() if len(items) > 1],
     }
+    if session.kind != "mmb":
+        return result
+
+    slot_records = {
+        int(row["slot"]): row
+        for row in manifest["records"]
+        if row.get("recordType") == "slot" and row.get("formatted")
+    }
+    slots_by_title: dict[str, list[int]] = defaultdict(list)
+    for slot, row in slot_records.items():
+        slots_by_title[str(row.get("diskTitle") or "").casefold()].append(slot)
+
+    files_by_slot: dict[int, list[dict]] = defaultdict(list)
+    for row in manifest["records"]:
+        if row.get("recordType") == "file" and row.get("sha256") and row.get("slot") is not None:
+            files_by_slot[int(row["slot"])].append(row)
+    content_fingerprints: dict[tuple, list[int]] = defaultdict(list)
+    for slot, files in files_by_slot.items():
+        fingerprint = tuple(sorted(
+            (
+                str(row.get("path") or "").casefold(),
+                int(row.get("size") or 0),
+                str(row.get("load") or ""),
+                str(row.get("execute") or ""),
+                str(row.get("sha256") or ""),
+            )
+            for row in files
+        ))
+        if fingerprint:
+            content_fingerprints[fingerprint].append(slot)
+    exact_slot_signatures = {
+        tuple(sorted(int(row["slot"]) for row in items if row.get("recordType") == "slot"))
+        for items in result["exact"]
+    }
+    content_matches = []
+    for slots in content_fingerprints.values():
+        signature = tuple(sorted(slots))
+        if len(signature) > 1 and signature not in exact_slot_signatures:
+            content_matches.append([slot_records[slot] for slot in signature])
+
+    game_groups: dict[str, list[dict]] = defaultdict(list)
+    editable_menu = next((
+        menu for menu in manifest.get("menus", [])
+        if menu.get("type") in {"universal", "universal-4r", "spi-game-menu"}
+    ), None)
+    if editable_menu:
+        for entry_index, entry in enumerate(editable_menu.get("entries", [])):
+            title = str(entry.get("title") or "").strip()
+            game_key = re.sub(r"[^a-z0-9]", "", title.casefold())
+            if not game_key:
+                continue
+            disk_title = str(entry.get("diskTitle") or "")
+            game_groups[game_key].append({
+                "entryIndex": entry_index,
+                "title": title,
+                "publisher": str(entry.get("publisher") or ""),
+                "diskTitle": disk_title,
+                "filename": str(entry.get("filename") or ""),
+                "action": str(entry.get("action") or ""),
+                "page": str(entry.get("page") or ""),
+                "slots": slots_by_title.get(disk_title.casefold(), []),
+            })
+    game_duplicates = [
+        items for items in game_groups.values()
+        if len(items) > 1 and (
+            len({item["diskTitle"].casefold() for item in items}) > 1
+            or len({slot for item in items for slot in item["slots"]}) > 1
+        )
+    ]
+    result.update(
+        slots=list(slot_records.values()),
+        gameDuplicates=game_duplicates,
+        contentMatches=content_matches,
+    )
+    return result
 
 
 def menu_test_report(service, session, root: str | None = None, progress=None) -> dict:
@@ -294,7 +369,27 @@ def menu_test_report(service, session, root: str | None = None, progress=None) -
         if menu["type"] not in {"universal", "universal-4r", "spi-game-menu"}:
             continue
         data_file = "$.EGAMDAT" if menu["type"] == "universal-4r" else "$.GAMDATA"
-        entries = parse_mmb_menu_data(service.read_file(session, menu["slot"], data_file), menu["type"])
+        try:
+            entries = parse_mmb_menu_data(
+                service.read_file(session, menu["slot"], data_file),
+                menu["type"],
+            )
+        except (DiskError, ValueError, IndexError) as exc:
+            tests.append({
+                "index": 0,
+                "menuSlot": menu.get("slot"),
+                "menuType": menu.get("type", ""),
+                "title": "Menu database",
+                "diskTitle": "",
+                "slots": [],
+                "launcher": data_file,
+                "action": "READ",
+                "page": "",
+                "passed": False,
+                "problems": [f"Could not read or parse {data_file}: {exc}"],
+                "evidence": "The remaining detected menus were still checked.",
+            })
+            continue
         for offset, entry in enumerate(entries):
             if progress and offset % 20 == 0:
                 progress(
@@ -318,6 +413,8 @@ def menu_test_report(service, session, root: str | None = None, progress=None) -
                     problems.append(f"PAGE should be &{page}")
             tests.append({
                 "index": offset,
+                "menuSlot": menu.get("slot"),
+                "menuType": menu.get("type", ""),
                 "title": entry["title"],
                 "diskTitle": entry["diskTitle"],
                 "slots": candidates,
@@ -333,6 +430,28 @@ def menu_test_report(service, session, root: str | None = None, progress=None) -
         "passed": sum(item["passed"] for item in tests),
         "failed": sum(not item["passed"] for item in tests),
     }
+
+
+def _failed_menu_findings(menu_tests: dict) -> list[dict]:
+    """Keep the evidence needed to act on every failed menu-record check."""
+    return [
+        {
+            "record": int(item.get("index", 0)) + 1,
+            "title": str(item.get("title") or "Untitled entry"),
+            "diskTitle": str(item.get("diskTitle") or ""),
+            "slots": [int(slot) for slot in item.get("slots", [])],
+            "menuSlot": int(item["menuSlot"]) if item.get("menuSlot") is not None else None,
+            "menuType": str(item.get("menuType") or ""),
+            "menuRoot": str(item.get("menuRoot") or ""),
+            "launcher": str(item.get("launcher") or ""),
+            "action": str(item.get("action") or ""),
+            "page": str(item.get("page") or ""),
+            "problems": [str(problem) for problem in item.get("problems", [])],
+            "evidence": str(item.get("evidence") or ""),
+        }
+        for item in menu_tests.get("tests", [])
+        if not item.get("passed")
+    ]
 
 
 def health_report(service, session, progress=None) -> dict:
@@ -355,7 +474,12 @@ def health_report(service, session, progress=None) -> dict:
         invalid = [slot for slot in service.list_slots(session) if slot["invalid"]]
         checks.append({"name": "Invalid MMB slots", "status": "warn" if invalid else "pass", "detail": f"{len(invalid)} invalid entries"})
         menu_tests = menu_test_report(service, session, progress=progress)
-        checks.append({"name": "Menu records", "status": "fail" if menu_tests["failed"] else "pass", "detail": f"{menu_tests['passed']} passed, {menu_tests['failed']} failed"})
+        checks.append({
+            "name": "Menu records",
+            "status": "fail" if menu_tests["failed"] else "pass",
+            "detail": f"{menu_tests['passed']} passed, {menu_tests['failed']} failed",
+            "findings": _failed_menu_findings(menu_tests),
+        })
         page_problems = sum(
             any(problem.startswith("PAGE should be") for problem in item["problems"])
             for item in menu_tests["tests"]
@@ -385,6 +509,7 @@ def health_report(service, session, progress=None) -> dict:
                 "name": "ADFS menu records",
                 "status": "fail" if menu_tests["failed"] else "pass",
                 "detail": f"{menu_tests['passed']} passed, {menu_tests['failed']} need review across {len(menu_tests['menuRoots'])} menu(s)",
+                "findings": _failed_menu_findings(menu_tests),
             })
             for root in menu_tests["menuRoots"]:
                 if any(

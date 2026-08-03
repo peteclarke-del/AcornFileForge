@@ -386,6 +386,32 @@ menu work.
 content and a conservative normalised-title comparison for likely release or
 side variants. It reports candidates rather than deleting anything.
 
+At the MMB **All disks** level, **Analyse → Check for duplicate games** checks individual game
+records as well as disks. Installed menu titles are compared across different
+disk names, so the same game on two differently labelled disks is reported.
+The scan also fingerprints each disk's catalogued filenames, load and execution
+metadata, sizes, and SHA-256 file hashes. This finds equivalent disk contents
+whose MMB headers or disk titles differ. Byte-identical whole-slot matches are
+kept as a separate strongest signal. If a supported editable menu is installed,
+each duplicate game row includes its own removal checkbox beside the slot and
+disk title. There is no repeated cleanup list below the results. Every checkbox
+starts clear.
+A final review asks whether each associated disk should remain in its slot or
+be ejected. Multi-game disks list every other affected title before offering
+to clear the slot and remove all of its records. Keeping the disk performs the
+normal menu-only cleanup. The complete operation receives one automatic undo
+checkpoint.
+
+The image health dashboard itemises every failed menu record. Each finding
+shows its record number, title, menu location, target slot or directory, disk
+title, launcher and action, PAGE, exact problem, and the evidence found in the
+loader. This makes a failed menu audit useful without running a second report.
+
+Online Library's **Not already present** view compares results with disk
+titles, remembered online distribution names, and installed MMB menu records.
+Punctuation and the publisher suffix saved during an online import do not stop
+an installed title from being recognised.
+
 ### Hardware profiles and import recipes
 
 The header **Workbench** includes reusable hardware profiles for Electron Plus

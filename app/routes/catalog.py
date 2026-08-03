@@ -12,11 +12,30 @@ from flask import Blueprint, jsonify, request
 from ..catalog_service import CatalogueService, archive_members
 from ..disk_service import DiskError, DiskService
 from ..formats import DFS_EXTENSIONS, HFE_EXTENSIONS, TAPE_EXTENSIONS
-from ..menu_service import analyse_disk, enrich_if_ambiguous, find_menu_slot
+from ..menu_service import (
+    analyse_disk,
+    enrich_if_ambiguous,
+    find_menu_slot,
+    installed_mmb_menus,
+    parse_mmb_menu_data,
+)
 from .common import payload
 
 
 DISK_EXTENSIONS = DFS_EXTENSIONS | HFE_EXTENSIONS | TAPE_EXTENSIONS
+
+
+def _catalogue_identities(value: object) -> set[str]:
+    """Return conservative comparable names for a catalogue or installed item."""
+    text = Path(str(value or "")).stem.strip()
+    if not text:
+        return set()
+    without_attribution = re.sub(r"\s+\([^()]*(?:\)|$)", "", text).strip()
+    return {
+        identity
+        for candidate in {text, without_attribution}
+        if (identity := re.sub(r"[^a-z0-9]+", " ", candidate.casefold()).strip())
+    }
 
 
 def _first_empty_runs(service: DiskService, session, start: int, needed: int) -> int | None:
@@ -135,15 +154,35 @@ def create_catalog_blueprint(service: DiskService, work_dir: Path) -> Blueprint:
         rows, failures = catalogue.search(str(request.args.get("q") or ""), machine, selected_sources)
         installed = set()
         if session.kind == "mmb":
-            installed.update(slot["name"].casefold() for slot in service.list_slots(session) if slot["formatted"])
-            installed.update(Path(name).stem.casefold() for name in session.slot_source_names.values())
+            for slot in service.list_slots(session):
+                if slot["formatted"]:
+                    installed.update(_catalogue_identities(slot["name"]))
+            for name in session.slot_source_names.values():
+                installed.update(_catalogue_identities(name))
+            try:
+                for menu in installed_mmb_menus(service, session):
+                    menu_type = str(menu.get("type") or "")
+                    if menu_type not in {"universal", "universal-4r", "spi-game-menu"}:
+                        continue
+                    data_file = "$.EGAMDAT" if menu_type == "universal-4r" else "$.GAMDATA"
+                    entries = parse_mmb_menu_data(
+                        service.read_file(session, int(menu["slot"]), data_file),
+                        menu_type,
+                    )
+                    for entry in entries:
+                        installed.update(_catalogue_identities(entry.get("title")))
+                        installed.update(_catalogue_identities(entry.get("diskTitle")))
+            except DiskError:
+                pass
         else:
             try:
-                installed.update(str(row["name"]).casefold() for row in service.list_directory(session, str(request.args.get("path") or "$"), request.args.get("slot", type=int))["entries"])
+                for entry in service.list_directory(session, str(request.args.get("path") or "$"), request.args.get("slot", type=int))["entries"]:
+                    installed.update(_catalogue_identities(entry["name"]))
             except DiskError:
                 pass
         for row in rows:
-            candidates = {row["title"].casefold(), Path(str(row.get("pageUrl") or "")).stem.casefold()}
+            candidates = _catalogue_identities(row["title"])
+            candidates.update(_catalogue_identities(Path(str(row.get("pageUrl") or "")).stem))
             row["installed"] = bool(candidates & installed)
         if request.args.get("scope") == "missing":
             rows = [row for row in rows if not row["installed"]]

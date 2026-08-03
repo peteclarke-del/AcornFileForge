@@ -56,6 +56,7 @@ IMAGE_MUTATIONS = {
     "menus.audit_adfs_pages": "auditing the ADFS menu",
     "menus.rebuild_mmb_menu": "rebuilding the MMB menu",
     "menus.edit_mmb_menu": "editing the MMB menu",
+    "menus.cleanup_mmb_duplicates": "cleaning duplicate MMB menu records",
     "tools.apply_manifest": "applying reviewed menu metadata",
     "tools.save_inspected_text": "editing a text file",
     "tools.repair_health": "applying a safe image-health repair",

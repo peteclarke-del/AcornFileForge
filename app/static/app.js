@@ -706,7 +706,7 @@ function renderPane(index, preserveScroll = false) {
           ? pane.menuDetected && !pane.menuDetectionPending
           : ["!BOOT", "GAMDATA", "GAMINDX", "PUBDATA", "PUBINDX", "UNIMENU"].every(name => pane.entries.some(entry => String(entry.name).toUpperCase() === name))
       ) ? "" : "disabled"}><b>▶</b><span>Test menu entries</span></button>` : ""}
-      <button class="menu-command find-duplicates"><b>≡</b><span>Find duplicates / variants</span></button>
+      <button class="menu-command find-duplicates"><b>≡</b><span>${isSlots ? "Check for duplicate games" : "Find duplicates / variants"}</span></button>
       <button class="menu-command export-manifest"><b>⇩</b><span>Export collection manifest</span></button>
     </div>
   </details>`;
@@ -834,7 +834,11 @@ function renderPane(index, preserveScroll = false) {
   host.querySelector(".inspect-file")?.addEventListener("click", () => guardedPaneAction(index, () => showFileInspector(index)));
   host.querySelector(".inspect-dependencies")?.addEventListener("click", () => guardedPaneAction(index, () => showDependencyReport(index)));
   host.querySelector(".test-menu-entries")?.addEventListener("click", () => guardedPaneAction(index, () => showMenuTests(index)));
-  host.querySelector(".find-duplicates")?.addEventListener("click", () => guardedPaneAction(index, () => showDuplicateReport(index)));
+  host.querySelector(".find-duplicates")?.addEventListener("click", () => guardedPaneAction(index, () => (
+    pane.image.kind === "mmb" && pane.slot === null
+      ? showMmbDuplicateCheck(index)
+      : showDuplicateReport(index)
+  )));
   host.querySelector(".export-manifest")?.addEventListener("click", () => showManifestExport(index));
   host.querySelector(".save-image").onclick = () => guardedPaneAction(index, () => saveImage(index));
   host.querySelectorAll(".tool-menu").forEach(menu => {
@@ -5504,7 +5508,7 @@ function showHelp() {
               <li>Open the MMB at <strong>All disks</strong>. Optionally select one or more empty slots.</li>
               <li>Choose <strong>Find Discs</strong>. Its initial machine comes from the Workbench profile applied to this pane, or the remembered active Workbench profile when the pane has none. Change it when this search needs another machine, then search by title, publisher or keyword. Leave the search blank to browse the current catalogue page. Search results remain installable for one hour and survive a normal app restart.</li>
               <li>Select the <strong>Title</strong>, <strong>Publisher</strong>, <strong>Year</strong> or <strong>Source</strong> heading to sort. The active heading shows ↑ for ascending or ↓ for descending; select it again to reverse the order. Checked results stay selected while sorting.</li>
-              <li>Use <strong>Not already present</strong> to hide likely matches found by disk title or remembered distribution filename. This is a helpful duplicate check, not a checksum guarantee.</li>
+              <li>Use <strong>Not already present</strong> to hide likely matches found by disk title, remembered online distribution name, or an installed MMB menu record. The comparison ignores punctuation and the publisher suffix saved with online imports. This is a helpful duplicate check, not a checksum guarantee.</li>
               <li>Select several downloadable results. If you did not select empty slots, set a starting slot; the app finds the next suitable empty run and wraps around safely. DSD images still require two adjacent slots.</li>
               <li>Leave <strong>Offer installed disks to the detected menu</strong> selected to review the title, publisher, launcher, action and PAGE after insertion. Clear it for intentionally off-menu disks.</li>
               <li>During a multi-item install, <strong>Abort operation</strong> stops before the next download. The item already in progress finishes at a safe image boundary.</li>
@@ -5793,7 +5797,7 @@ function showHelp() {
             <div class="help-task"><h4>Run a complete image health check</h4><ol>
               <li>Open the pane's <strong>Analyse</strong> menu and choose <strong>Image health dashboard</strong>.</li>
               <li>Read the duration warning. Large MMB and HDD images may take several minutes; the progress view names the current directory or menu phase and Abort operation stops at a safe boundary.</li>
-              <li>Review filesystem, geometry, MMB header, menu, PAGE, compatibility and hardware-profile findings together.</li>
+              <li>Review filesystem, geometry, MMB header, menu, PAGE, compatibility and hardware-profile findings together. Failed menu checks expand into individual records showing the title, slot or menu directory, disk title, launch command, PAGE, exact problem and supporting evidence.</li>
               <li>If a provably safe PAGE repair is available, inspect the itemised count and choose <strong>Repair menu PAGE values</strong>. An automatic checkpoint is made first.</li>
               <li>Run the dashboard again after repairs. Failed launcher or missing-disk checks remain manual because inventing a target would be unsafe.</li>
             </ol></div>
@@ -5811,7 +5815,10 @@ function showHelp() {
             </ol></div>
             <div class="help-task"><h4>Audit a collection</h4><ol>
               <li><strong>Test menu entries</strong> is enabled only when a menu is detected: anywhere in an MMB, or in the current ADFS directory. It checks disk or directory selection, launcher presence, action and PAGE for that applicable menu context.</li>
-              <li><strong>Find duplicates / variants</strong> groups byte-identical content by SHA-256 and likely variants by normalised disk or path name.</li>
+              <li>At an MMB's <strong>All disks</strong> level, <strong>Analyse → Check for duplicate games</strong> compares individual installed game titles across every disk name, catalogued file content, and complete slot images. This detects a game represented on differently named disks instead of relying on MMB disk titles alone.</li>
+              <li>Duplicate game records are listed by game title, slot and disk title. Select records directly using the checkbox on each result row. Equivalent disk-content groups compare filenames, load and execution metadata, sizes, and SHA-256 file hashes. Whole-image matches remain available as the strongest disk-level check.</li>
+              <li>Compilation disks receive an extra warning listing their other games. Keeping the disk removes only your selected menu record. Ejecting it clears the slot and removes every menu record associated with that disk.</li>
+              <li>The same Analyse command is named <strong>Find duplicates / variants</strong> in other image views and provides the broader file and collection report, grouping byte-identical content by SHA-256 and likely variants by normalised disk or path name.</li>
               <li><strong>Export collection manifest</strong> downloads CSV or JSON containing slots, files, Acorn metadata, menu records and checksums.</li>
               <li>For MMB, edit the exported JSON menu records carefully and choose <strong>Apply reviewed JSON</strong>. Current records are compared first so a stale manifest cannot overwrite a newer menu.</li>
             </ol></div>
@@ -6024,9 +6031,23 @@ async function runHealthCheck(index) {
 function renderHealthDashboard(index, report) {
   const pane = panes[index];
   const icon = { pass: "✓", warn: "!", fail: "×" };
+  const renderFinding = finding => {
+    const menuLocation = finding.menuRoot
+      ? `Menu ${finding.menuRoot}`
+      : finding.menuSlot != null
+        ? `Menu slot ${finding.menuSlot}${finding.menuType ? ` (${finding.menuType})` : ""}`
+        : "Menu location unknown";
+    const targetLocation = finding.slots?.length
+      ? `target slot ${finding.slots.join(", ")} · disk ${finding.diskTitle || "Untitled"}`
+      : `target disk ${finding.diskTitle || "not found"}`;
+    const command = [finding.action, finding.launcher].filter(Boolean).join(" ") || "No launch command";
+    const page = finding.page ? ` · PAGE &${finding.page}` : "";
+    return `<li><strong>Record ${Number(finding.record)} · ${esc(finding.title)}</strong><small>${esc(menuLocation)} · ${esc(targetLocation)}</small><small>${esc(command)}${esc(page)}</small>${(finding.problems || []).map(problem => `<em>${esc(problem)}</em>`).join("")}${finding.evidence ? `<small>Evidence: ${esc(finding.evidence)}</small>` : ""}</li>`;
+  };
+  const renderCheck = check => `<article class="health-check ${esc(check.status)}"><b>${icon[check.status] || "·"}</b><span><strong>${esc(check.name)}</strong><small>${esc(check.detail)}</small>${check.findings?.length ? `<details class="health-findings" ${check.status === "fail" ? "open" : ""}><summary>${check.findings.length} itemised ${check.findings.length === 1 ? "failure" : "failures"}</summary><ol>${check.findings.map(renderFinding).join("")}</ol></details>` : ""}</span></article>`;
   if (!replaceAnalysisLoading(`<div class="analysis-dialog wide-analysis">
       <header><div><small>UNIFIED IMAGE HEALTH</small><h2>${esc(pane.image.name)}</h2></div><span class="health-score ${esc(report.status)}">${esc(report.status)}</span></header>
-      <div class="health-checks">${report.checks.map(check => `<article class="health-check ${esc(check.status)}"><b>${icon[check.status] || "·"}</b><span><strong>${esc(check.name)}</strong><small>${esc(check.detail)}</small></span></article>`).join("") || "<p>No checks were applicable.</p>"}</div>
+      <div class="health-checks">${report.checks.map(renderCheck).join("") || "<p>No checks were applicable.</p>"}</div>
       ${report.repairable.length ? `<div class="help-note"><strong>Safe repairs available</strong>${report.repairable.map(item => `<p>${esc(item.label)} · ${esc(item.detail)}</p>`).join("")}</div>` : ""}
       <div class="modal-actions"><button class="button ghost" value="cancel">Close</button>${report.repairable.map(item => `<button class="button" data-health-repair="${esc(item.action)}" data-health-root="${esc(item.root || "")}" type="button">${esc(item.label)}</button>`).join("")}<button class="button primary" data-refresh-health type="button">Run again</button></div>
     </div>`)) return false;
@@ -6174,6 +6195,124 @@ async function showDuplicateReport(index) {
       <div class="duplicate-groups">${report.exact.map(items => group(items, true)).join("")}${report.variants.map(items => group(items, false)).join("") || "<p>No likely variants were found.</p>"}</div>
       <div class="modal-actions"><button class="button primary" value="cancel">Close</button></div></div>`)) return;
   } catch (error) { toast(error.message, true); modal.close(); }
+}
+
+async function showMmbDuplicateCheck(index) {
+  const pane = panes[index];
+  if (pane.image?.kind !== "mmb" || pane.slot != null) {
+    return toast("Open the MMB All disks view to check duplicate slots.", true);
+  }
+  analysisLoading("Checking MMB duplicates", "Hashing complete disk slots and reading the installed menu…");
+  try {
+    const [report, menu] = await Promise.all([
+      api(`/api/images/${pane.image.id}/duplicates`),
+      api(`/api/images/${pane.image.id}/menu`),
+    ]);
+    const slotGroup = items => items
+      .filter(item => item.recordType === "slot" && item.formatted)
+      .sort((left, right) => Number(left.slot) - Number(right.slot));
+    const exactGroups = report.exact.map(slotGroup).filter(items => items.length > 1);
+    const exactSignatures = new Set(exactGroups.map(items => items.map(item => item.slot).join(",")));
+    const variantGroups = report.variants
+      .map(slotGroup)
+      .filter(items => items.length > 1 && !exactSignatures.has(items.map(item => item.slot).join(",")));
+    const gameDuplicates = Array.isArray(report.gameDuplicates) ? report.gameDuplicates : [];
+    const contentMatches = Array.isArray(report.contentMatches) ? report.contentMatches.map(slotGroup).filter(items => items.length > 1) : [];
+    const duplicateGameIndexes = new Set(gameDuplicates.flatMap(items => items.map(item => Number(item.entryIndex))));
+    const installedEntries = Array.isArray(menu.entries) ? menu.entries : [];
+    const matchingMenuEntries = installedEntries
+      .map((entry, entryIndex) => ({ entry, entryIndex }))
+      .filter(({ entryIndex }) => duplicateGameIndexes.has(entryIndex));
+    const editableMenu = menu.configured && ["universal", "universal-4r", "spi-game-menu"].includes(menu.menuType);
+    const renderGroup = (items, label) => `<article class="duplicate-disk-group">
+      <header><strong>${esc(label)}</strong><small>${items.length} slots</small></header>
+      ${items.map(item => `<span><code>${Number(item.slot)}</code><b>${esc(item.diskTitle || item.sourceName || "Untitled disk")}</b><em>${Number(item.fileCount || 0)} files</em></span>`).join("")}
+    </article>`;
+    const renderGameGroup = items => `<article class="duplicate-game-group">
+      <header><strong>${esc(items[0]?.title || "Untitled game")}</strong><small>${items.length} menu records</small></header>
+      ${items.map(item => editableMenu
+        ? `<label class="duplicate-game-record"><input type="checkbox" name="menuEntry" value="${Number(item.entryIndex)}"><code>${item.slots?.length ? item.slots.map(Number).join(", ") : "?"}</code><span><b>${esc(item.diskTitle || "Untitled disk")}</b><em>${esc(item.publisher || "Unknown publisher")} · ${esc(item.action || "CHAIN")} ${esc(item.filename || "?")}</em></span></label>`
+        : `<div class="duplicate-game-record"><code>${item.slots?.length ? item.slots.map(Number).join(", ") : "?"}</code><span><b>${esc(item.diskTitle || "Untitled disk")}</b><em>${esc(item.publisher || "Unknown publisher")} · ${esc(item.action || "CHAIN")} ${esc(item.filename || "?")}</em></span></div>`
+      ).join("")}
+    </article>`;
+    const menuStatus = !menu.configured
+      ? '<div class="help-note"><strong>No installed menu was detected.</strong> The duplicate slots are listed for review, but there are no menu records to remove.</div>'
+      : !editableMenu
+        ? `<div class="help-note"><strong>${esc(menu.menuType || "This menu")} is read-only here.</strong> Duplicate slots are listed, but this menu format cannot be edited safely by Acorn File Forge.</div>`
+        : !matchingMenuEntries.length
+          ? '<div class="help-note"><strong>No duplicate game menu records were found.</strong> Content matches without corresponding menu records remain review-only.</div>'
+          : "";
+    showModal(`<div class="analysis-dialog wide-analysis mmb-duplicate-review">
+      <small>MMB DUPLICATE CHECK</small><h2>${gameDuplicates.length} duplicate game ${gameDuplicates.length === 1 ? "group" : "groups"} · ${exactGroups.length + contentMatches.length} disk-content ${exactGroups.length + contentMatches.length === 1 ? "match" : "matches"}</h2>
+      <p>Game matches come from individual installed menu titles, regardless of the disk names. Tick a game row here to remove that record. Disk-content matches compare catalogued filenames, metadata, and file hashes.</p>
+      <div class="duplicate-game-groups">${gameDuplicates.map(renderGameGroup).join("") || '<div class="help-note"><strong>No duplicate installed game titles were found.</strong> Differently named disks can still appear in the content matches below.</div>'}</div>
+      ${contentMatches.length ? `<details class="duplicate-variants" open><summary>${contentMatches.length} equivalent disk-content ${contentMatches.length === 1 ? "group" : "groups"} with different image bytes</summary><div class="duplicate-disk-groups">${contentMatches.map(items => renderGroup(items, "Equivalent catalogue content")).join("")}</div></details>` : ""}
+      <details class="duplicate-variants" ${gameDuplicates.length || contentMatches.length ? "" : "open"}><summary>${exactGroups.length} byte-identical whole-disk ${exactGroups.length === 1 ? "group" : "groups"}</summary><div class="duplicate-disk-groups">${exactGroups.map(items => renderGroup(items, "Byte-identical disks")).join("") || '<div class="help-note"><strong>No byte-identical disks were found.</strong></div>'}</div></details>
+      ${variantGroups.length ? `<details class="duplicate-variants"><summary>Review ${variantGroups.length} possible disk-title ${variantGroups.length === 1 ? "variant" : "variants"}</summary><div class="duplicate-disk-groups">${variantGroups.map(items => renderGroup(items, "Similar disk titles")).join("")}</div></details>` : ""}
+      ${menuStatus}
+      <div class="help-warning"><strong>No disk is ejected automatically.</strong> After choosing menu records, a second review asks whether the associated slots should also be cleared.</div>
+      <div class="modal-actions"><button class="button ghost" value="cancel">Close</button>${editableMenu && matchingMenuEntries.length ? '<button class="button danger remove-duplicate-menu" value="review" disabled>Review selected duplicates</button>' : ""}</div>
+    </div>`, form => {
+      const selectedIndexes = new Set(form.getAll("menuEntry").map(Number));
+      if (!selectedIndexes.size) return;
+      setTimeout(() => showMmbDuplicateCleanupChoices(index, installedEntries, selectedIndexes, report.slots || exactGroups.flat()), 0);
+    }, { replace: true });
+    const removeButton = modalContent.querySelector(".remove-duplicate-menu");
+    modalContent.querySelectorAll('[name="menuEntry"]').forEach(checkbox => checkbox.onchange = () => {
+      removeButton.disabled = !modalContent.querySelector('[name="menuEntry"]:checked');
+    });
+  } catch (error) {
+    toast(error.message, true);
+    modal.close();
+  }
+}
+
+function showMmbDuplicateCleanupChoices(index, installedEntries, selectedIndexes, slotRecords) {
+  const pane = panes[index];
+  const selectedTitles = new Set([...selectedIndexes].map(entryIndex =>
+    String(installedEntries[entryIndex]?.diskTitle || "").trim().toLocaleLowerCase()
+  ).filter(Boolean));
+  const candidateSlots = slotRecords.filter(item =>
+    selectedTitles.has(String(item.diskTitle || "").trim().toLocaleLowerCase())
+  );
+  const entriesForDisk = diskTitle => installedEntries
+    .map((entry, entryIndex) => ({ entry, entryIndex }))
+    .filter(({ entry }) => String(entry.diskTitle || "").trim().toLocaleLowerCase() === String(diskTitle || "").trim().toLocaleLowerCase());
+  const slotChoices = candidateSlots.map(slot => {
+    const related = entriesForDisk(slot.diskTitle);
+    const otherGames = related.filter(({ entryIndex }) => !selectedIndexes.has(entryIndex));
+    const multiGame = related.length > 1;
+    return `<fieldset class="duplicate-eject-choice">
+      <legend>Slot ${Number(slot.slot)} · ${esc(slot.diskTitle || slot.sourceName || "Untitled disk")}</legend>
+      ${multiGame ? `<div class="help-warning"><strong>Multi-game disk with ${related.length} menu titles.</strong><span>Ejecting it also removes:</span><ul>${otherGames.map(({ entry }) => `<li>${esc(entry.title || "Untitled entry")} · ${esc(entry.publisher || "Unknown publisher")}</li>`).join("") || "<li>All selected titles on this disk</li>"}</ul></div>` : '<p>This disk has no other menu games associated with it.</p>'}
+      <label><input type="radio" name="slotAction-${Number(slot.slot)}" value="keep" checked> <span><strong>Keep disk in slot</strong><small>Remove only the menu record selected in the previous step.</small></span></label>
+      <label><input type="radio" name="slotAction-${Number(slot.slot)}" value="eject"> <span><strong>Eject disk from slot ${Number(slot.slot)}</strong><small>${multiGame ? `Remove all ${related.length} menu records for this disk.` : "Remove its menu record and clear the slot."}</small></span></label>
+    </fieldset>`;
+  }).join("");
+  showModal(`<div class="analysis-dialog wide-analysis duplicate-eject-review">
+    <small>DUPLICATE CLEANUP · FINAL REVIEW</small><h2>Also eject the duplicate disks?</h2>
+    <p>Keeping a disk continues with normal menu-only cleanup. Ejecting clears its MMB catalogue entry and 200 KiB disk data.</p>
+    ${slotChoices || '<div class="help-note"><strong>No unambiguous slot match was found.</strong> Only the selected menu records will be removed.</div>'}
+    <div class="help-warning"><strong>Your original file is unchanged until you save.</strong> One automatic undo checkpoint covers this complete cleanup.</div>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button danger" value="apply">Apply cleanup</button></div>
+  </div>`, async form => {
+    const ejectSlots = candidateSlots
+      .filter(slot => form.get(`slotAction-${Number(slot.slot)}`) === "eject")
+      .map(slot => Number(slot.slot));
+    const result = await paneOperation(index, "Cleaning duplicate MMB records…", () => api(`/api/images/${pane.image.id}/mmb-menu/duplicate-cleanup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        expectedEntries: installedEntries,
+        removeIndexes: [...selectedIndexes],
+        ejectSlots,
+      }),
+    }));
+    pane.image = result.image;
+    await acceptImage(index, pane.image);
+    const removed = Number(result.removedRecords || selectedIndexes.size);
+    toast(`${removed} menu ${removed === 1 ? "record" : "records"} removed${result.ejectedSlots?.length ? `; slots ${result.ejectedSlots.join(", ")} ejected` : "; disks kept in their slots"}.`);
+  });
 }
 
 function showManifestExport(index) {

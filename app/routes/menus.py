@@ -473,4 +473,59 @@ def create_menus_blueprint(service: DiskService, template_dir: Path) -> Blueprin
             )
         return jsonify(image=service.summary(session), **result)
 
+    @blueprint.post("/api/images/<image_id>/mmb-menu/duplicate-cleanup")
+    def cleanup_mmb_duplicates(image_id):
+        data = payload()
+        session = service.get(image_id)
+        expected = data.get("expectedEntries", [])
+        if not isinstance(expected, list) or not expected:
+            raise DiskError("Refresh the duplicate review before changing the menu.")
+        try:
+            remove_indexes = {int(value) for value in data.get("removeIndexes", [])}
+            eject_slots = list(dict.fromkeys(int(value) for value in data.get("ejectSlots", [])))
+        except (TypeError, ValueError) as exc:
+            raise DiskError("The duplicate cleanup selection is invalid.") from exc
+        if not remove_indexes or any(index < 0 or index >= len(expected) for index in remove_indexes):
+            raise DiskError("Choose at least one current menu record to remove.")
+
+        with session.lock:
+            menu_slot = find_menu_slot(service, session)
+            slots = {int(row["slot"]): row for row in service.list_slots(session)}
+            for slot in eject_slots:
+                row = slots.get(slot)
+                if row is None or not row.get("formatted"):
+                    raise DiskError(f"MMB slot {slot} is no longer a formatted disk.")
+                if slot == menu_slot:
+                    raise DiskError("The installed menu disk cannot be ejected by duplicate cleanup.")
+
+            ejected_titles = {
+                str(slots[slot].get("name") or "").casefold()
+                for slot in eject_slots
+            }
+            removed_indexes = remove_indexes | {
+                offset
+                for offset, entry in enumerate(expected)
+                if isinstance(entry, dict)
+                and str(entry.get("diskTitle") or "").casefold() in ejected_titles
+            }
+            removed_entries = [
+                entry for offset, entry in enumerate(expected)
+                if offset in removed_indexes and isinstance(entry, dict)
+            ]
+            remaining = [
+                entry for offset, entry in enumerate(expected)
+                if offset not in removed_indexes
+            ]
+            result = edit_mmb_menu_entries(service, session, remaining, expected)
+            if eject_slots:
+                service.clear_slots(session, eject_slots)
+
+        return jsonify(
+            image=service.summary(session),
+            **result,
+            removedRecords=len(removed_entries),
+            removedEntries=removed_entries,
+            ejectedSlots=eject_slots,
+        )
+
     return blueprint
