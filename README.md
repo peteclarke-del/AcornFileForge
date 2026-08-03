@@ -88,6 +88,16 @@ reports and proposed improvements can be raised in the
 Uploads are copied into an isolated workspace. Editing an image never writes
 back to the original file selected in the browser.
 
+```mermaid
+flowchart LR
+    A[Open, create or find online] --> B[Browse files, directories or MMB slots]
+    B --> C[Edit, import or drag between panes]
+    C --> D[Analyse structure, menus and launchers]
+    D --> E[Save a timestamped ZIP with README]
+    C --> F[Undo or restore a named checkpoint]
+    F --> C
+```
+
 ## Online Library
 
 ![Online Library search and multi-selection](app/static/help/online-library.png)
@@ -152,8 +162,9 @@ volume contains local changes made through **Sources…**.
    The active heading shows ↑ for ascending or ↓ for descending order; select
    it again to reverse the order.
 4. Choose **Not already present** to hide likely duplicates detected from MMB
-   disk titles and remembered distribution filenames, or **All results** to
-   include them.
+   disk titles, remembered online distribution names and installed menu
+   records. Punctuation and the publisher suffix saved during installation do
+   not prevent a match. Choose **All results** to include them.
 5. Select several downloadable results. Selected empty slots are preferred.
    Otherwise the app scans from the requested starting slot, wraps safely and
    finds the next suitable run. DSD images still need two adjacent slots.
@@ -311,6 +322,8 @@ the exact per-slot destination.
 
 ### Unified image health
 
+![Image health with an itemised failed menu record](app/static/help/health-dashboard.png)
+
 **Image health dashboard** brings the applicable checks together:
 
 - filesystem structure and recursive catalogue access;
@@ -386,9 +399,12 @@ menu work.
 content and a conservative normalised-title comparison for likely release or
 side variants. It reports candidates rather than deleting anything.
 
-At the MMB **All disks** level, **Analyse → Check for duplicate games** checks individual game
-records as well as disks. Installed menu titles are compared across different
-disk names, so the same game on two differently labelled disks is reported.
+![MMB duplicate games and equivalent disk content](app/static/help/duplicate-check.png)
+
+At the MMB **All disks** level, **Analyse → Check for duplicate games** checks
+individual game records as well as disks. There is no second duplicate button
+in the root toolbar. Installed menu titles are compared across different disk
+names, so the same game on two differently labelled disks is reported.
 The scan also fingerprints each disk's catalogued filenames, load and execution
 metadata, sizes, and SHA-256 file hashes. This finds equivalent disk contents
 whose MMB headers or disk titles differ. Byte-identical whole-slot matches are

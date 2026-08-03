@@ -393,6 +393,12 @@ dialog:has(.help-guide) { width: min(1120px, calc(100vw - 24px)); }
 .help-content li + li { margin-top: 5px; }
 .help-content code, .help-content kbd { border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; background: var(--cream); color: var(--ink); font: 10px DM Mono, monospace; }
 .help-lead { color: var(--ink) !important; font-size: 13px !important; }
+.help-workflow { display: grid; grid-template-columns: repeat(7, auto); align-items: center; gap: 8px; margin: 14px 0; }
+.help-workflow > span { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 1px 8px; min-width: 0; padding: 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--cream); }
+.help-workflow > span b { grid-row: 1 / 3; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--blue); color: white; }
+.help-workflow > span strong { color: var(--ink); font-size: 10px; white-space: nowrap; }
+.help-workflow > span small { color: var(--muted); font: 8px/1.35 DM Mono, monospace; }
+.help-workflow > i { color: var(--teal); font-style: normal; font-weight: 800; }
 .help-task { margin: 12px 0; padding: 1px 14px 12px; border: 1px solid var(--line); border-left: 3px solid var(--blue); border-radius: 9px; background: color-mix(in srgb, var(--cream) 62%, transparent); }
 .help-task h4 { color: var(--ink); }
 .help-task p:last-child, .help-task ol:last-child { margin-bottom: 0; }
@@ -608,6 +614,8 @@ dialog:has(.bulk-copy-planner) form { padding: 22px; }
   .help-layout { grid-template-columns: 1fr; overflow: auto; }
   .help-toc { grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: none; overflow: visible; }
   .help-content { overflow: visible; }
+  .help-workflow { grid-template-columns: 1fr; }
+  .help-workflow > i { transform: rotate(90deg); justify-self: center; }
   .list-wrap { height: 420px; min-height: 320px; }
 }
 @media (max-width: 700px) {

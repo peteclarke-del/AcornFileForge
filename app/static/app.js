@@ -5275,6 +5275,12 @@ function showHelp() {
             <h3>Open or create an image</h3>
             <p class="help-lead">Edits are made to a private working copy. The file you selected on your computer is never overwritten.</p>
             <div class="help-note"><strong>Start small:</strong> a new workspace opens with one full-width pane. Select <strong>Add Pane</strong> in the header only when you need another source, destination or scratch image. You can display up to three panes.</div>
+            <div class="help-workflow" aria-label="Typical Acorn File Forge workflow">
+              <span><b>1</b><strong>Open or create</strong><small>A private working image</small></span><i>→</i>
+              <span><b>2</b><strong>Browse and edit</strong><small>Files, slots and directories</small></span><i>→</i>
+              <span><b>3</b><strong>Analyse</strong><small>Structure, menus and launchers</small></span><i>→</i>
+              <span><b>4</b><strong>Save</strong><small>Timestamped ZIP and README</small></span>
+            </div>
             <div class="help-task">
               <h4>Open an existing image</h4>
               <ol>
@@ -5801,6 +5807,7 @@ function showHelp() {
               <li>If a provably safe PAGE repair is available, inspect the itemised count and choose <strong>Repair menu PAGE values</strong>. An automatic checkpoint is made first.</li>
               <li>Run the dashboard again after repairs. Failed launcher or missing-disk checks remain manual because inventing a target would be unsafe.</li>
             </ol></div>
+            <figure><img src="/help/health-dashboard.png" alt="Image health dashboard with an expanded failed MMB menu record"><figcaption>A failed menu check is not just a count. Expand it to see the menu location, target disk or slot, launch command, PAGE, exact problem and evidence.</figcaption></figure>
             <div class="help-task"><h4>Dry-run a change</h4><ol>
               <li>Select one or more files, directories or MMB slots.</li>
               <li>Choose <strong>Analyse → Dry-run selected items</strong>.</li>
@@ -5822,6 +5829,7 @@ function showHelp() {
               <li><strong>Export collection manifest</strong> downloads CSV or JSON containing slots, files, Acorn metadata, menu records and checksums.</li>
               <li>For MMB, edit the exported JSON menu records carefully and choose <strong>Apply reviewed JSON</strong>. Current records are compared first so a stale manifest cannot overwrite a newer menu.</li>
             </ol></div>
+            <figure><img src="/help/duplicate-check.png" alt="MMB duplicate game review showing selectable menu records and equivalent disk content"><figcaption>The MMB All disks duplicate command lives only in Analyse. Tick the exact menu records to review; disks are kept unless the separate final review explicitly ejects them.</figcaption></figure>
             <div class="help-task"><h4>Profiles, recipes and projects</h4><ol>
               <li>Choose <strong>Workbench → Hardware profiles</strong>. Start from Electron Plus 3, BBC MMFS, BeebSCSI, Master ADFS or RISC OS, choose its Online Library filter, then save or apply the profile to an open image.</li>
               <li>A profile records machine, Online Library filter, filing system, MMFS build, Tube state, expected PAGE and validation target. An applied profile controls that pane. The active Workbench profile is remembered and becomes the workspace default for panes without an applied profile. On first use this is Electron Plus 3. Selecting, saving or applying another profile changes the default, and Find Discs and Online Library use it on their very first search.</li>

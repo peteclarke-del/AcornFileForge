@@ -185,6 +185,7 @@ def build_download_readme(
             "",
             "Keep this README beside the image so its catalogue, target and checksums stay with it.",
             "Verify the SHA-256 value after copying or writing it to media. Work from a backup, then test the edited image in an emulator or on disposable media before replacing a known-good card or disk.",
+            "Before using important media on hardware, reopen a copy in Acorn File Forge and run Analyse > Image health dashboard. For an installed MMB or ADFS menu, also run Analyse > Test menu entries and review every itemised failure.",
         )
     )
     if session.descriptor_path:
@@ -203,6 +204,7 @@ def build_download_readme(
                 "",
                 "MMB slot numbering is zero-based. Slot access reflects the MMB catalogue flag, not protection inside individual DFS files.",
                 "Installed menus may depend on exact disk titles, PAGE values and slot mappings. Preserve the menu slot and make a checkpoint before reorganising disks.",
+                "At All disks, Analyse > Check for duplicate games compares installed titles as well as disk content. Removing a menu record does not eject its disk unless that separate choice is confirmed.",
                 "",
                 "## Recognised MMB menus",
                 "",

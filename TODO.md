@@ -27,6 +27,10 @@ do not get lost in a long local checklist.
   - Combine filesystem validation, geometry checks, free-space map checks, menu
     audits, PAGE audits and loader compatibility into one clear report.
   - Offer safe automatic repairs with an itemised preview.
+  - Expand failed menu checks into individual records with the menu location,
+    target slot or directory, launch command, PAGE, exact problem and evidence.
+  - Report an unreadable menu database against its menu slot and data filename,
+    then continue checking any other detected menus.
 
 - [x] Hardware profiles
   - Save reusable Electron, BBC, Master, BeebSCSI and Archimedes/RISC OS setups.
@@ -72,6 +76,12 @@ do not get lost in a long local checklist.
 - [x] Duplicate and variant finder
   - Detect byte-identical images and likely title variants.
   - Compare catalogue contents while keeping genuinely different releases.
+  - At an MMB's All disks level, compare installed game titles independently of
+    disk labels and show equivalent catalogue content as a separate signal.
+  - Select duplicate menu records inline, then separately decide whether to
+    keep or eject each associated disk, with extra warnings for multi-game disks.
+  - Hide installed Online Library results using disk titles, remembered source
+    names and installed menu titles without relying on punctuation.
 
 - [x] Persistent jobs panel
   - Keep long-running jobs visible when dialogs close.
