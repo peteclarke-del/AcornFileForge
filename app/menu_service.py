@@ -2007,17 +2007,6 @@ def _adfs_launch_page(
     return None, f"{launch_path} does not expose a provable BASIC PAGE", True
 
 
-def infer_adfs_launch_page(
-    service: DiskService,
-    session: ImageSession,
-    directory: str,
-    filename: str,
-    action: str,
-) -> tuple[str | None, str, bool]:
-    """Public read-only PAGE inference used by menu audits and diagnostics."""
-    return _adfs_launch_page(service, session, directory, filename, action)
-
-
 def audit_adfs_menu_pages(
     service: DiskService,
     session: ImageSession,
@@ -2154,16 +2143,6 @@ def find_menu_slot(service: DiskService, session: ImageSession) -> int | None:
             return session.menu_slot
     session.menu_scanned = True
     return None
-
-
-def find_mmc_desktop_slot(
-    service: DiskService,
-    session: ImageSession,
-) -> int | None:
-    finder = getattr(service, "find_mmb_slot_with_catalogue_files", None)
-    if finder is None or session.kind != "mmb":
-        return None
-    return finder(session, MMC_DESKTOP_FILES)
 
 
 def installed_mmb_menu(
@@ -2394,16 +2373,6 @@ def metadata_records_from_mmb_menu(
         }
         for record in matching_records
     ]
-
-
-def metadata_from_mmb_menu(
-    service: DiskService,
-    session: ImageSession,
-    slot: int,
-) -> dict | None:
-    """Return the first existing MMB menu record for compatibility callers."""
-    records = metadata_records_from_mmb_menu(service, session, slot)
-    return records[0] if records else None
 
 
 def continuation_metadata_from_mmb_menu(

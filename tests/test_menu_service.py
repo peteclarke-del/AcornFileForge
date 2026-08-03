@@ -34,7 +34,6 @@ from app.menu_service import (
     fit_menu_display_fields,
     menu_title_case,
     mmb_metadata_for_adfs,
-    metadata_from_mmb_menu,
     metadata_records_from_mmb_menu,
     parse_menu_data,
     parse_spi_menu_data,
@@ -629,7 +628,7 @@ class MenuServiceTests(unittest.TestCase):
             }],
         )
 
-        metadata = metadata_from_mmb_menu(FakeService(), session, 1)
+        metadata = metadata_records_from_mmb_menu(FakeService(), session, 1)[0]
 
         self.assertEqual(metadata["filename"], "ARCADES")
         self.assertEqual(metadata["publisher"], "4th Dimension")

@@ -5,8 +5,8 @@ import hashlib
 import io
 import re
 from collections import defaultdict, deque
-from pathlib import Path
 
+from .checksum import sha256_path
 from .dfs_compat import dfs_catalogue_files, infer_dfs_launch_page
 from .disk_service import MMB_HEADER_SIZE, MMB_SLOT_SIZE, DiskError
 from .menu_interpreter import decode_basic
@@ -28,14 +28,6 @@ COMMAND_RE = re.compile(
 
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
-
-
-def _sha256_path(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(8 * 1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _join(parent: str, name: str) -> str:
@@ -84,7 +76,7 @@ def inspect_file(service, session, path: str, slot: int | None, side: int | None
         with exported.open("rb") as source:
             preview = source.read(MAX_INSPECT_BYTES)
         truncated = size > len(preview)
-        digest = _sha256_path(exported)
+        digest = sha256_path(exported)
     finally:
         exported.unlink(missing_ok=True)
     basic = decode_basic(preview)
@@ -220,7 +212,7 @@ def build_manifest(service, session) -> dict:
                 try:
                     exported = service.export_file(session, None, path, side)
                     try:
-                        record["sha256"] = _sha256_path(exported)
+                        record["sha256"] = sha256_path(exported)
                     finally:
                         exported.unlink(missing_ok=True)
                 except DiskError as exc:

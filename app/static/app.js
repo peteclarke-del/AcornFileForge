@@ -3378,41 +3378,22 @@ async function recoverPreviousSession(index) {
       <p>Only working images owned by this browser are shown. The newest available session is selected first.</p>
       ${emptyMessage}
       <div class="field"><label>Saved working session</label><select name="imageId" ${recoverable.length ? "" : "disabled"}>${options}</select></div>
-      <input type="hidden" name="recoveryAction" value="recover">
       <div class="modal-actions recovery-actions">
         <button class="button danger clear-selected-session" type="button" ${recoverable.length ? "" : "disabled"}>Clear selected</button>
         <button class="button danger clear-all-sessions" type="button" ${recoverable.length ? "" : "disabled"}>Clear all previous</button>
       </div>
-      <div class="field"><label>One-time session recovery key</label><input name="recoveryKey" autocomplete="off" placeholder="AFF-XXXX-XXXX-XXXX"></div>
       <div class="help-note">Recovery reopens the server-side working copy with all completed changes. Clearing permanently deletes only the selected browser-owned working copies, never your original host files.</div>
-      <div class="modal-actions"><button class="button" value="cancel">Cancel</button><button class="button claim-session" value="claim">Link older session</button><button class="button primary recover-session" value="recover" ${recoverable.length ? "" : "disabled"}>Recover session</button></div>
+      <div class="modal-actions"><button class="button" value="cancel">Cancel</button><button class="button primary recover-session" value="recover" ${recoverable.length ? "" : "disabled"}>Recover session</button></div>
     `, async form => {
-      if (form.get("recoveryAction") === "claim") {
-        const claimed = await api("/api/images/recoverable/claim", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ recoveryKey: form.get("recoveryKey") })
-        });
-        await acceptImage(index, claimed.image);
-        toast(`${claimed.image.name} is now private to this browser and has been recovered.`);
-        return;
-      }
       const imageId = form.get("imageId");
       const restored = await api(`/api/images/${encodeURIComponent(imageId)}`);
       await acceptImage(index, restored.image);
       toast(`${restored.image.name} recovered with its working changes.`);
     });
-    const recoveryAction = modalContent.querySelector('input[name="recoveryAction"]');
     const sessionSelect = modalContent.querySelector('select[name="imageId"]');
     const recoverButton = modalContent.querySelector(".recover-session");
     const clearSelected = modalContent.querySelector(".clear-selected-session");
     const clearAll = modalContent.querySelector(".clear-all-sessions");
-    modalContent.querySelector(".claim-session").addEventListener("click", () => {
-      recoveryAction.value = "claim";
-    });
-    recoverButton?.addEventListener("click", () => {
-      recoveryAction.value = "recover";
-    });
     const updateRecoveryControls = () => {
       const hasSessions = sessionSelect.options.length > 0;
       sessionSelect.disabled = !hasSessions;
@@ -5726,12 +5707,11 @@ function showHelp() {
                 <li>Choose <strong>Save all edits</strong> once. Acorn File Forge validates changed launchers, detects a menu changed in another tab, then replaces all menu database files together. Cancel leaves the installed menu untouched.</li>
                 <li>If an inserted disk is absent, choose <strong>Add missing disks</strong> in the preview. A newly created game menu also opens this scan automatically when the MMB already contains formatted disks.</li>
                 <li>When editing, choose its MMB disk by slot/title, select a launch file from that disk's populated catalogue, and set CHAIN, RUN, EXEC or LOAD plus PAGE. Saving is rejected if the disk title is missing, duplicated, or the launcher does not exist.</li>
-                <li>Choose <strong>Add previously unlisted disks</strong> to find only omitted slots, or <strong>Regenerate the complete menu</strong> to rescan all formatted non-menu disks.</li>
+                <li>For a broader scan, return to <strong>Create / manage menu</strong>. Choose <strong>Add previously unlisted disks</strong> to find only omitted slots, or <strong>Regenerate the complete menu</strong> to rescan all formatted non-menu disks, then select <strong>Scan disks</strong>.</li>
+                <li>Review that scan, untick anything that should remain off-menu and correct ambiguous metadata. Select <strong>Add selected</strong> for missing entries or <strong>Replace menu</strong> for a complete regeneration.</li>
                 <li>Choose <strong>Menu → Audit launch PAGE values</strong> at any time to compare every Universal Menu CHAIN or EXEC record with the real launcher in its MMB slot. Provable differences and legacy database encodings are repaired automatically, then the menu disk is validated. RUN, LOAD and machine-code entries are reported as not PAGE-dependent; ambiguous entries remain unchanged and are listed for review.</li>
                 <li>Choose <strong>Menu → Backup menu slot</strong>, then select an empty destination. The complete menu disk is copied there as a read-only <code>MBACKUP-xxx</code> slot which is ignored by installed-menu detection and automatic scans.</li>
                 <li>Choose <strong>Menu → Restore menu backup</strong> to replace the active menu slot from one of those backups. The backup is retained, drive 0 continues to point at the active slot, and a failed validation restores the pre-operation menu automatically.</li>
-                <li>Review the batch. Untick anything that should remain off-menu and correct ambiguous metadata.</li>
-                <li>Select <strong>Add selected</strong> or <strong>Replace menu</strong>.</li>
                 <li>Open <strong>Menu → Preview installed menu</strong> and verify titles and launch commands.</li>
               </ol>
             </div>
@@ -5836,7 +5816,7 @@ function showHelp() {
               <li>Choose <strong>Workbench → Hardware profiles</strong>. Start from Electron Plus 3, BBC MMFS, BeebSCSI, Master ADFS or RISC OS, choose its Online Library filter, then save or apply the profile to an open image.</li>
               <li>A profile records machine, Online Library filter, filing system, MMFS build, Tube state, expected PAGE and validation target. An applied profile controls that pane. The active Workbench profile is remembered and becomes the workspace default for panes without an applied profile. On first use this is Electron Plus 3. Selecting, saving or applying another profile changes the default, and Find Discs and Online Library use it on their very first search.</li>
               <li>Choose <strong>Import recipes</strong> to save naming, group prefix, online metadata, compatibility and menu choices. Saved recipes appear in the MMB-to-ADFS planner.</li>
-              <li>Choose <strong>Portable project</strong> to export the current pane order, session references, paths, profiles, recipes and theme. Import it on the same retained installation to restore the working context.</li>
+              <li>Choose <strong>Portable project</strong> to export the current pane order, session references, paths, profiles and recipes. Import it on the same retained installation to restore that working context. Theme remains a browser preference.</li>
             </ol></div>
             <div class="help-task"><h4>Monitor, abort and resume jobs</h4><ol>
               <li>Choose <strong>Jobs</strong> in the header. Running, paused, failed, completed and interrupted work remains visible after its foreground dialog closes.</li>
@@ -5876,8 +5856,7 @@ function showHelp() {
                 <li>Recovery is tied to an opaque identity kept in both a private cookie and this site's browser storage. Either copy restores the other after a restart. Another browser profile or user receives a different identity and cannot list, open or delete your sessions.</li>
                 <li>In the recovery dialog, select <strong>Clear selected</strong> to delete one old working copy, or <strong>Clear all previous</strong> to delete every previous copy shown. Images currently open in any pane are protected from this list.</li>
                 <li>Clearing removes only retained server working data. It never deletes the original file previously selected from your computer.</li>
-                <li>An inaccessible session can be linked once by entering an operator-issued recovery key. After linking, the key expires and normal browser ownership applies.</li>
-                <li>Clearing this site's browser cookies removes the browser identity. Keep the same browser profile while recoverable work remains important.</li>
+                <li>Clearing both this site's cookies and browser storage removes the browser identity. Keep the same browser profile while recoverable work remains important, and download finished images before clearing site data.</li>
               </ol>
             </div>
             <div class="help-task">
@@ -6388,7 +6367,6 @@ function projectDocument() {
     } : null),
     hardwareProfiles: storedCollection(PROFILE_STORAGE_KEY, BUILTIN_PROFILES),
     importRecipes: storedCollection(RECIPE_STORAGE_KEY, []),
-    theme: document.documentElement.dataset.theme,
   };
 }
 
@@ -6411,7 +6389,7 @@ function renderWorkbench(section = "profiles") {
   const recipes = storedCollection(RECIPE_STORAGE_KEY, []);
   const imageOptions = panes.map((pane, index) => pane.image ? `<option value="${index}">${esc(paneLabel(index))}</option>` : "").join("");
   showModal(`<div class="workbench-dialog"><header><div><small>ACORN FILE FORGE</small><h2>Workbench</h2></div><select name="workbenchSection"><option value="profiles" ${section === "profiles" ? "selected" : ""}>Hardware profiles</option><option value="recipes" ${section === "recipes" ? "selected" : ""}>Import recipes</option><option value="project" ${section === "project" ? "selected" : ""}>Portable project</option></select></header>
-    ${section === "profiles" ? `<div class="workbench-grid"><aside>${profiles.map((profile, index) => `<button type="button" data-profile-index="${index}"><b>${esc(profile.name)}</b><small>${esc(profile.machine)} · ${esc(profile.filingSystem)}</small></button>`).join("")}</aside><section><div class="field"><label>Profile name</label><input name="profileName" value="${esc(profiles[0]?.name || "My Acorn setup")}"></div><div class="field"><label>Machine</label><input name="profileMachine" value="${esc(profiles[0]?.machine || "BBC Micro")}"></div><div class="field"><label>Filing system</label><input name="profileFs" value="${esc(profiles[0]?.filingSystem || "MMFS")}"></div><div class="field"><label>Target validation</label><select name="profileTarget"><option value="auto">Automatic</option><option value="electron-plus3">Electron Plus 3</option><option value="bbc-master">BBC / Master ADFS</option><option value="beebscsi">BeebSCSI</option><option value="risc-os">Archimedes / RISC OS</option></select></div><div class="field"><label>MMFS build</label><input name="profileMmfs" value="${esc(profiles[0]?.mmfsBuild || "paged")}"></div><div class="field"><label>Expected PAGE</label><input name="profilePage" value="${esc(profiles[0]?.page || "E00")}"></div><label class="check-field"><input type="checkbox" name="profileTube" ${profiles[0]?.tube ? "checked" : ""}> Tube enabled</label><div class="field"><label>Apply to open pane</label><select name="profilePane">${imageOptions || '<option value="">No open images</option>'}</select></div><div class="modal-actions"><button type="button" class="button" data-save-profile>Save profile</button><button type="button" class="button primary" data-apply-profile ${imageOptions ? "" : "disabled"}>Apply profile</button></div></section></div>` : section === "recipes" ? `<div class="workbench-grid"><aside>${recipes.map((recipe, index) => `<button type="button" data-recipe-index="${index}"><b>${esc(recipe.name)}</b><small>${esc(recipe.naming)} · ${recipe.addMenu ? "menu" : "off-menu"}</small></button>`).join("") || "<p>No saved recipes yet.</p>"}</aside><section><div class="field"><label>Recipe name</label><input name="recipeName" value="Collection import"></div><div class="field"><label>Directory naming</label><select name="recipeNaming"><option value="source">Use source titles</option><option value="generic">DISC-0000 sequence</option></select></div><div class="field"><label>Group prefix</label><input name="recipeGroup" maxlength="10" value="DISCS"></div><label class="check-field"><input type="checkbox" name="recipeOnline" checked> Use online metadata for ambiguous titles</label><label class="check-field"><input type="checkbox" name="recipeCompat" checked> Apply safe DFS to ADFS compatibility rewrites</label><label class="check-field"><input type="checkbox" name="recipeMenu" checked> Offer imported titles to a menu</label><div class="modal-actions"><button type="button" class="button primary" data-save-recipe>Save recipe</button></div></section></div>` : `<div class="project-tools"><p>A project description preserves the pane layout, working session references, current paths, profiles, recipes and theme. Image bytes remain in their private recoverable sessions and normal timestamped save ZIPs.</p><div class="modal-actions"><button type="button" class="button" data-export-project>Export project JSON</button><label class="button primary">Import project JSON<input type="file" accept="application/json,.json" data-import-project hidden></label></div></div>`}
+    ${section === "profiles" ? `<div class="workbench-grid"><aside>${profiles.map((profile, index) => `<button type="button" data-profile-index="${index}"><b>${esc(profile.name)}</b><small>${esc(profile.machine)} · ${esc(profile.filingSystem)}</small></button>`).join("")}</aside><section><div class="field"><label>Profile name</label><input name="profileName" value="${esc(profiles[0]?.name || "My Acorn setup")}"></div><div class="field"><label>Machine</label><input name="profileMachine" value="${esc(profiles[0]?.machine || "BBC Micro")}"></div><div class="field"><label>Filing system</label><input name="profileFs" value="${esc(profiles[0]?.filingSystem || "MMFS")}"></div><div class="field"><label>Target validation</label><select name="profileTarget"><option value="auto">Automatic</option><option value="electron-plus3">Electron Plus 3</option><option value="bbc-master">BBC / Master ADFS</option><option value="beebscsi">BeebSCSI</option><option value="risc-os">Archimedes / RISC OS</option></select></div><div class="field"><label>MMFS build</label><input name="profileMmfs" value="${esc(profiles[0]?.mmfsBuild || "paged")}"></div><div class="field"><label>Expected PAGE</label><input name="profilePage" value="${esc(profiles[0]?.page || "E00")}"></div><label class="check-field"><input type="checkbox" name="profileTube" ${profiles[0]?.tube ? "checked" : ""}> Tube enabled</label><div class="field"><label>Apply to open pane</label><select name="profilePane">${imageOptions || '<option value="">No open images</option>'}</select></div><div class="modal-actions"><button type="button" class="button" data-save-profile>Save profile</button><button type="button" class="button primary" data-apply-profile ${imageOptions ? "" : "disabled"}>Apply profile</button></div></section></div>` : section === "recipes" ? `<div class="workbench-grid"><aside>${recipes.map((recipe, index) => `<button type="button" data-recipe-index="${index}"><b>${esc(recipe.name)}</b><small>${esc(recipe.naming)} · ${recipe.addMenu ? "menu" : "off-menu"}</small></button>`).join("") || "<p>No saved recipes yet.</p>"}</aside><section><div class="field"><label>Recipe name</label><input name="recipeName" value="Collection import"></div><div class="field"><label>Directory naming</label><select name="recipeNaming"><option value="source">Use source titles</option><option value="generic">DISC-0000 sequence</option></select></div><div class="field"><label>Group prefix</label><input name="recipeGroup" maxlength="10" value="DISCS"></div><label class="check-field"><input type="checkbox" name="recipeOnline" checked> Use online metadata for ambiguous titles</label><label class="check-field"><input type="checkbox" name="recipeCompat" checked> Apply safe DFS to ADFS compatibility rewrites</label><label class="check-field"><input type="checkbox" name="recipeMenu" checked> Offer imported titles to a menu</label><div class="modal-actions"><button type="button" class="button primary" data-save-recipe>Save recipe</button></div></section></div>` : `<div class="project-tools"><p>A project description preserves the pane layout, working session references, current paths, profiles and recipes. Image bytes remain in their private recoverable sessions and normal timestamped save ZIPs. Theme remains a browser preference.</p><div class="modal-actions"><button type="button" class="button" data-export-project>Export project JSON</button><label class="button primary">Import project JSON<input type="file" accept="application/json,.json" data-import-project hidden></label></div></div>`}
     <div class="modal-actions"><button class="button ghost" value="cancel">Close workbench</button></div></div>`);
   if (section === "profiles") {
     modalContent.querySelector('[name="profileMachine"]')?.closest(".field")?.insertAdjacentHTML(

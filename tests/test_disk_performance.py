@@ -299,52 +299,5 @@ class DiskPerformanceTests(unittest.TestCase):
             ),
         )
 
-    def test_dotted_dfs_names_keep_their_complete_path_when_copied_to_adfs(self):
-        entries = [
-            types.SimpleNamespace(is_dir=False, path="$.eE.Rob"),
-            types.SimpleNamespace(is_dir=False, path="$.eT.Rob"),
-            types.SimpleNamespace(is_dir=False, path="$.PLAIN"),
-        ]
-        storage_keys = {
-            "$.eE.Rob": 38,
-            "$.eT.Rob": 31,
-            "$.PLAIN": 12,
-        }
-        mount = types.SimpleNamespace(
-            iter_entries=lambda _path: iter(entries),
-            storage_key=lambda path: storage_keys[path],
-        )
-        items = [
-            {"kind": "mkdir", "dst": "$.Games.DISC-0184"},
-            {"kind": "file", "dst": "$.Games.DISC-0184.Rob", "_storage_key": 38},
-            {"kind": "file", "dst": "$.Games.DISC-0184.Rob", "_storage_key": 31},
-            {"kind": "file", "dst": "$.Games.DISC-0184.PLAIN", "_storage_key": 12},
-        ]
-
-        planned = DiskService._preserve_dfs_catalogue_paths(
-            mount,
-            "$",
-            "$.Games.DISC-0184",
-            items,
-        )
-
-        self.assertEqual(
-            [item["dst"] for item in planned if item["kind"] == "mkdir"],
-            [
-                "$.Games.DISC-0184",
-                "$.Games.DISC-0184.eE",
-                "$.Games.DISC-0184.eT",
-            ],
-        )
-        self.assertEqual(
-            [item["dst"] for item in planned if item["kind"] == "file"],
-            [
-                "$.Games.DISC-0184.eE.Rob",
-                "$.Games.DISC-0184.eT.Rob",
-                "$.Games.DISC-0184.PLAIN",
-            ],
-        )
-
-
 if __name__ == "__main__":
     unittest.main()

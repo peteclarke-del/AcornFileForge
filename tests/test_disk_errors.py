@@ -370,66 +370,6 @@ class DiskErrorTests(unittest.TestCase):
 
             self.assertEqual(restored.warnings, ["A useful current warning"])
 
-    def test_one_time_key_claims_only_unowned_legacy_session(self) -> None:
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
-            service = DiskService(root)
-            image_id = "c" * 32
-            session_folder = root / image_id
-            session_folder.mkdir()
-            image = session_folder / "legacy.ssd"
-            image.write_bytes(bytes(204800))
-            session = ImageSession(
-                image_id,
-                image.name,
-                "dfs",
-                image,
-                owner_id=None,
-                recovery_key="AFF-TEST-ONLY",
-            )
-            service.sessions[image_id] = session
-            service._persist_session(session)
-
-            owner_token = SESSION_OWNER.set("new-browser-owner")
-            try:
-                claimed = service.claim_recovery_key("aff-test-only")
-                self.assertEqual(claimed.owner_id, "new-browser-owner")
-                self.assertIsNone(claimed.recovery_key)
-                with self.assertRaisesRegex(DiskError, "invalid or has already"):
-                    service.claim_recovery_key("AFF-TEST-ONLY")
-            finally:
-                SESSION_OWNER.reset(owner_token)
-
-    def test_one_time_key_can_reclaim_owned_session_after_cookie_loss(self) -> None:
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder)
-            service = DiskService(root)
-            image_id = "d" * 32
-            session_folder = root / image_id
-            session_folder.mkdir()
-            image = session_folder / "working.mmb"
-            image.write_bytes(bytes(8192 + 204800))
-            session = ImageSession(
-                image_id,
-                image.name,
-                "mmb",
-                image,
-                owner_id="lost-browser-owner",
-            )
-            service.sessions[image_id] = session
-            service._persist_session(session)
-            recovery_key = service.issue_recovery_key(image_id)
-
-            owner_token = SESSION_OWNER.set("replacement-browser-owner")
-            try:
-                claimed = service.claim_recovery_key(recovery_key.lower())
-                self.assertEqual(claimed.owner_id, "replacement-browser-owner")
-                self.assertIsNone(claimed.recovery_key)
-                with self.assertRaisesRegex(DiskError, "invalid or has already"):
-                    service.claim_recovery_key(recovery_key)
-            finally:
-                SESSION_OWNER.reset(owner_token)
-
     def test_descriptor_is_rejected_for_non_dat_image(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             service = DiskService(Path(folder))

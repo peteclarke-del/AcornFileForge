@@ -167,12 +167,6 @@ def create_images_blueprint(
     def recoverable_images():
         return jsonify(images=service.recoverable_sessions())
 
-    @blueprint.post("/api/images/recoverable/claim")
-    def claim_recoverable_image():
-        data = payload()
-        session = service.claim_recovery_key(data.get("recoveryKey", ""))
-        return jsonify(image=service.summary(session))
-
     @blueprint.delete("/api/images/recoverable")
     def clear_recoverable_images():
         data = request.get_json(silent=True) or {}

@@ -105,7 +105,6 @@ class ImageSession:
     hfe_layout: str | None = None
     hfe_export_path: Path | None = None
     owner_id: str | None = field(default_factory=lambda: SESSION_OWNER.get())
-    recovery_key: str | None = None
     lock: threading.RLock = field(default_factory=threading.RLock)
 
 
@@ -161,7 +160,6 @@ class DiskService:
             "hfeReadOnly": session.hfe_read_only,
             "hfeLayout": session.hfe_layout,
             "ownerId": session.owner_id,
-            "recoveryKey": session.recovery_key,
             "warnings": session.warnings,
         }
         target = session.path.parent / "session.json"
@@ -221,7 +219,6 @@ class DiskService:
                 hfe_read_only=bool(metadata.get("hfeReadOnly")),
                 hfe_layout=metadata.get("hfeLayout"),
                 owner_id=metadata.get("ownerId"),
-                recovery_key=metadata.get("recoveryKey"),
                 warnings=[
                     str(warning)
                     for warning in metadata.get("warnings", [])
@@ -919,40 +916,6 @@ class DiskService:
             target.unlink(missing_ok=True)
         shutil.copyfile(source, target)
 
-    def create_from_path(self, source: Path) -> ImageSession:
-        safe_name = self.safe_filename(source.name)
-        kind = self.detect_kind(safe_name)
-        image_id = uuid.uuid4().hex
-        folder = self.work_dir / image_id
-        folder.mkdir()
-        path = folder / safe_name
-        source_descriptor = (
-            source.with_suffix(".dsc")
-            if source.suffix.lower() == ".dat"
-            else None
-        )
-        descriptor_name = (
-            self.safe_filename(source_descriptor.name)
-            if source_descriptor and source_descriptor.is_file()
-            else None
-        )
-        descriptor_path = folder / descriptor_name if descriptor_name else None
-        try:
-            self._copy_local_file(source, path)
-            if source_descriptor and descriptor_path:
-                self._copy_local_file(source_descriptor, descriptor_path)
-            return self._finalize_new_session(
-                image_id,
-                safe_name,
-                path,
-                descriptor_name,
-                descriptor_path,
-                kind,
-            )
-        except Exception:
-            shutil.rmtree(folder, ignore_errors=True)
-            raise
-
     def get(self, image_id: str) -> ImageSession:
         try:
             session = self.sessions[image_id]
@@ -961,13 +924,10 @@ class DiskService:
         owner_id = SESSION_OWNER.get()
         if owner_id is None:
             return session
-        if session.owner_id is None:
-            # Legacy sessions pre-date ownership. Knowing their unguessable
-            # session ID is sufficient to attach an already-open pane once.
-            session.owner_id = owner_id
-            session.recovery_key = None
-            self._persist_session(session)
-        elif not secrets.compare_digest(session.owner_id, owner_id):
+        if not session.owner_id or not secrets.compare_digest(
+            session.owner_id,
+            owner_id,
+        ):
             raise DiskError("That image session no longer exists.")
         return session
 
@@ -1009,41 +969,6 @@ class DiskService:
                 continue
         recovered.sort(key=lambda item: item["modified"], reverse=True)
         return recovered[: max(1, min(int(limit), 100))]
-
-    def claim_recovery_key(self, recovery_key: str) -> ImageSession:
-        """Attach one session to the current browser using a one-time key."""
-        owner_id = SESSION_OWNER.get()
-        key = str(recovery_key or "").strip().upper()
-        if owner_id is None or not key:
-            raise DiskError("Enter the one-time recovery key.")
-        for metadata_path in self.work_dir.glob("*/session.json"):
-            try:
-                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-                expected = str(metadata.get("recoveryKey") or "").strip().upper()
-                if not expected or not secrets.compare_digest(expected, key):
-                    continue
-                image_id = metadata_path.parent.name
-                if not re.fullmatch(r"[0-9a-f]{32}", image_id):
-                    continue
-                session = self.sessions.get(image_id) or self._restore_session(image_id)
-                session.owner_id = owner_id
-                session.recovery_key = None
-                self._persist_session(session)
-                return session
-            except (OSError, ValueError, json.JSONDecodeError):
-                continue
-        raise DiskError("That recovery key is invalid or has already been used.")
-
-    def issue_recovery_key(self, image_id: str) -> str:
-        """Issue an operator-assisted, one-time key for an inaccessible session."""
-        session = self.sessions.get(image_id) or self._restore_session(image_id)
-        key = "AFF-" + "-".join(
-            secrets.token_hex(2).upper()
-            for _part in range(3)
-        )
-        session.recovery_key = key
-        self._persist_session(session)
-        return key
 
     def clear_recoverable_sessions(self, image_ids: list[str] | None = None) -> int:
         """Delete only working copies owned by the current browser identity."""
@@ -2838,44 +2763,6 @@ class DiskService:
             return bool(entry.is_dir) and next(iter(mount.iter_entries(path)), None) is None
         except (AttributeError, OSError, RuntimeError, ValueError):
             return False
-
-    @staticmethod
-    def _preserve_dfs_catalogue_paths(
-        source_mount,
-        source_directory: str,
-        destination: str,
-        items: list[dict],
-    ) -> list[dict]:
-        """Keep literal dotted DFS names distinct when copying into hierarchical ADFS."""
-        try:
-            prefix = f"{source_directory}." if source_directory else ""
-            paths_by_storage_key: dict[int, str] = {}
-            for entry in source_mount.iter_entries(source_directory):
-                if entry.is_dir:
-                    continue
-                path = str(entry.path)
-                relative = path[len(prefix) :] if path.startswith(prefix) else path
-                paths_by_storage_key[int(source_mount.storage_key(path))] = relative
-        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
-            return items
-
-        mkdirs = [dict(item) for item in items if item["kind"] == "mkdir"]
-        files = [dict(item) for item in items if item["kind"] == "file"]
-        known_directories = {str(item["dst"]).casefold() for item in mkdirs}
-        for item in files:
-            relative = paths_by_storage_key.get(item.get("_storage_key"))
-            if not relative:
-                continue
-            item["dst"] = f"{destination}.{relative}"
-            components = relative.split(".")[:-1]
-            parent = destination
-            for component in components:
-                parent = f"{parent}.{component}"
-                key = parent.casefold()
-                if key not in known_directories:
-                    mkdirs.append({"kind": "mkdir", "dst": parent})
-                    known_directories.add(key)
-        return [*mkdirs, *files]
 
     @staticmethod
     def _write_adfs_copy_item(

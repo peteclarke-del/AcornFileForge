@@ -82,7 +82,7 @@ Bug reports and proposed improvements can be raised in the
 5. Use **History** to undo the latest operation or create a named checkpoint
    before a larger experiment.
 6. Use **Tools → Check filesystem** after substantial edits.
-7. Use **Save** to download the finished image.
+7. Use **Save Image** in the pane heading to download the finished image.
 
 Uploads are copied into an isolated workspace. Editing an image never writes
 back to the original file selected in the browser.
@@ -432,7 +432,7 @@ an installed title from being recognised.
 The header **Workbench** includes reusable hardware profiles for Electron Plus
 3, BBC Micro with paged MMFS, BBC/Master BeebSCSI, Master ADFS, and
 Archimedes/RISC OS. A profile records the machine, Online Library filter,
-filing system, MMFS build, Tube state, expected PAGE, menu preference, and ADFS
+filing system, MMFS build, Tube state, expected PAGE, and ADFS
 validation target. Custom profiles are stored in the browser and the applied
 profile is also persisted with the private image session. The health dashboard
 highlights conflicts such as using the Tube with Electron or low-PAGE MMFS
@@ -444,7 +444,6 @@ a different profile changes that default.
 Online Library search results carry short-lived server-side download tokens.
 They are retained for one hour in the private application work area, so a safe
 container restart does not invalidate a search dialog that is already open.
-applied profile.
 
 Import recipes record the directory naming strategy, group prefix, online
 metadata preference, guarded compatibility rewrites, and whether copied titles
@@ -455,9 +454,10 @@ can be adjusted for exceptional disks without changing the saved recipe.
 
 Workbench can export an `.aff-project.json` description containing one to
 three pane positions, image names and private session references, current MMB
-slots or ADFS paths, hardware profiles, import recipes, and theme. Importing it
-on the same retained installation restores the workspace. The project is kept
-small by referring to private working sessions; image bytes remain in the
+slots or ADFS paths, hardware profiles, and import recipes. Importing it on the
+same retained installation restores that working context. Theme remains a
+browser preference rather than part of the imported project. The project is
+kept small by referring to private working sessions; image bytes remain in the
 Docker volume and in the normal timestamped image ZIP backups.
 
 ### Persistent jobs
@@ -930,13 +930,12 @@ separate ADFS menu entry. PAGE is represented as the complete hexadecimal
 address, so abbreviated values such as `E` and `19` are normalised to `E00`
 and `1900`.
 
-Numbered continuation disks are treated differently. For example, the sample
-`TY-SUPERMAN0` disk owns the Universal Menu record and launches `LOADER`, while
-`TY-SUPERMAN2` contains later `GAME5`, `GAME6`, and `GAME7` data. The
-continuation disk is identified from the existing MMB menu and kept off the
-ADFS menu instead of presenting its data chunks as possible launch programs.
-The copy is still retained on ADFS. Software that changes physical disks may
-need a title-specific conversion before it can run from extracted directories.
+Numbered continuation disks are treated differently. When one disk owns the
+Universal Menu record and later disks contain only data, the continuation
+disks are identified from the existing MMB menu and kept off the ADFS menu
+instead of presenting data chunks as launch programs. Their files are still
+retained on ADFS. Software that changes physical disks may need a title-specific
+conversion before it can run from extracted directories.
 
 Menu metadata is retained after every completed section of a bulk transfer.
 If an empty disk, destination conflict, cancellation, or later copy error
@@ -973,7 +972,7 @@ a readable `!BOOT`, then familiar loader names including `DISKMENU`, `MENU`,
 `*EXEC`, BBC BASIC programs loaded at `&1900` use `CHAIN`, and other
 conventional executable loaders use `RUN`. When several plausible launchers
 remain, the choice is left for review in the populated dropdown.
-The supplied Universal Menu handles an ADFS record by issuing `*DIR` with that
+The installed Universal Menu handles an ADFS record by issuing `*DIR` with that
 full path before it runs, chains, loads, or executes the selected file, so
 grouped and nested software directories launch in their proper context.
 Choosing **Keep off-menu** does not require a launch file.
@@ -985,7 +984,7 @@ directory. This works whether `!BOOT` is executed after manually entering the
 directory or by its full ADFS path, and avoids accidentally looking for the
 databases in the volume root.
 
-Future bulk MMB extractions also store the original slot title as the ADFS
+Bulk MMB extractions store the original slot title as the ADFS
 directory title. This retains useful menu metadata even when generic
 `DISC-####` path names are selected.
 
@@ -1142,7 +1141,7 @@ than silently pretending the conversion was perfect.
 
 ## Saving and recovery
 
-**Save** first validates and finalises the current working image, then starts
+**Save Image** first validates and finalises the current working image, then starts
 the download in an isolated browser target. A validation or network error is
 reported inside Acorn File Forge and cannot replace the application with a raw
 JSON error page.
@@ -1181,11 +1180,8 @@ mirrors the same opaque ID in origin-scoped browser storage. Either copy can
 restore the other after a browser update or container restart. Recovery
 listings, direct image API access and deletion all enforce the owner match.
 There is no shared global session browser. Clearing both site cookies and site
-storage deliberately breaks the link; sessions from releases before private
-ownership can be attached once with a
-one-time recovery key. An operator can also issue a key for a specific saved
-session if its browser cookie has been lost. Claiming the key transfers only
-that session to the current browser, then immediately expires the key.
+storage deliberately breaks the link, so important work should be downloaded
+before browser data is cleared.
 
 Closing a work pane now detaches the image without deleting its server-side
 working copy. Reopen it through **Recover previous session**. Permanent removal
@@ -1251,7 +1247,7 @@ in the [project repository](https://github.com/peteclarke-del/AcornFileForge).
   rather than starting a process for every top-level object.
 - Menu database rebuilds write all four title/publisher files through one
   mounted image, while menu support files are installed with one source and
-  destination mount. On the bundled test setup, a three-entry ADFS menu
+  destination mount. In a local development benchmark, a three-entry ADFS menu
   creation fell from about 17.8 seconds to 0.5 seconds, and a reorder fell
   from about 8.3 seconds to about 2.7 seconds.
 - Local source-image benchmarks use clone or kernel-copy paths where available.
@@ -1288,6 +1284,7 @@ services:
       ACORN_MAX_UPLOAD_GIB: "8"
     volumes:
       - acorn-file-forge-work:/app/work
+    restart: unless-stopped
 volumes:
   acorn-file-forge-work:
     name: acorn-file-forge-work
@@ -1310,7 +1307,7 @@ Browser
                     | JSON and multipart HTTP
                     v
 Flask API
-  images | files | MMB slots | menus
+  images | files | MMB slots | menus | catalogue | analysis | jobs
                     |
                     v
 Disk service
@@ -1333,8 +1330,19 @@ Backend routes are split by responsibility:
   and cross-image transfers.
 - `app/routes/mmb.py` handles slots and multi-image insertion.
 - `app/routes/menus.py` handles MMB and ADFS menu maintenance.
+- `app/routes/catalog.py` handles Online Library search, source settings, and
+  installation.
+- `app/routes/tools.py` handles health checks, manifests, duplicate analysis,
+  file inspection, and dependency reports.
 - `app/disk_service.py` owns image sessions and calls the disk engine.
 - `app/menu_service.py` owns metadata analysis and Universal, SPI and ADFS menu databases.
+- `app/catalog_service.py` runs the configurable catalogue pipeline and retains
+  short-lived install records.
+- `app/checkpoints.py` and `app/operations.py` own undo snapshots and persistent
+  long-running job records.
+- `app/analysis_service.py` builds health, manifest, duplicate, inspection, and
+  loader-dependency reports.
+- `app/checksum.py` provides the shared streaming image checksum implementation.
 - `app/uef.py` parses cassette blocks.
 - `app/hfe.py` validates HFE headers and classifies HFE versions safely.
 
@@ -1384,7 +1392,7 @@ A healthy response looks like:
 - Python 3.12
 - Flask 3.1
 - Gunicorn 23
-- Oaknut Disc 12.13
+- Oaknut Disc 12.13.1
 - HxC Floppy Emulator command-line engine 2.16.15.2, compiled from a pinned
   upstream revision during the Docker build
 - Docker or Docker Compose

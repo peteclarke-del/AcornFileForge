@@ -9,8 +9,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class DFSCompatibilityTests(unittest.TestCase):
+    def sample(self, relative_path: str) -> Path:
+        source = ROOT / "samples/[SSD]" / relative_path
+        if not source.is_file():
+            self.skipTest(f"optional private sample is unavailable: {relative_path}")
+        return source
+
     def test_bug_blaster_wildcard_is_replaced_with_exact_catalogue_name(self) -> None:
-        source = ROOT / "samples/[SSD]/alligata/AL-BUGCJHHLR.ssd"
+        source = self.sample("alligata/AL-BUGCJHHLR.ssd")
         repaired, changes = repair_dfs_basic_wildcards(source.read_bytes())
 
         self.assertTrue(any("A.BUG3 line 120" in change for change in changes))
@@ -20,7 +26,7 @@ class DFSCompatibilityTests(unittest.TestCase):
         self.assertIn('CHAIN"BUG?1"', next(line.text for line in lines if line.number == 120))
 
     def test_repair_is_idempotent(self) -> None:
-        source = ROOT / "samples/[SSD]/alligata/AL-BUGCJHHLR.ssd"
+        source = self.sample("alligata/AL-BUGCJHHLR.ssd")
         repaired, _changes = repair_dfs_basic_wildcards(source.read_bytes())
         second, changes = repair_dfs_basic_wildcards(repaired)
 
@@ -28,35 +34,35 @@ class DFSCompatibilityTests(unittest.TestCase):
         self.assertEqual(changes, [])
 
     def test_ssdmenu_page_comes_from_its_saved_basic_address(self) -> None:
-        source = ROOT / "samples/[SSD]/Acornsoft/ACN-ARCBOXCT.ssd"
+        source = self.sample("Acornsoft/ACN-ARCBOXCT.ssd")
         page, evidence = infer_dfs_launch_page(source.read_bytes(), "SSDMENU", "")
 
         self.assertEqual(page, "1900")
         self.assertIn("tokenised BASIC saved at &1900", evidence)
 
     def test_exec_boot_page_uses_its_explicit_assignment(self) -> None:
-        source = ROOT / "samples/[SSD]/alligata/AL-BUGCJHHLR.ssd"
+        source = self.sample("alligata/AL-BUGCJHHLR.ssd")
         page, evidence = infer_dfs_launch_page(source.read_bytes(), "!BOOT", "E")
 
         self.assertEqual(page, "E00")
         self.assertIn("explicitly sets PAGE=&E00", evidence)
 
     def test_exec_boot_follows_rooted_chain_to_actual_basic_page(self) -> None:
-        source = ROOT / "samples/[SSD]/kansas city/KCS-COMPILE1.ssd"
+        source = self.sample("kansas city/KCS-COMPILE1.ssd")
         page, evidence = infer_dfs_launch_page(source.read_bytes(), "!BOOT", "E")
 
         self.assertEqual(page, "E00")
         self.assertIn("KANLOAD", evidence)
 
     def test_lenient_basic_image_still_provides_saved_page(self) -> None:
-        source = ROOT / "samples/[SSD]/tynesoft/TY-SUMROLYMP.ssd"
+        source = self.sample("tynesoft/TY-SUMROLYMP.ssd")
         page, evidence = infer_dfs_launch_page(source.read_bytes(), "LOADER", "")
 
         self.assertEqual(page, "1900")
         self.assertIn("tokenised BASIC saved at &1900", evidence)
 
     def test_machine_code_exec_boot_marks_page_as_unused(self) -> None:
-        source = ROOT / "samples/[SSD]/Chuckulus-Electron-V1-0.ssd"
+        source = self.sample("Chuckulus-Electron-V1-0.ssd")
         page, evidence = infer_dfs_launch_page(source.read_bytes(), "!BOOT", "E")
 
         self.assertIsNone(page)

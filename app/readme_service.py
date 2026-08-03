@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import hashlib
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING
 
+from .checksum import sha256_path
 from .dfs_compat import dfs_catalogue_files
 from .disk_service import MMB_ENTRY_SIZE, MMB_HEADER_SIZE, MMB_MAX_SLOTS, MMB_SLOT_SIZE
 
@@ -16,14 +16,6 @@ def timestamped_archive_name(image_name: str, generated: datetime | None = None)
     moment = generated or datetime.now().astimezone()
     stem = Path(image_name).stem or "acorn-image"
     return f"{stem}-{moment:%Y%m%d-%H%M%S}.zip"
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(8 * 1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _hex(value: object) -> str:
@@ -161,14 +153,14 @@ def build_download_readme(
         f"- Target hardware profile: {session.target_hardware}",
         f"- Image filename: `{session.name}`",
         f"- Image size: {image_path.stat().st_size:,} bytes",
-        f"- Image SHA-256: `{_sha256(image_path)}`",
+        f"- Image SHA-256: `{sha256_path(image_path)}`",
     ]
     if session.descriptor_path:
         lines.extend(
             (
                 f"- Descriptor filename: `{session.descriptor_name}`",
                 f"- Descriptor size: {session.descriptor_path.stat().st_size:,} bytes",
-                f"- Descriptor SHA-256: `{_sha256(session.descriptor_path)}`",
+                f"- Descriptor SHA-256: `{sha256_path(session.descriptor_path)}`",
             )
         )
     if session.hfe_original_path:
