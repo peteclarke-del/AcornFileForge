@@ -159,6 +159,11 @@ class DiskService:
             "hfeVersion": session.hfe_version,
             "hfeReadOnly": session.hfe_read_only,
             "hfeLayout": session.hfe_layout,
+            "hfeExportFile": (
+                session.hfe_export_path.name if session.hfe_export_path else None
+            ),
+            "dirty": session.dirty,
+            "finalisedMtimeNs": session.finalised_mtime_ns,
             "ownerId": session.owner_id,
             "warnings": session.warnings,
         }
@@ -194,7 +199,7 @@ class DiskService:
                 path=path,
                 descriptor_name=descriptor_name,
                 descriptor_path=descriptor_path,
-                dirty=True,
+                dirty=bool(metadata.get("dirty", True)),
                 slot_source_names={
                     int(slot): str(name)
                     for slot, name in metadata.get("slotSourceNames", {}).items()
@@ -218,6 +223,16 @@ class DiskService:
                 hfe_version=metadata.get("hfeVersion"),
                 hfe_read_only=bool(metadata.get("hfeReadOnly")),
                 hfe_layout=metadata.get("hfeLayout"),
+                hfe_export_path=(
+                    folder / self.safe_filename(metadata["hfeExportFile"])
+                    if metadata.get("hfeExportFile")
+                    else None
+                ),
+                finalised_mtime_ns=(
+                    int(metadata["finalisedMtimeNs"])
+                    if metadata.get("finalisedMtimeNs") is not None
+                    else None
+                ),
                 owner_id=metadata.get("ownerId"),
                 warnings=[
                     str(warning)
@@ -227,6 +242,8 @@ class DiskService:
             )
             if session.hfe_original_path and not session.hfe_original_path.is_file():
                 raise ValueError
+            if session.hfe_export_path and not session.hfe_export_path.is_file():
+                session.hfe_export_path = None
             if session.kind == "tape":
                 session.tape = parse_uef(path.read_bytes())
             self._normalise_beebscsi_dat_size(session)
@@ -852,6 +869,8 @@ class DiskService:
 
     def _prepare_hfe_download(self, session: ImageSession) -> Path:
         if not session.dirty:
+            if session.hfe_export_path and session.hfe_export_path.is_file():
+                return session.hfe_export_path
             return session.hfe_original_path
         self.require_writable_geometry(session)
         output = session.path.parent / f"{Path(session.name).stem}-edited.hfe"
@@ -879,6 +898,12 @@ class DiskService:
             verification.unlink(missing_ok=True)
         session.hfe_export_path = output
         return output
+
+    def mark_saved(self, session: ImageSession) -> None:
+        """Record that the current working bytes have been prepared for download."""
+        with session.lock:
+            session.dirty = False
+            self._persist_session(session)
 
     @staticmethod
     def _copy_stream(stream: BinaryIO, target: Path) -> None:
@@ -1236,7 +1261,9 @@ class DiskService:
         entries: list[dict] = []
         pending: list[tuple[str, int | None]] = []
         if session.kind == "dfs" and session.path.name.lower().endswith(".dsd"):
-            pending.extend([("$", 0), ("$", 2)])
+            pending.extend([("", 0), ("", 2)])
+        elif session.kind == "dfs":
+            pending.append(("", None))
         else:
             pending.append(("$", None))
         visited: set[tuple[str, int | None]] = set()
@@ -1250,6 +1277,9 @@ class DiskService:
             listing = self.list_directory(session, path, None, side)
             prefix = f"Side {side}" if side is not None else path
             for row in listing["entries"]:
+                if session.kind == "dfs" and row.get("virtual"):
+                    pending.append((str(row.get("name") or "$"), side))
+                    continue
                 if len(entries) >= limit:
                     truncated = True
                     break
@@ -1799,13 +1829,15 @@ class DiskService:
         if not session.path.name.lower().endswith(".dsd"):
             return inner
         drive = 2 if side == 2 else 0
+        if inner == "":
+            return f":{drive}"
         if inner == "$":
             return f":{drive}.$"
         return f":{drive}.{inner}"
 
     @staticmethod
     def compound(path: Path, inner: str | None = None) -> str:
-        return f"{path}:{inner}" if inner else str(path)
+        return f"{path}:{inner}" if inner is not None else str(path)
 
     def list_directory(self, session: ImageSession, inner: str, slot: int | None, side: int | None = None) -> dict:
         if session.kind == "tape":
@@ -1833,26 +1865,138 @@ class DiskService:
                 "path": "$",
             }
         disk_path = self.resolve(session, slot)
-        resolved_inner = self.inner_for(session, inner or "$", side)
+        requested_inner = "$" if inner is None else inner
+        resolved_inner = self.inner_for(session, requested_inner, side)
         try:
             result = self._run_json(["ls", "--as", "json", self.compound(disk_path, resolved_inner)])
         except DiskError as error:
             if (session.kind == "dfs" or disk_path.suffix.lower() == ".ssd") and "path not found" in str(error):
-                return {"entries": [], "title": session.name, "description": "Empty DFS side", "path": inner or "$"}
+                if requested_inner == "":
+                    return {
+                        "entries": [{
+                            "name": "$",
+                            "type": "dir",
+                            "length": 0,
+                            "attr": "",
+                            "virtual": True,
+                        }],
+                        "title": session.name,
+                        "description": "1 DFS catalogue group",
+                        "path": "",
+                    }
+                return {
+                    "entries": [],
+                    "title": session.name,
+                    "description": "Empty DFS catalogue group",
+                    "path": requested_inner,
+                }
             raise
         report = result["reports"]["entries"]
         rows = report["rows"]
-        if session.kind in {"dfs", "mmb"}:
+        is_dfs = session.kind in {"dfs", "mmb"}
+        if is_dfs:
             rows = self._restore_dfs_catalogue_names(
                 self.compound(disk_path, resolved_inner),
                 rows,
+            )
+        if is_dfs and requested_inner == "":
+            directories = [
+                {
+                    **row,
+                    "type": "dir",
+                    "virtual": True,
+                }
+                for row in rows
+                if row.get("type") in {"dir", "directory"}
+            ]
+            if not any(str(row.get("name")) == "$" for row in directories):
+                directories.append({
+                    "name": "$",
+                    "type": "dir",
+                    "length": 0,
+                    "attr": "",
+                    "virtual": True,
+                })
+            rows = sorted(
+                directories,
+                key=lambda row: (
+                    str(row.get("name")) != "$",
+                    str(row.get("name", "")).casefold(),
+                ),
+            )
+            report["metadata"]["description"] = (
+                f"{len(rows)} DFS catalogue group{'s' if len(rows) != 1 else ''}"
             )
         return {
             "entries": rows,
             "title": report["metadata"].get("title", session.name),
             "description": report["metadata"].get("description", ""),
-            "path": inner or "$",
+            "path": requested_inner,
         }
+
+    @staticmethod
+    def validate_dfs_prefix(prefix: str) -> str:
+        prefix = str(prefix or "").strip().upper()
+        if len(prefix) != 1 or (prefix != "$" and not "A" <= prefix <= "Z"):
+            raise DiskError("Enter one DFS catalogue prefix: $ or a letter from A to Z.")
+        return prefix
+
+    def move_dfs_items(
+        self,
+        session: ImageSession,
+        slot: int | None,
+        items: list[dict],
+        side: int | None = None,
+    ) -> list[dict]:
+        """Move DFS files between flat catalogue prefixes in one request."""
+        if session.kind not in {"dfs", "mmb"} or (session.kind == "mmb" and slot is None):
+            raise DiskError("Catalogue-prefix moves are available only inside a DFS disk.")
+        if not isinstance(items, list) or not items:
+            raise DiskError("Choose at least one DFS file to move.")
+        checked: list[dict] = []
+        for item in items:
+            source = str(item.get("source") or "")
+            destination = str(item.get("destination") or "")
+            if "." not in source or "." not in destination:
+                raise DiskError("DFS files must include a catalogue prefix and filename.")
+            self.validate_dfs_prefix(source.split(".", 1)[0])
+            self.validate_dfs_prefix(destination.split(".", 1)[0])
+            self.validate_leaf_name(session, destination.split(".", 1)[1], slot)
+            checked.append({"source": source, "destination": destination})
+        self.require_writable_geometry(session)
+        with session.lock:
+            disk_path = self.resolve(session, slot)
+            for item in checked:
+                self._run([
+                    "mv",
+                    self.compound(
+                        disk_path,
+                        self.inner_for(session, item["source"], side),
+                    ),
+                    self.inner_for(session, item["destination"], side),
+                ])
+            self._mark_mutated(session, slot)
+        return checked
+
+    def list_dfs_catalogue_files(
+        self,
+        session: ImageSession,
+        slot: int | None,
+        side: int | None = None,
+    ) -> list[dict]:
+        """Return every file from the populated DFS prefix groups."""
+        if session.kind not in {"dfs", "mmb"} or (session.kind == "mmb" and slot is None):
+            raise DiskError("Select a DFS disk before listing catalogue groups.")
+        files: list[dict] = []
+        for group in self.list_directory(session, "", slot, side)["entries"]:
+            prefix = self.validate_dfs_prefix(str(group.get("name") or ""))
+            for row in self.list_directory(session, prefix, slot, side)["entries"]:
+                files.append({
+                    **row,
+                    "prefix": prefix,
+                    "path": f"{prefix}.{row['name']}",
+                })
+        return files
 
     @staticmethod
     def _restore_dfs_catalogue_names(compound_path: str, rows: list[dict]) -> list[dict]:
@@ -2027,6 +2171,10 @@ class DiskService:
         if session.kind == "tape":
             raise DiskError("Files cannot be added directly to a UEF tape.")
         self.require_writable_geometry(session)
+        if session.kind == "dfs" or (session.kind == "mmb" and slot is not None):
+            if "." not in destination:
+                raise DiskError("Choose a DFS catalogue group before adding a file.")
+            self.validate_dfs_prefix(destination.split(".", 1)[0])
         self.validate_leaf_name(session, destination.rsplit(".", 1)[-1], slot)
         args = ["put"]
         if load:
@@ -2055,6 +2203,10 @@ class DiskService:
         if target.kind == "tape":
             raise DiskError("UEF tapes are read-only conversion sources.")
         self.require_writable_geometry(target)
+        if target.kind == "dfs" or (target.kind == "mmb" and target_slot is not None):
+            if "." not in target_inner:
+                raise DiskError("Choose a DFS catalogue group before copying a file.")
+            self.validate_dfs_prefix(target_inner.split(".", 1)[0])
         self.validate_leaf_name(target, target_inner.rsplit(".", 1)[-1], target_slot)
         if source.kind == "tape":
             tape_file = self._tape_file(source, source_inner)
@@ -2923,11 +3075,11 @@ class DiskService:
         if source.kind == "dfs":
             if source.path.name.lower().endswith(".dsd"):
                 source_has_files = bool(
-                    self.list_directory(source, "$", None, 0)["entries"]
-                    or self.list_directory(source, "$", None, 2)["entries"]
+                    self.list_dfs_catalogue_files(source, None, 0)
+                    or self.list_dfs_catalogue_files(source, None, 2)
                 )
             else:
-                source_has_files = bool(self.list_directory(source, "$", None)["entries"])
+                source_has_files = bool(self.list_dfs_catalogue_files(source, None))
             if not source_has_files:
                 raise DiskError(
                     "The DFS disk image is empty. Nothing was extracted."
@@ -3046,8 +3198,8 @@ class DiskService:
                     report,
                 )
             elif source.kind == "dfs" and source.path.name.lower().endswith(".dsd"):
-                side_zero = self.list_directory(source, "$", None, 0)["entries"]
-                side_two = self.list_directory(source, "$", None, 2)["entries"]
+                side_zero = self.list_dfs_catalogue_files(source, None, 0)
+                side_two = self.list_dfs_catalogue_files(source, None, 2)
                 if side_zero and side_two:
                     for side, rows in ((0, side_zero), (2, side_two)):
                         report(f"Extracting DFS side {side}", side // 2, 2)
@@ -3114,7 +3266,11 @@ class DiskService:
         target_directory: str,
         progress: Callable[[str, int | None, int | None], None] | None = None,
     ) -> None:
-        rows = self.list_directory(source, "$", source_slot, source_side)["entries"]
+        rows = (
+            self.list_dfs_catalogue_files(source, source_slot, source_side)
+            if source.kind in {"dfs", "mmb"}
+            else self.list_directory(source, "$", source_slot, source_side)["entries"]
+        )
         self._copy_rows_to_adfs(
             source, source_slot, source_side, rows, target, target_directory, progress
         )

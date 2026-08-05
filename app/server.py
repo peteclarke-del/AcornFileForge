@@ -29,6 +29,7 @@ IMAGE_MUTATIONS = {
     "images.compact": "compacting the filesystem",
     "files.rename": "renaming an item",
     "files.move_items": "moving items",
+    "files.move_dfs_items": "moving DFS files between catalogue groups",
     "files.delete": "deleting an item",
     "files.mkdir": "creating a folder",
     "files.lock": "changing file protection",

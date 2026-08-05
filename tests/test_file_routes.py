@@ -73,6 +73,49 @@ class FileRouteTests(unittest.TestCase):
             None,
         )
 
+    def test_mkdir_validates_and_creates_an_adfs_directory(self):
+        self.session.kind = "adfs"
+
+        response = self.client.post(
+            "/api/images/test/mkdir",
+            json={"path": "$.Games.NewDir", "side": 2},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.service.validate_leaf_name.assert_called_once_with(
+            self.session,
+            "NewDir",
+        )
+        self.service.mutate.assert_called_once_with(
+            self.session,
+            None,
+            ["mkdir", "-p", "{image}:$.Games.NewDir"],
+            2,
+        )
+
+    def test_dfs_prefix_move_is_sent_as_one_route_operation(self):
+        self.service.move_dfs_items.return_value = [{
+            "source": "$.HELLO",
+            "destination": "F.HELLO",
+        }]
+
+        response = self.client.post(
+            "/api/images/test/move-dfs",
+            json={
+                "slot": 4,
+                "side": 2,
+                "items": [{"source": "$.HELLO", "destination": "F.HELLO"}],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.service.move_dfs_items.assert_called_once_with(
+            self.session,
+            4,
+            [{"source": "$.HELLO", "destination": "F.HELLO"}],
+            2,
+        )
+
     @patch("app.routes.files.delete_adfs_items")
     def test_adfs_batch_delete_rewrites_menus_once(self, delete_items):
         self.session.kind = "adfs"

@@ -56,7 +56,12 @@ class CheckpointStore:
     def fingerprint(cls, session: ImageSession) -> tuple:
         image = session.path.stat()
         descriptor = session.descriptor_path.stat() if session.descriptor_path else None
-        state = json.dumps(cls._state(session), sort_keys=True, separators=(",", ":"))
+        state_fields = cls._state(session)
+        # Saved/unsaved is UI state, not an image edit. Saving an unchanged
+        # image must not create a new undo checkpoint merely because its dot
+        # was cleared.
+        state_fields.pop("dirty", None)
+        state = json.dumps(state_fields, sort_keys=True, separators=(",", ":"))
         return (
             image.st_size,
             image.st_mtime_ns,
