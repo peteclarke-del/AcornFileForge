@@ -221,6 +221,35 @@ class DiskErrorTests(unittest.TestCase):
 
             self.assertEqual(service._prepare_hfe_download(session), exported)
 
+    def test_mmb_slot_to_adfs_batch_copy_includes_every_dfs_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            source_path = Path(folder) / "source.mmb"
+            target_path = Path(folder) / "target.adl"
+            source_path.write_bytes(b"source")
+            target_path.write_bytes(b"target")
+            service = DiskService(folder)
+            source = ImageSession("2" * 32, source_path.name, "mmb", source_path)
+            target = ImageSession("3" * 32, target_path.name, "adfs", target_path)
+
+            with (
+                patch.object(service, "resolve", return_value=source_path),
+                patch.object(service, "_run") as run,
+            ):
+                service._copy_rows_to_adfs(
+                    source,
+                    7,
+                    None,
+                    [
+                        {"name": "BOOT", "path": "$.BOOT"},
+                        {"name": "DATA", "path": "D.DATA"},
+                    ],
+                    target,
+                    "$.Games.Disk7",
+                )
+
+            command = run.call_args.args[0]
+            self.assertEqual(command[2], f"{source_path}:*")
+
     def test_image_rename_preserves_format_and_renames_descriptor_download(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             session_folder = Path(folder) / ("a" * 32)
