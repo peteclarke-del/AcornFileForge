@@ -77,6 +77,17 @@ class CheckpointTests(unittest.TestCase):
 
             self.assertEqual(service.list_checkpoints(session), [])
 
+    def test_mutation_finaliser_persists_dirty_recovery_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            service, session = self.make_session(Path(directory))
+            token = service.begin_automatic_checkpoint(session, "editing a file")
+            session.dirty = True
+
+            service.finish_automatic_checkpoint(session, token)
+
+            restored = service._restore_session(session.id)
+            self.assertTrue(restored.dirty)
+
     def test_no_op_does_not_prune_existing_undo_history(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             service, session = self.make_session(Path(directory))

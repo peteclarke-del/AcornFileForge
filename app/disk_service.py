@@ -1105,6 +1105,10 @@ class DiskService:
                     pass
             else:
                 self.checkpoints.prune_automatic(session)
+            # Every API mutation passes through this finaliser. Persist the
+            # resulting dirty/export state here so recovery cannot resurrect
+            # an edited image as though it were still saved.
+            self._persist_session(session)
 
     def rollback_automatic_checkpoint(self, session: ImageSession, token: dict) -> None:
         """Restore a failed mutation and remove its now-redundant undo point."""
@@ -3290,7 +3294,7 @@ class DiskService:
             return
         source_path = self.resolve(source, source_slot)
         report(f"Copying the complete disk catalogue in one batch", 0, len(rows))
-        source_pattern = "*" if source.kind == "dfs" else "$.*"
+        source_pattern = "*" if source.kind in {"dfs", "mmb"} else "$.*"
         self._run(
             [
                 "cp",
