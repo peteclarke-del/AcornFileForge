@@ -639,30 +639,36 @@ function renderPane(index, preserveScroll = false) {
       ? (entry.formatted ? (entry.writable ? "RW" : "RO") : "-")
       : entry.attr || "";
     const entryKey = String(entry.slot ?? entry.name);
+    const rowActionable = !pane.image.readOnly && !isTape && (isSlots ? entry.formatted : canEdit);
+    const accessActionable = rowActionable;
+    const multiSelection = selectedKeys.size > 1;
+    const hideGroupAction = multiSelection && !selectedKeys.has(entryKey);
+    const actionName = isSlots ? `disk ${entry.slot} · ${entry.name}` : entry.name;
+    const rowActions = rowActionable ? `<span class="row-actions">
+      <button class="row-action row-rename" type="button" draggable="false" title="Rename ${esc(actionName)}" aria-label="Rename ${esc(actionName)}" ${multiSelection ? "hidden" : ""}>✎</button>
+      <button class="row-action delete row-delete" type="button" draggable="false" title="${isSlots ? "Eject" : "Delete"} ${esc(actionName)}" aria-label="${isSlots ? "Eject" : "Delete"} ${esc(actionName)}" ${hideGroupAction ? "hidden" : ""}>×</button>
+    </span>` : "";
+    const accessCell = `<td class="access-cell"><span class="pill">${esc(attr || detail)}</span>${accessActionable ? `<span class="access-actions" ${hideGroupAction ? "hidden" : ""}>
+      <button class="row-action row-read-write" type="button" draggable="false" title="Mark ${esc(actionName)} read / write" aria-label="Mark ${esc(actionName)} read / write">◇</button>
+      <button class="row-action row-read-only" type="button" draggable="false" title="Mark ${esc(actionName)} read-only" aria-label="Mark ${esc(actionName)} read-only">◆</button>
+    </span>` : ""}</td>`;
     const cells = isSlots
       ? `<td class="meta slot-number">${entry.slot}</td>
-      <td class="file-name-cell"><div class="file-name-wrap"><span class="file-icon ${entryType}">${icon}</span><strong>${esc(entry.name)}</strong></div></td>
+      <td class="file-name-cell"><div class="file-name-wrap"><span class="file-icon ${entryType}">${icon}</span><strong>${esc(entry.name)}</strong>${rowActions}</div></td>
       <td class="meta">${esc(entry.formatted ? "DFS disk" : "Empty")}</td>
-      <td><span class="pill">${esc(attr || detail)}</span></td>`
+      ${accessCell}`
       : `<td class="file-name-cell"><div class="file-name-wrap"><span class="file-icon ${entryType}">${icon}</span><strong>${esc(entry.name)}</strong>
-        ${canEdit ? `<span class="row-actions">
-          <button class="row-action row-rename" type="button" draggable="false" title="Rename ${esc(entry.name)}" aria-label="Rename ${esc(entry.name)}">✎</button>
-          <button class="row-action delete row-delete" type="button" draggable="false" title="Delete ${esc(entry.name)}" aria-label="Delete ${esc(entry.name)}">×</button>
-        </span>` : ""}
+        ${rowActions}
       </div></td>
       <td class="meta">${esc(isDir ? "Directory" : "File")}</td>
       <td class="meta">${esc(size)}</td>
-      <td><span class="pill">${esc(attr || detail)}</span></td>`;
+      ${accessCell}`;
     return `<tr class="file-row${selectedKeys.has(entryKey) ? " selected" : ""}${entry.empty ? " empty-slot" : ""}"
       aria-selected="${selectedKeys.has(entryKey)}"
       tabindex="0" draggable="${entry.formatted !== false}" data-key="${esc(entryKey)}" data-name="${esc(entry.name)}" data-type="${entryType}" data-slot="${entry.slot ?? ""}" data-empty="${entry.empty ? "1" : "0"}">
       ${cells}
     </tr>`;
   }).join("");
-  const formattedSelection = selectedEntries(index).filter(
-    entry => entry.type === "disk" && entry.formatted
-  );
-  const hasFormattedSelection = formattedSelection.length > 0;
   const selectedEmptySlot = Boolean(selected && selected.type === "disk" && selected.empty);
   const menuTools = pane.image.kind === "mmb"
     ? `<details class="tool-menu">
@@ -712,22 +718,13 @@ function renderPane(index, preserveScroll = false) {
   </details>`;
   const toolbarMarkup = isSlots
     ? `<button class="tool online-library"><b>⌕</b><span>Find Discs</span></button>
-      <details class="tool-menu slot-tools">
-        <summary class="tool"><b>▣</b><span>Slot</span></summary>
+      <details class="tool-menu add-disk-tools">
+        <summary class="tool"><b>＋</b><span>Add disk</span></summary>
         <div class="tool-menu-panel">
-          <details class="menu-submenu">
-            <summary><b>＋</b><span>Add disk</span><i>›</i></summary>
-            <div class="menu-submenu-panel">
-              <div class="open-disk-imports">${openDiskImportMarkup(index)}</div>
-              <button class="menu-command insert-disk" ${selectedEmptySlot ? "" : "disabled"}><b>↥</b><span>Insert SSD / DSD / HFE / ZIP…</span></button>
-              <button class="menu-command create-blank-ssd" ${selectedEmptySlot ? "" : "disabled"}><b>○</b><span>Create blank SSD here</span></button>
-              <button class="menu-command create-blank-dsd" ${selectedEmptySlot ? "" : "disabled"}><b>◎</b><span>Create blank DSD here</span></button>
-            </div>
-          </details>
-          <button class="menu-command rename-file" ${selected?.formatted ? "" : "disabled"}><b>✎</b><span>Rename disk title</span></button>
-          <button class="menu-command slot-read-write" ${hasFormattedSelection ? "" : "disabled"}><b>◇</b><span>Mark read / write</span></button>
-          <button class="menu-command slot-read-only" ${hasFormattedSelection ? "" : "disabled"}><b>◆</b><span>Mark read-only</span></button>
-          <button class="menu-command delete delete-file" ${hasFormattedSelection ? "" : "disabled"}><b>×</b><span>Eject selected disk${formattedSelection.length === 1 ? "" : "s"}</span></button>
+          <div class="open-disk-imports">${openDiskImportMarkup(index)}</div>
+          <button class="menu-command insert-disk" ${selectedEmptySlot ? "" : "disabled"}><b>↥</b><span>Insert SSD / DSD / HFE / ZIP…</span></button>
+          <button class="menu-command create-blank-ssd" ${selectedEmptySlot ? "" : "disabled"}><b>○</b><span>Create blank SSD here</span></button>
+          <button class="menu-command create-blank-dsd" ${selectedEmptySlot ? "" : "disabled"}><b>◎</b><span>Create blank DSD here</span></button>
         </div>
       </details>
       ${pane.image.readOnly ? "" : menuTools}
@@ -740,12 +737,6 @@ function renderPane(index, preserveScroll = false) {
       ${canEdit ? '<button class="tool import-file"><b>＋</b><span>Add file</span></button>' : ""}
       ${canFolder ? '<button class="tool new-folder"><b>▢</b><span>Folder</span></button>' : ""}
       ${isDsd ? `<button class="tool switch-side"><b>⇄</b><span>Side ${pane.side === 2 ? "2" : "0"}</span></button>` : ""}
-      ${!isTape && !pane.image.readOnly ? `<details class="tool-menu">
-        <summary class="tool"><b>✎</b><span>Edit</span></summary>
-        <div class="tool-menu-panel">
-          <button class="menu-command lock-file" ${selected && selected.type !== "dir" ? "" : "disabled"}><b>◇</b><span>Lock / unlock file</span></button>
-        </div>
-      </details>` : ""}
       ${pane.image.readOnly ? "" : menuTools}
       ${checkpointTools}
       ${analysisTools}
@@ -811,13 +802,8 @@ function renderPane(index, preserveScroll = false) {
   host.querySelector(".online-library")?.addEventListener("click", () => guardedPaneAction(index, () => showOnlineLibrary(index)));
   host.querySelector(".create-blank-ssd")?.addEventListener("click", () => guardedPaneAction(index, () => createBlankMmbDisk(index, "ssd")));
   host.querySelector(".create-blank-dsd")?.addEventListener("click", () => guardedPaneAction(index, () => createBlankMmbDisk(index, "dsd")));
-  host.querySelector(".slot-read-write")?.addEventListener("click", () => guardedPaneAction(index, () => setSelectedSlotsWritable(index, true)));
-  host.querySelector(".slot-read-only")?.addEventListener("click", () => guardedPaneAction(index, () => setSelectedSlotsWritable(index, false)));
   host.querySelector(".menu-entry")?.addEventListener("click", () => guardedPaneAction(index, () => scanMenuEntry(index)));
   host.querySelector(".setup-menu")?.addEventListener("click", () => guardedPaneAction(index, () => setupMmbMenu(index)));
-  host.querySelector(".rename-file")?.addEventListener("click", () => guardedPaneAction(index, () => renameSelected(index)));
-  host.querySelector(".delete-file")?.addEventListener("click", () => guardedPaneAction(index, () => deleteSelected(index)));
-  host.querySelector(".lock-file")?.addEventListener("click", () => guardedPaneAction(index, () => toggleLock(index)));
   host.querySelector(".validate-image")?.addEventListener("click", () => guardedPaneAction(index, () => validateImage(index)));
   host.querySelector(".convert-tape")?.addEventListener("click", () => guardedPaneAction(index, () => convertTape(index)));
   host.querySelector(".preview-menu")?.addEventListener("click", () => guardedPaneAction(index, () => showMenuPreview(index)));
@@ -844,7 +830,7 @@ function renderPane(index, preserveScroll = false) {
   host.querySelectorAll(".tool-menu").forEach(menu => {
     menu.addEventListener("toggle", () => {
       if (!menu.open) return;
-      if (menu.classList.contains("slot-tools")) refreshOpenDiskImportMenu(index, menu);
+      if (menu.classList.contains("add-disk-tools")) refreshOpenDiskImportMenu(index, menu);
       host.querySelectorAll(".tool-menu[open]").forEach(other => {
         if (other !== menu) other.removeAttribute("open");
       });
@@ -879,21 +865,39 @@ function renderPane(index, preserveScroll = false) {
 }
 
 function wireRow(row, index) {
-  const selectForAction = () => {
+  const selectForAction = preserveSelectedGroup => {
+    const pane = panes[index];
+    if (
+      preserveSelectedGroup
+      && selectionKeys(pane).length > 1
+      && selectionKeys(pane).includes(row.dataset.key)
+    ) return;
     setSelection(panes[index], [row.dataset.key], row.dataset.key);
     refreshSelectionDisplay(index);
   };
   row.querySelector(".row-rename")?.addEventListener("click", event => {
     event.preventDefault();
     event.stopPropagation();
-    selectForAction();
+    selectForAction(false);
     guardedPaneAction(index, () => renameSelected(index));
   });
   row.querySelector(".row-delete")?.addEventListener("click", event => {
     event.preventDefault();
     event.stopPropagation();
-    selectForAction();
+    selectForAction(true);
     guardedPaneAction(index, () => deleteSelected(index));
+  });
+  row.querySelector(".row-read-write")?.addEventListener("click", event => {
+    event.preventDefault();
+    event.stopPropagation();
+    selectForAction(true);
+    guardedPaneAction(index, () => setSelectedAccess(index, true));
+  });
+  row.querySelector(".row-read-only")?.addEventListener("click", event => {
+    event.preventDefault();
+    event.stopPropagation();
+    selectForAction(true);
+    guardedPaneAction(index, () => setSelectedAccess(index, false));
   });
   row.onclick = event => {
     event.stopPropagation();
@@ -1049,15 +1053,18 @@ function refreshSelectionDisplay(index) {
   const selectedKeys = new Set(selectionKeys(pane));
   const selected = selectedEntry(index);
   const isSlots = pane.image?.kind === "mmb" && pane.slot === null;
-  const isTape = pane.image?.kind === "tape";
-  const formattedSelection = selectedEntries(index).filter(
-    entry => entry.type === "disk" && entry.formatted
-  );
 
   host.querySelectorAll(".file-row").forEach(row => {
     const isSelected = selectedKeys.has(row.dataset.key);
     row.classList.toggle("selected", isSelected);
     row.setAttribute("aria-selected", String(isSelected));
+    const multiSelection = selectedKeys.size > 1;
+    const rename = row.querySelector(".row-rename");
+    const remove = row.querySelector(".row-delete");
+    const accessActions = row.querySelector(".access-actions");
+    if (rename) rename.hidden = multiSelection;
+    if (remove) remove.hidden = multiSelection && !isSelected;
+    if (accessActions) accessActions.hidden = multiSelection && !isSelected;
   });
   const disable = (selector, disabled) => {
     const control = host.querySelector(selector);
@@ -1066,22 +1073,7 @@ function refreshSelectionDisplay(index) {
   disable(".insert-disk", !selected?.empty);
   disable(".create-blank-ssd", !selected?.empty);
   disable(".create-blank-dsd", !selected?.empty);
-  disable(".slot-read-write", !formattedSelection.length);
-  disable(".slot-read-only", !formattedSelection.length);
   disable(".menu-entry", !selected?.formatted);
-  disable(".rename-file", !selected || isTape || (isSlots && !selected.formatted));
-  disable(
-    ".lock-file",
-    !selected || isTape || (isSlots ? !selected.formatted : selected.type === "dir")
-  );
-  disable(
-    ".delete-file",
-    isSlots ? !formattedSelection.length : (!selected || isTape)
-  );
-  const deleteLabel = host.querySelector(".delete-file span");
-  if (deleteLabel && isSlots) {
-    deleteLabel.textContent = `Eject selected disk${formattedSelection.length === 1 ? "" : "s"}`;
-  }
 
   const footer = host.querySelector(".pane-foot > span:first-child");
   if (footer) {
@@ -2575,24 +2567,34 @@ function renameSelected(index) {
 
 function deleteSelected(index) {
   const pane = panes[index];
-  const entry = selectedEntry(index);
   const isSlot = pane.image.kind === "mmb" && pane.slot === null;
-  const slotEntries = isSlot
-    ? selectedEntries(index).filter(item => item.type === "disk" && item.formatted)
-    : [];
-  if ((!isSlot && !entry) || (isSlot && !slotEntries.length)) return;
-  const diskLabel = slotEntries.length === 1
-    ? `disk ${slotEntries[0].slot} · ${esc(slotEntries[0].name)}`
-    : `${slotEntries.length} selected disks`;
+  const entries = selectedEntries(index).filter(item =>
+    isSlot ? item.type === "disk" && item.formatted : true
+  );
+  if (!entries.length) return;
+  const single = entries.length === 1 ? entries[0] : null;
+  const selectionLabel = isSlot
+    ? single ? `disk ${single.slot} · ${esc(single.name)}` : `${entries.length} selected disks`
+    : single ? esc(single.name) : `${entries.length} selected items`;
+  const contentsWarning = !isSlot && entries.some(
+    item => item.type === "dir" || item.type === "directory"
+  ) ? " Selected directories and everything inside them will be removed." : "";
   showModal(`
-    <h2>${isSlot ? `Eject ${diskLabel}?` : `Delete ${esc(entry.name)}?`}</h2>
-    <p>${isSlot ? "Each selected slot catalogue entry and its 200 KiB disk data will be cleared." : `This removes the ${entry.type === "dir" ? "directory and everything inside it" : "file"} from the working image.`} Your original image remains untouched.</p>
-    <div class="modal-actions"><button class="button ghost" value="cancel">Keep it</button><button class="button danger" value="delete">${isSlot ? `Eject ${slotEntries.length} disk${slotEntries.length === 1 ? "" : "s"}` : "Delete"}</button></div>`,
+    <h2>${isSlot ? "Eject" : "Delete"} ${selectionLabel}?</h2>
+    <p>${isSlot ? "Each selected slot catalogue entry and its 200 KiB disk data will be cleared." : `This removes ${single ? "the selected item" : "all selected items"} from the working image.${contentsWarning}`} Associated installed-menu entries are removed together in the same operation. Your original image remains untouched.</p>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Keep ${entries.length === 1 ? "it" : "them"}</button><button class="button danger" value="delete">${isSlot ? "Eject" : "Delete"} ${entries.length} ${isSlot ? `disk${entries.length === 1 ? "" : "s"}` : `item${entries.length === 1 ? "" : "s"}`}</button></div>`,
   async () => {
     const endpoint = isSlot ? `/api/images/${pane.image.id}/slots/clear` : `/api/images/${pane.image.id}/delete`;
     const body = isSlot
-      ? { slots: slotEntries.map(item => item.slot) }
-      : { slot: pane.slot, side: pane.side, path: fullPath(pane.path, entry.name), recursive: entry.type === "dir" };
+      ? { slots: entries.map(item => item.slot) }
+      : {
+          slot: pane.slot,
+          side: pane.side,
+          items: entries.map(item => ({
+            path: fullPath(pane.path, item.name),
+            recursive: item.type === "dir" || item.type === "directory",
+          })),
+        };
     const data = await api(endpoint, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
@@ -2605,7 +2607,7 @@ function deleteSelected(index) {
         pane.image.id,
         data.image,
         [],
-        { path: data.deletedPath, isDirectory: data.deletedDirectory },
+        data.deletedItems || [{ path: data.deletedPath, isDirectory: data.deletedDirectory }],
       );
     } else {
       pane.image = data.image;
@@ -2615,7 +2617,7 @@ function deleteSelected(index) {
       ? `${data.slots.length === 1 ? `Slot ${data.slots[0]} is` : `Slots ${data.slots.join(", ")} are`} now empty${data.menuEntriesRemoved
         ? `; ${data.menuEntriesRemoved} associated menu ${data.menuEntriesRemoved === 1 ? "entry" : "entries"} removed`
         : ""}`
-      : `${entry.name} deleted${data.menuEntriesRemoved
+      : `${single ? single.name : `${entries.length} items`} deleted${data.menuEntriesRemoved
         ? `; ${data.menuEntriesRemoved} menu ${data.menuEntriesRemoved === 1 ? "entry" : "entries"} removed`
         : ""}`);
   });
@@ -3204,14 +3206,16 @@ async function refreshSharedAdfsPanes(imageId, image, moves = [], deleted = null
         break;
       }
     }
-    if (
-      deleted?.isDirectory
+    const deletedItems = Array.isArray(deleted) ? deleted : deleted ? [deleted] : [];
+    const deletedAncestor = deletedItems.find(item =>
+      item.isDirectory
       && (
-        pane.path.toLowerCase() === deleted.path.toLowerCase()
-        || pane.path.toLowerCase().startsWith(`${deleted.path}.`.toLowerCase())
+        pane.path.toLowerCase() === item.path.toLowerCase()
+        || pane.path.toLowerCase().startsWith(`${item.path}.`.toLowerCase())
       )
-    ) {
-      pane.path = parentPath(deleted.path);
+    );
+    if (deletedAncestor) {
+      pane.path = parentPath(deletedAncestor.path);
     }
     pane.image = image;
     await loadDirectory(index);
@@ -3258,31 +3262,22 @@ async function performTransfers(targetIndex, transfers, destination = null) {
   }
 }
 
-async function toggleLock(index) {
+async function setSelectedAccess(index, writable) {
   const pane = panes[index];
-  const entry = selectedEntry(index);
-  if (!entry) return;
   if (pane.image.kind === "mmb" && pane.slot === null) {
-    try {
-      const data = await paneOperation(index, "Updating slot protection…", () => api(`/api/images/${pane.image.id}/slots/protect`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slot: entry.slot, writable: !entry.writable })
-      }));
-      pane.image = data.image;
-      await acceptImage(index, pane.image);
-      toast(entry.writable ? "MMB disk protected" : "MMB disk made writable");
-    } catch (error) { toast(error.message, true); }
-    return;
+    return setSelectedSlotsWritable(index, writable);
   }
-  const unlock = String(entry.attr || "").includes("L");
+  const entries = selectedEntries(index);
+  if (!entries.length) return toast("Select one or more files or directories.", true);
+  const paths = entries.map(entry => fullPath(pane.path, entry.name));
   try {
-    const data = await paneOperation(index, unlock ? "Unlocking file…" : "Locking file…", () => api(`/api/images/${pane.image.id}/lock`, {
+    const data = await paneOperation(index, `Marking ${entries.length} item${entries.length === 1 ? "" : "s"} ${writable ? "read / write" : "read-only"}…`, () => api(`/api/images/${pane.image.id}/lock`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ slot: pane.slot, side: pane.side, path: fullPath(pane.path, entry.name), unlock })
+      body: JSON.stringify({ slot: pane.slot, side: pane.side, paths, unlock: writable })
     }));
     pane.image = data.image;
-    await loadDirectory(index);
-    toast(unlock ? "File unlocked" : "File locked");
+    await loadDirectory(index, true);
+    toast(`${entries.length} item${entries.length === 1 ? "" : "s"} marked ${writable ? "read / write" : "read-only"}`);
   } catch (error) { toast(error.message, true); }
 }
 
@@ -5330,6 +5325,8 @@ function showHelp() {
               <li>Use <kbd>Shift</kbd>-click to select the range between the anchor and the clicked row.</li>
               <li>Press <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>-<kbd>A</kbd> while a row has focus to select every usable item in the current view.</li>
               <li>Start dragging any selected row to carry the complete selection.</li>
+              <li>Point at a single row to reveal Rename and Delete beside its name. For a multiple selection, Rename is hidden and Delete applies to the whole selection with one confirmation.</li>
+              <li>The Access column reveals separate read/write and read-only controls. They apply to one file or disk, or every applicable item in a multiple selection.</li>
             </ol>
             <div class="help-note"><strong>The orange dot means changed:</strong> the working image contains edits not yet downloaded. It does not mean the original file has changed.</div>
           </section>
@@ -5390,12 +5387,12 @@ function showHelp() {
               </ol>
             </div>
             <div class="help-task">
-              <h4>Lock, unlock, download or delete</h4>
+              <h4>Change access, download or delete</h4>
               <ol>
-                <li>Select a file and use <strong>Edit → Lock / unlock file</strong> to toggle protection.</li>
+                <li>Point at the Access column and select ◇ for read/write or ◆ for read-only. Select several files first to update them together.</li>
                 <li>Double-click an ordinary file to download an individual copy without changing the image.</li>
-                <li>To remove an item, select the × icon on its row, or select the row and press <kbd>Delete</kbd>.</li>
-                <li>Read the confirmation carefully. Deleting an ADFS directory recursively removes everything below it from the working copy.</li>
+                <li>To remove one or several items, select them and use any visible × on the selected rows, or press <kbd>Delete</kbd>.</li>
+                <li>Read the single confirmation carefully. Deleting an ADFS directory recursively removes everything below it. Every affected installed-menu record is removed in the same batch update.</li>
               </ol>
             </div>
           </section>
@@ -5408,7 +5405,7 @@ function showHelp() {
                 <li>On a DSD, use <strong>Side 0</strong>/<strong>Side 2</strong> to choose the catalogue you are editing.</li>
                 <li>Use <strong>Add file</strong>, or drag selected files from another pane.</li>
                 <li>Review shortened names and Acorn load/execute addresses before confirming each import.</li>
-                <li>Use <strong>Edit</strong> to rename, move between DFS directory prefixes, lock or delete files.</li>
+                <li>Use the row actions to rename or delete. Use the Access column to mark one or several files read/write or read-only.</li>
                 <li>Use <strong>Tools → Check filesystem</strong>, optionally compact it, then select <strong>Save Image</strong> in the pane heading.</li>
               </ol>
             </div>
@@ -5438,12 +5435,12 @@ function showHelp() {
           </section>
           <section id="help-mmb">
             <h3>MMB disk banks: slots and embedded disks</h3>
-            <figure><img src="/help/mmb-actions.png" alt="MMB Slot and Menu dropdowns"><figcaption>Every physical slot is listed. Slot contains the Add disk submenu and selected-slot actions; Menu manages the installed menu program.</figcaption></figure>
+            <figure><img src="/help/mmb-actions.png" alt="MMB Add disk and Menu controls with slot row actions"><figcaption>Every physical slot is listed. Add disk is a flat menu; rename, access and eject controls live on each formatted slot row.</figcaption></figure>
             <div class="help-task">
               <h4>Insert SSD, DSD or HFE image files and ZIP distributions</h4>
               <ol>
                 <li>Select the first empty destination slot.</li>
-                <li>Open <strong>Slot → Add disk → Insert SSD / DSD / HFE / ZIP</strong>.</li>
+                <li>Open <strong>Add disk → Insert SSD / DSD / HFE / ZIP</strong>.</li>
                 <li>Select one or several SSD/DSD/HFE files, or ZIP files containing them. Every supported ZIP member is imported in archive order and unrelated documentation or artwork is ignored.</li>
                 <li>A DSD needs two adjacent empty slots. Its two sides occupy two SSD-sized MMB slots.</li>
                 <li>Review the allocation message and, if a menu is installed, review or skip each offered menu entry.</li>
@@ -5453,7 +5450,7 @@ function showHelp() {
               <h4>Create a blank writable disk in a slot</h4>
               <ol>
                 <li>Select an empty slot.</li>
-                <li>Choose <strong>Slot → Add disk → Create blank SSD here</strong> or <strong>Create blank DSD here</strong>.</li>
+                <li>Choose <strong>Add disk → Create blank SSD here</strong> or <strong>Create blank DSD here</strong>.</li>
                 <li>Enter the disk title and choose whether it is read/write.</li>
                 <li>Select <strong>Create and insert</strong>. Blank formatted disks are useful for saved games and user data.</li>
               </ol>
@@ -5463,7 +5460,7 @@ function showHelp() {
               <ol>
                 <li>Open an SSD, DSD, DFS-formatted HFE, or an individual disk inside another MMB pane.</li>
                 <li>In the destination MMB, return to <strong>All disks</strong> and select one empty slot.</li>
-                <li>Choose <strong>Slot → Add disk → Import from open &lt;filename&gt;</strong>. Each other open image has its own entry. The visible SSD/DSD image title becomes the destination slot title; an MMB source keeps its existing slot title.</li>
+                <li>Choose <strong>Add disk → Import from open &lt;filename&gt;</strong>. Each other open image has its own entry. The visible SSD/DSD image title becomes the destination slot title; an MMB source keeps its existing slot title.</li>
                 <li>Entries for incompatible ADFS filesystems or an MMB still showing <strong>All disks</strong> are disabled and explain why. MMB can contain DFS disk sectors only.</li>
                 <li>Review any installed-menu metadata offered after the disk is inserted. A DSD still requires two adjacent empty slots.</li>
               </ol>
@@ -5480,11 +5477,11 @@ function showHelp() {
             <div class="help-task">
               <h4>Rename, protect, move or eject slots</h4>
               <ol>
-                <li>Select a formatted slot. Ctrl/Cmd-click or Shift-click to select several for access changes.</li>
-                <li>Use <strong>Slot → Rename disk title</strong> for a single disk.</li>
-                <li>Use <strong>Mark read-only</strong> or <strong>Mark read / write</strong> for every selected formatted disk.</li>
+                <li>Select a formatted slot. Ctrl/Cmd-click or Shift-click to select several.</li>
+                <li>Point at one slot and use the pencil beside its name to rename its disk title.</li>
+                <li>In the Access column, use ◇ to mark every selected formatted disk read/write or ◆ to mark them read-only.</li>
                 <li>Drag one disk onto another position in the same MMB to move or swap it. Drag several selected disks onto an empty slot to move the batch.</li>
-                <li>Select one or several formatted slots, then use <strong>Slot → Eject selected disks</strong>. One confirmation clears every selected catalogue entry and its disk data. Records for those disk titles are removed from an installed Universal or SPI menu in the same operation. If another non-ejected slot has the same title, its records remain available. The list keeps its selection area and scroll position after slot actions.</li>
+                <li>Select one or several formatted slots, then use × beside any selected name. One confirmation clears every selected catalogue entry and its disk data. Records for those disk titles are removed from an installed Universal or SPI menu in the same operation. If another non-ejected slot has the same title, its records remain available. The list keeps its selection area and scroll position after slot actions.</li>
               </ol>
             </div>
             <div class="help-note"><strong>Empty slots are intentional:</strong> they stay visible so images can be dropped precisely. An unformatted empty slot has no read-only/read-write state.</div>

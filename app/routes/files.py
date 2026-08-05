@@ -19,7 +19,7 @@ from ..menu_service import (
     analyse_disk,
     best_distribution_filename,
     continuation_metadata_from_mmb_menu,
-    delete_adfs_item,
+    delete_adfs_items,
     enrich_if_ambiguous,
     enrich_from_distribution_filename,
     metadata_records_from_mmb_menu,
@@ -302,20 +302,41 @@ def create_files_blueprint(
     def delete(image_id):
         data = payload()
         session = service.get(image_id)
+        items = data.get("items")
+        if items is None:
+            items = [{
+                "path": data["path"],
+                "recursive": bool(data.get("recursive")),
+            }]
+        if not isinstance(items, list) or not items:
+            raise DiskError("Choose at least one item to delete.")
         if session.kind == "adfs":
-            result = delete_adfs_item(service, session, data["path"])
+            result = delete_adfs_items(
+                service,
+                session,
+                [item["path"] for item in items],
+            )
         else:
             args = ["rm", "--force"]
-            if data.get("recursive"):
+            if any(item.get("recursive") for item in items):
                 args.append("--recursive")
-            args += ["{image}:" + data["path"]]
+            args.append("{image}:" + items[0]["path"])
+            args.extend(
+                service.inner_for(session, item["path"], optional_int(data.get("side")))
+                for item in items[1:]
+            )
             service.mutate(
                 session,
                 optional_int(data.get("slot")),
                 args,
                 optional_int(data.get("side")),
             )
-            result = {}
+            result = {
+                "deletedItems": [
+                    {"path": item["path"], "isDirectory": bool(item.get("recursive"))}
+                    for item in items
+                ]
+            }
         return jsonify(image=service.summary(session), **result)
 
     @blueprint.post("/api/images/<image_id>/mkdir")
@@ -334,17 +355,19 @@ def create_files_blueprint(
     def lock(image_id):
         data = payload()
         session = service.get(image_id)
-        service.mutate(
+        paths = data.get("paths")
+        if paths is None:
+            paths = [data["path"]]
+        if not isinstance(paths, list) or not paths:
+            raise DiskError("Choose at least one file to update.")
+        updated = service.set_access(
             session,
             optional_int(data.get("slot")),
-            [
-                "unlock" if data.get("unlock") else "lock",
-                "--no-wildcards",
-                "{image}:" + data["path"],
-            ],
+            paths,
+            bool(data.get("unlock")),
             optional_int(data.get("side")),
         )
-        return jsonify(image=service.summary(session))
+        return jsonify(image=service.summary(session), paths=updated)
 
     @blueprint.post("/api/images/<image_id>/files")
     def put_file(image_id):
