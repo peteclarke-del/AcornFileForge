@@ -48,7 +48,8 @@ def _walk(
     side: int | None = None,
     progress=None,
 ):
-    pending = deque(["$"])
+    is_dfs = session.kind == "dfs" or (session.kind == "mmb" and slot is not None)
+    pending = deque(["" if is_dfs else "$"])
     visited = set()
     count = 0
     while pending:
@@ -60,6 +61,9 @@ def _walk(
             progress(f"Reading directory {parent}", count, None)
         listing = service.list_directory(session, parent, slot, side)
         for row in listing["entries"]:
+            if is_dfs and parent == "" and row.get("virtual"):
+                pending.append(str(row.get("name") or "$"))
+                continue
             path = _join(parent, str(row.get("name") or "Untitled"))
             yield path, row
             count += 1

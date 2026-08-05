@@ -4,7 +4,7 @@ function newPaneState(image = null) {
     slot: null,
     side: image?.doubleSided ? 0 : null,
     slotName: "",
-    path: "$",
+    path: image?.kind === "dfs" ? "" : "$",
     entries: [],
     capacity: null,
     selected: null,
@@ -15,6 +15,15 @@ function newPaneState(image = null) {
     menuDetected: false,
     menuDetectionPending: Boolean(image?.kind === "mmb")
   };
+}
+
+function isDfsPane(pane) {
+  return pane?.image?.kind === "dfs" || (pane?.image?.kind === "mmb" && pane.slot !== null);
+}
+
+function restoredDfsPath(saved) {
+  if (saved?.pathModel === "dfs-prefixes") return typeof saved.path === "string" ? saved.path : "";
+  return saved?.path === "$" || typeof saved?.path !== "string" ? "" : saved.path;
 }
 
 const MAX_PANES = 3;
@@ -113,6 +122,7 @@ function rememberOpenPanes() {
     slot: pane.slot,
     side: pane.side,
     path: pane.path,
+    pathModel: isDfsPane(pane) ? "dfs-prefixes" : "hierarchical",
   } : null);
   try {
     localStorage.setItem(OPEN_PANES_STORAGE_KEY, JSON.stringify(snapshot));
@@ -167,16 +177,19 @@ async function restoreOpenPanes() {
         if (disk) {
           pane.slot = saved.slot;
           pane.slotName = disk.name;
-          pane.path = typeof saved.path === "string" && saved.path ? saved.path : "$";
+          pane.path = restoredDfsPath(saved);
           await loadDirectory(index);
         }
       } else if (
         data.image.kind !== "mmb"
         && typeof saved.path === "string"
-        && saved.path
-        && (saved.path !== "$" || pane.side !== (data.image.doubleSided ? 0 : null))
+        && (
+          (data.image.kind === "dfs" && restoredDfsPath(saved) !== "")
+          || (data.image.kind !== "dfs" && saved.path !== "$")
+          || pane.side !== (data.image.doubleSided ? 0 : null)
+        )
       ) {
-        pane.path = saved.path;
+        pane.path = data.image.kind === "dfs" ? restoredDfsPath(saved) : saved.path;
         await loadDirectory(index);
       }
     } catch (error) {
@@ -501,6 +514,7 @@ async function fetchCapacity(imageId, slot = null) {
 }
 
 function fullPath(directory, name) {
+  if (directory === "") return name;
   return directory === "$" ? `$.${name}` : `${directory}.${name}`;
 }
 
@@ -523,13 +537,18 @@ function targetNameRule(pane, original) {
 }
 
 function parentPath(path) {
+  if (path === "") return "";
   if (path === "$") return "$";
   const parts = path.split(".");
   parts.pop();
-  return parts.join(".") || "$";
+  return parts.join(".") || "";
 }
 
-function crumbs(path) {
+function crumbs(path, dfs = false) {
+  if (dfs) {
+    if (path === "") return '<span class="crumb current">Catalogues</span>';
+    return `<button class="crumb" data-path="">Catalogues</button><span>›</span><span class="crumb current">${esc(path)}</span>`;
+  }
   const parts = path.split(".");
   let current = "";
   return parts.map((part, index) => {
@@ -622,16 +641,40 @@ function renderPane(index, preserveScroll = false) {
   const selectedKeys = new Set(selectionKeys(pane));
   const isSlots = pane.image.kind === "mmb" && pane.slot === null;
   const isTape = pane.image.kind === "tape";
-  const canFolder = pane.image.kind === "adfs" && !isSlots && !pane.image.readOnly;
+  const isDfs = isDfsPane(pane);
+  const isDfsRoot = isDfs && pane.path === "";
+  const supportsFolders = pane.image.kind === "adfs" && !isSlots && !isTape;
+  const canFolder = supportsFolders && !pane.image.readOnly;
   const canEdit = !isSlots && !isTape && !pane.image.readOnly;
+  const canEditFiles = canEdit && !isDfsRoot;
   const isDsd = pane.image.doubleSided;
   const kind = pane.image.kind === "mmb" && pane.slot !== null ? "dfs" : pane.image.kind;
-  const location = isSlots ? "MMB disk index" : isTape ? "Cassette tape" : pane.slot !== null ? `Slot ${pane.slot} · ${pane.slotName}` : isDsd ? `DFS side ${pane.side === 2 ? 2 : 0}` : "Root filing system";
+  const location = isSlots
+    ? "MMB disk index"
+    : isTape
+      ? "Cassette tape"
+      : pane.slot !== null
+        ? `Slot ${pane.slot} · ${pane.slotName}${isDfsRoot ? " · DFS catalogues" : ` · ${pane.path}`}`
+        : isDsd
+          ? `DFS side ${pane.side === 2 ? 2 : 0}${isDfsRoot ? " · catalogues" : ` · ${pane.path}`}`
+          : isDfs
+            ? isDfsRoot ? "DFS catalogues" : `DFS catalogue ${pane.path}`
+            : "Root filing system";
+  const hasParentEntry = !isSlots && !isTape && (
+    pane.slot !== null || (isDfs ? pane.path !== "" : pane.path !== "$")
+  );
+  const parentRow = hasParentEntry ? `<tr class="file-row parent-row" aria-label="Parent directory" tabindex="0" draggable="false" data-parent="1" data-key=".." data-name=".." data-type="dir" data-slot="" data-empty="0">
+    <td class="file-name-cell"><div class="file-name-wrap"><span class="file-icon dir">↰</span><strong>..</strong></div></td>
+    <td class="meta">Parent directory</td>
+    <td class="meta">-</td>
+    <td><span class="pill">-</span></td>
+  </tr>` : "";
   const rows = pane.entries.map(entry => {
     const entryType = entry.type === "directory" ? "dir" : entry.type;
     const isDir = entryType === "dir";
+    const isVirtual = Boolean(entry.virtual);
     const icon = entryType === "disk" ? "▣" : isDir ? "↳" : "F";
-    const size = entryType === "disk" ? `#${entry.slot}` : isDir ? `${entry.length || 0} items` : humanSize(entry.length);
+    const size = entryType === "disk" ? `#${entry.slot}` : isVirtual ? "Catalogue group" : isDir ? `${entry.length || 0} items` : humanSize(entry.length);
     const detail = entryType === "disk"
       ? entry.formatted ? (entry.writable ? "Read/write" : "Protected") : "Unformatted"
       : entry.filetype || (entry.load !== "" && entry.load != null ? `&${Number(entry.load).toString(16).toUpperCase()}` : "-");
@@ -639,7 +682,7 @@ function renderPane(index, preserveScroll = false) {
       ? (entry.formatted ? (entry.writable ? "RW" : "RO") : "-")
       : entry.attr || "";
     const entryKey = String(entry.slot ?? entry.name);
-    const rowActionable = !pane.image.readOnly && !isTape && (isSlots ? entry.formatted : canEdit);
+    const rowActionable = !isVirtual && !pane.image.readOnly && !isTape && (isSlots ? entry.formatted : canEdit);
     const accessActionable = rowActionable;
     const multiSelection = selectedKeys.size > 1;
     const hideGroupAction = multiSelection && !selectedKeys.has(entryKey);
@@ -660,12 +703,12 @@ function renderPane(index, preserveScroll = false) {
       : `<td class="file-name-cell"><div class="file-name-wrap"><span class="file-icon ${entryType}">${icon}</span><strong>${esc(entry.name)}</strong>
         ${rowActions}
       </div></td>
-      <td class="meta">${esc(isDir ? "Directory" : "File")}</td>
+      <td class="meta">${esc(isVirtual ? "DFS catalogue" : isDir ? "Directory" : "File")}</td>
       <td class="meta">${esc(size)}</td>
       ${accessCell}`;
-    return `<tr class="file-row${selectedKeys.has(entryKey) ? " selected" : ""}${entry.empty ? " empty-slot" : ""}"
+    return `<tr class="file-row${selectedKeys.has(entryKey) ? " selected" : ""}${entry.empty ? " empty-slot" : ""}${isVirtual ? " virtual-catalogue-row" : ""}"
       aria-selected="${selectedKeys.has(entryKey)}"
-      tabindex="0" draggable="${entry.formatted !== false}" data-key="${esc(entryKey)}" data-name="${esc(entry.name)}" data-type="${entryType}" data-slot="${entry.slot ?? ""}" data-empty="${entry.empty ? "1" : "0"}">
+      tabindex="0" draggable="${!isVirtual && entry.formatted !== false}" data-key="${esc(entryKey)}" data-name="${esc(entry.name)}" data-type="${entryType}" data-slot="${entry.slot ?? ""}" data-empty="${entry.empty ? "1" : "0"}" data-virtual="${isVirtual ? "1" : "0"}">
       ${cells}
     </tr>`;
   }).join("");
@@ -732,10 +775,11 @@ function renderPane(index, preserveScroll = false) {
       ${analysisTools}
       <span class="toolbar-hint">Drag disks to move or swap slots</span>
       <span class="tool-spacer"></span>`
-    : `<button class="tool go-up" ${(pane.path === "$" && pane.slot === null) ? "disabled" : ""}><b>↑</b><span>${pane.slot !== null && pane.path === "$" ? "All disks" : "Up"}</span></button>
-      ${!isTape && !pane.image.readOnly ? '<button class="tool online-library"><b>⌕</b><span>Online Library</span></button>' : ""}
-      ${canEdit ? '<button class="tool import-file"><b>＋</b><span>Add file</span></button>' : ""}
-      ${canFolder ? '<button class="tool new-folder"><b>▢</b><span>Folder</span></button>' : ""}
+    : `${!isTape && !pane.image.readOnly ? `<button class="tool online-library" ${isDfsRoot ? 'disabled title="Open a DFS catalogue group before installing files."' : ""}><b>⌕</b><span>Online Library</span></button>` : ""}
+      ${canEdit ? `<button class="tool import-file" ${canEditFiles ? "" : 'disabled title="Open $ or another DFS catalogue group before adding files."'}><b>＋</b><span>Add file</span></button>` : ""}
+      ${isDfs
+        ? `<button class="tool new-dfs-catalogue" ${pane.image.readOnly ? 'disabled title="This image is read-only."' : ""}><b>▢</b><span>+ Catalogue</span></button>`
+        : !isTape ? `<button class="tool new-folder" ${canFolder ? "" : `disabled title="${supportsFolders ? "This image is read-only." : "This format cannot store directories."}"`}><b>▢</b><span>+ Folder</span></button>` : ""}
       ${isDsd ? `<button class="tool switch-side"><b>⇄</b><span>Side ${pane.side === 2 ? "2" : "0"}</span></button>` : ""}
       ${pane.image.readOnly ? "" : menuTools}
       ${checkpointTools}
@@ -767,10 +811,10 @@ function renderPane(index, preserveScroll = false) {
     <nav class="toolbar" aria-label="File actions">
       ${toolbarMarkup}
     </nav>
-    <div class="breadcrumbs">${isSlots ? '<span class="crumb current">All disks</span>' : pane.slot !== null ? `<button class="crumb mmb-home">All disks</button><span>›</span>${crumbs(pane.path)}` : crumbs(pane.path)}</div>
+    <div class="breadcrumbs">${isSlots ? '<span class="crumb current">All disks</span>' : pane.slot !== null ? `<button class="crumb mmb-home">All disks</button><span>›</span>${crumbs(pane.path, isDfs)}` : crumbs(pane.path, isDfs)}</div>
     <div class="list-wrap">
       ${loadingMarkup(pane)}
-      ${rows ? `<table class="file-list${isSlots ? " mmb-slot-list" : ""}"><thead><tr>${isSlots ? "<th>Slot</th><th>Name</th><th>Kind</th><th>Access</th>" : "<th>Name</th><th>Kind</th><th>Size</th><th>Access</th>"}</tr></thead><tbody>${rows}</tbody></table>` : '<div class="empty-list">Nothing here yet.<br>Drop a host file into this pane to add it.</div>'}
+      ${(parentRow || rows) ? `<table class="file-list${isSlots ? " mmb-slot-list" : ""}"><thead><tr>${isSlots ? "<th>Slot</th><th>Name</th><th>Kind</th><th>Access</th>" : "<th>Name</th><th>Kind</th><th>Size</th><th>Access</th>"}</tr></thead><tbody>${parentRow}${rows}</tbody></table>` : '<div class="empty-list">Nothing here yet.<br>Drop a host file into this pane to add it.</div>'}
     </div>
     <footer class="pane-foot"><span>${pane.image.readOnly ? "Read-only safe view · " : ""}${selectedKeys.size ? `${selectedKeys.size} selected · ` : ""}${pane.entries.length} ${isSlots ? "formatted or named slots" : "objects"} · ${esc(pane.description || "")}</span>${capacityMarkup(pane.capacity)}</footer>`;
 
@@ -791,12 +835,10 @@ function renderPane(index, preserveScroll = false) {
   };
   host.querySelector(".refresh-image").onclick = () => refreshCurrentView(index);
   host.querySelector(".close-image").onclick = () => closePane(index);
-  host.querySelector(".go-up")?.addEventListener("click", () => pane.slot !== null && pane.path === "$"
-    ? returnToMmb(index)
-    : navigate(index, parentPath(pane.path)));
   host.querySelector(".mmb-home")?.addEventListener("click", () => returnToMmb(index));
   host.querySelector(".import-file")?.addEventListener("click", () => guardedPaneAction(index, () => chooseHostFile(index)));
   host.querySelector(".new-folder")?.addEventListener("click", () => guardedPaneAction(index, () => createFolder(index)));
+  host.querySelector(".new-dfs-catalogue")?.addEventListener("click", () => guardedPaneAction(index, () => createDfsCatalogue(index)));
   host.querySelector(".switch-side")?.addEventListener("click", () => switchDsdSide(index));
   host.querySelector(".insert-disk")?.addEventListener("click", () => guardedPaneAction(index, () => chooseSlotImage(index)));
   host.querySelector(".online-library")?.addEventListener("click", () => guardedPaneAction(index, () => showOnlineLibrary(index)));
@@ -865,6 +907,46 @@ function renderPane(index, preserveScroll = false) {
 }
 
 function wireRow(row, index) {
+  if (row.dataset.parent === "1") {
+    row.ondblclick = event => {
+      event.stopPropagation();
+      openEntry(index, row);
+    };
+    row.onkeydown = event => {
+      if (event.key === "Enter") openEntry(index, row);
+    };
+    return;
+  }
+  if (row.dataset.virtual === "1") {
+    row.ondblclick = event => {
+      event.stopPropagation();
+      openEntry(index, row);
+    };
+    row.onkeydown = event => {
+      if (event.key === "Enter") openEntry(index, row);
+    };
+    row.ondragover = event => {
+      const hasInternalFiles = event.dataTransfer.types.includes("application/x-acorn-files");
+      if (!hasInternalFiles && !event.dataTransfer.types.includes("Files")) return;
+      event.preventDefault();
+      event.stopPropagation();
+      row.classList.add("folder-drop-target");
+    };
+    row.ondragleave = () => row.classList.remove("folder-drop-target");
+    row.ondrop = async event => {
+      event.preventDefault();
+      event.stopPropagation();
+      row.classList.remove("folder-drop-target");
+      const destination = row.dataset.name;
+      const encoded = event.dataTransfer.getData("application/x-acorn-files");
+      if (encoded) return transferFiles(index, JSON.parse(encoded), destination);
+      const files = [...event.dataTransfer.files];
+      if (!files.length) return;
+      await navigate(index, destination);
+      await addSelectedHostFiles(index, files);
+    };
+    return;
+  }
   const selectForAction = preserveSelectedGroup => {
     const pane = panes[index];
     if (
@@ -1199,6 +1281,10 @@ function wireDropZone(host, index) {
         : copyDiskImageToAdfs(index, diskSource);
     }
     const internalBatch = event.dataTransfer.getData("application/x-acorn-files");
+    if ((internalBatch || event.dataTransfer.getData("application/x-beeb-file"))
+      && isDfsPane(panes[index]) && panes[index].path === "") {
+      return toast("Drop files onto $, A-Z, or open a DFS catalogue group first.", true);
+    }
     if (internalBatch) return transferFiles(index, JSON.parse(internalBatch));
     const internal = event.dataTransfer.getData("application/x-beeb-file");
     if (internal) return transferFiles(index, [JSON.parse(internal)]);
@@ -1213,6 +1299,9 @@ function wireDropZone(host, index) {
       return;
     }
     if (images.length) return openFiles(index, files);
+    if (isDfsPane(panes[index]) && panes[index].path === "") {
+      return toast("Drop files onto $, A-Z, or open a DFS catalogue group first.", true);
+    }
     for (const file of files) await importHostFile(index, file);
   };
 }
@@ -1884,12 +1973,15 @@ async function performDiskImageToAdfsCopy(index, source, plan) {
 
 async function openEntry(index, row) {
   const pane = panes[index];
-  if (row.dataset.type === "disk") {
+  if (row.dataset.parent === "1") {
+    if (pane.slot !== null && pane.path === "") await returnToMmb(index);
+    else await navigate(index, isDfsPane(pane) && pane.path.length === 1 ? "" : parentPath(pane.path));
+  } else if (row.dataset.type === "disk") {
     const entry = pane.entries.find(item => item.slot === Number(row.dataset.slot));
     if (!entry?.formatted) return toast("That MMB slot is not formatted.", true);
     pane.slot = Number(row.dataset.slot);
     pane.slotName = entry.name;
-    pane.path = "$";
+    pane.path = "";
     await loadDirectory(index);
   } else if (row.dataset.type === "dir") {
     await navigate(index, fullPath(pane.path, row.dataset.name));
@@ -2531,7 +2623,7 @@ function renameSelected(index) {
   if (!entry) return;
   const isSlot = pane.image.kind === "mmb" && pane.slot === null;
   const oldPath = isSlot ? entry.name : fullPath(pane.path, entry.name);
-  const nameLimit = pane.image.kind === "adfs" ? 10 : 12;
+  const nameLimit = pane.image.kind === "adfs" ? 10 : isDfsPane(pane) ? 7 : 12;
   showModal(`
     <h2>${isSlot ? "Rename MMB disk" : `Rename ${esc(entry.name)}`}</h2>
     <p>${isSlot ? "The slot number and disk contents stay unchanged." : "The item stays in its current directory. Drag it onto another directory to move it."}</p>
@@ -2623,10 +2715,34 @@ function deleteSelected(index) {
   });
 }
 
+function createDfsCatalogue(index) {
+  const pane = panes[index];
+  const existing = new Set(
+    pane.path === ""
+      ? pane.entries.filter(entry => entry.virtual).map(entry => String(entry.name).toUpperCase())
+      : [],
+  );
+  const prefixes = ["$", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"];
+  const suggested = prefixes.find(prefix => !existing.has(prefix)) || "$";
+  showModal(`
+    <h2>Choose a DFS catalogue group</h2>
+    <p>DFS stores a one-character prefix on each filename rather than a real directory. An empty group cannot be written to disk, so choose the first file that will use it.</p>
+    <div class="field"><label>Catalogue prefix</label><select name="prefix">
+      ${prefixes.map(prefix => `<option value="${prefix}" ${prefix === suggested ? "selected" : ""}>${prefix}${existing.has(prefix) ? " · already in use" : ""}</option>`).join("")}
+    </select></div>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="create">Choose file</button></div>`,
+  async form => {
+    const prefix = String(form.get("prefix") || "").toUpperCase();
+    if (!/^[$A-Z]$/.test(prefix)) throw new Error("Choose $ or one letter from A to Z.");
+    await navigate(index, prefix);
+    setTimeout(() => chooseHostFile(index), 0);
+  });
+}
+
 function createFolder(index) {
   const pane = panes[index];
   showModal(`
-    <h2>New ADFS folder</h2><p>ADFS names can contain up to ten characters on this image format.</p>
+    <h2>New ADFS folder</h2><p>Create a directory in <code>${esc(pane.path)}</code>. ADFS names can contain up to ten characters on this image format.</p>
     <div class="field"><label>Folder name</label><input name="name" maxlength="10" required></div>
     <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="create">Create folder</button></div>`,
   async form => {
@@ -3121,6 +3237,12 @@ async function transferFiles(targetIndex, sources, targetPath = null) {
   if (movingWithinAdfs) {
     return performAdfsMoves(targetIndex, sources, destination);
   }
+  const movingWithinDfs = isDfsPane(target)
+    && destination !== ""
+    && sources.every(source => source.image === target.image.id && !source.recursive);
+  if (movingWithinDfs) {
+    return performDfsMoves(targetIndex, sources, destination);
+  }
   if (sources.some(source => source.pane === targetIndex)) {
     return toast("Files can only be moved within the same ADFS image.", true);
   }
@@ -3153,6 +3275,36 @@ async function transferFiles(targetIndex, sources, targetPath = null) {
     sources.map(source => ({ ...source, targetName: source.name })),
     destination,
   );
+}
+
+async function performDfsMoves(targetIndex, sources, destination) {
+  const target = panes[targetIndex];
+  const items = sources
+    .map(source => ({
+      source: source.path,
+      destination: fullPath(destination, source.name),
+    }))
+    .filter(item => item.source.toLowerCase() !== item.destination.toLowerCase());
+  if (!items.length) return toast("Those files are already in this catalogue group.");
+  try {
+    const data = await paneOperation(
+      targetIndex,
+      items.length === 1 ? `Moving ${sources[0].name}…` : `Moving ${items.length} DFS files…`,
+      () => api(`/api/images/${target.image.id}/move-dfs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slot: target.slot, side: target.side, items }),
+      }),
+    );
+    for (let index = 0; index < panes.length; index += 1) {
+      if (panes[index].image?.id !== target.image.id) continue;
+      panes[index].image = data.image;
+      await loadDirectory(index);
+    }
+    toast(`${items.length} file${items.length === 1 ? "" : "s"} moved to catalogue ${destination}`);
+  } catch (error) {
+    toast(error.message, true);
+  }
 }
 
 async function performAdfsMoves(targetIndex, sources, destination) {
@@ -3316,6 +3468,14 @@ function showDownloadReady(image, url) {
   };
 }
 
+function applySavedImageSummary(image) {
+  panes.forEach((candidate, candidateIndex) => {
+    if (candidate.image?.id !== image.id) return;
+    candidate.image = image;
+    renderPane(candidateIndex, true);
+  });
+}
+
 async function saveImage(index) {
   const pane = panes[index];
   const existingDialog = modal.open;
@@ -3341,7 +3501,7 @@ async function saveImage(index) {
         body: JSON.stringify({ operationId }),
       })
     );
-    pane.image = data.image;
+    applySavedImageSummary(data.image);
     const downloadUrl = `/api/images/${pane.image.id}/download`;
     triggerImageDownload(downloadUrl);
     if (!existingDialog) showDownloadReady(pane.image, downloadUrl);
@@ -3450,7 +3610,7 @@ function downloadFile(index, name) {
 async function switchDsdSide(index) {
   const pane = panes[index];
   pane.side = pane.side === 2 ? 0 : 2;
-  pane.path = "$";
+  pane.path = "";
   await loadDirectory(index);
 }
 
@@ -5313,7 +5473,7 @@ function showHelp() {
             <h4>Navigate an image</h4>
             <ol>
               <li>Double-click a directory to enter it. Double-click a file to download that file.</li>
-              <li>Use <strong>Up</strong> to move to the parent directory, or select any breadcrumb to jump directly to that location.</li>
+              <li>Double-click <strong>..</strong> to move to the parent directory, or select any breadcrumb to jump directly to that location.</li>
               <li>Inside an MMB disk, use <strong>All disks</strong> to return to the slot list. The disk you left remains selected and is scrolled back into view.</li>
               <li>Select ↻ in the pane heading to reread the current directory or slot list without closing the image.</li>
               <li>Click the image filename in the pane heading to edit it. Press <kbd>Enter</kbd> or click elsewhere to save, or press <kbd>Escape</kbd> to cancel. The format extension is retained; DAT/DSC pair names stay matched. This renames the recovered and downloaded container, not its internal disk title.</li>
@@ -5328,7 +5488,7 @@ function showHelp() {
               <li>Point at a single row to reveal Rename and Delete beside its name. For a multiple selection, Rename is hidden and Delete applies to the whole selection with one confirmation.</li>
               <li>The Access column reveals separate read/write and read-only controls. They apply to one file or disk, or every applicable item in a multiple selection.</li>
             </ol>
-            <div class="help-note"><strong>The orange dot means changed:</strong> the working image contains edits not yet downloaded. It does not mean the original file has changed.</div>
+            <div class="help-note"><strong>The orange dot means changed:</strong> the working image contains edits not yet downloaded. It clears after Save Image has successfully prepared the download and returns after the next edit. A failed save leaves the dot visible. It does not mean the original file has changed.</div>
           </section>
           <section id="help-checkpoints">
             <h3>Undo changes and create named checkpoints</h3>
@@ -5372,10 +5532,20 @@ function showHelp() {
               <h4>Create an ADFS directory</h4>
               <ol>
                 <li>Navigate to the parent directory.</li>
-                <li>Select <strong>Folder</strong>, enter a legal name and select <strong>Create folder</strong>.</li>
+                <li>Select <strong>+ Folder</strong>, enter a legal name and select <strong>Create folder</strong>.</li>
                 <li>Double-click the new directory to enter it, then add or drag content into it.</li>
               </ol>
-              <p>DFS is a flat catalogue with one-character directory prefixes, so the Folder action is available only on ADFS.</p>
+              <p>ADFS directories are real hierarchical objects. DFS uses the separate catalogue-group workflow below.</p>
+            </div>
+            <div class="help-task">
+              <h4>Use DFS catalogue groups</h4>
+              <ol>
+                <li>At the DFS virtual root, open <strong>$</strong> or any populated A–Z catalogue row.</li>
+                <li>Select <strong>+ Catalogue</strong> to choose another one-character prefix and then choose its first file.</li>
+                <li>An empty group cannot be saved because DFS stores the prefix on each file, not as a separate directory entry.</li>
+                <li>Drag selected files onto a catalogue row to move them to that prefix. Open the same image in two panes when you want source and destination catalogues visible together.</li>
+                <li>Double-click <strong>..</strong> to return to the catalogue list. At an MMB disk's catalogue root, <strong>..</strong> returns to <strong>All disks</strong>.</li>
+              </ol>
             </div>
             <div class="help-task">
               <h4>Rename or move an item</h4>
@@ -5403,7 +5573,8 @@ function showHelp() {
               <ol>
                 <li>Create an SSD for one 200 KiB side, or a DSD for two sides.</li>
                 <li>On a DSD, use <strong>Side 0</strong>/<strong>Side 2</strong> to choose the catalogue you are editing.</li>
-                <li>Use <strong>Add file</strong>, or drag selected files from another pane.</li>
+                <li>Open <strong>$</strong> for the default catalogue, or another populated A–Z prefix. Use <strong>+ Catalogue</strong> when the first file will introduce a new prefix.</li>
+                <li>Use <strong>Add file</strong>, or drag selected files from another pane or onto a catalogue row.</li>
                 <li>Review shortened names and Acorn load/execute addresses before confirming each import.</li>
                 <li>Use the row actions to rename or delete. Use the Access column to mark one or several files read/write or read-only.</li>
                 <li>Use <strong>Tools → Check filesystem</strong>, optionally compact it, then select <strong>Save Image</strong> in the pane heading.</li>
@@ -5412,6 +5583,8 @@ function showHelp() {
             <h4>DFS rules enforced by the app</h4>
             <ul>
               <li>A leaf name is at most seven characters and its DFS directory prefix is one character.</li>
+              <li>The virtual root contains sibling groups <strong>$</strong> and A–Z. These are filename prefixes, not nested directories.</li>
+              <li><strong>$</strong> is always shown so a blank disk can receive its first default-catalogue file. Other prefixes appear when populated and disappear when their last file is removed.</li>
               <li>A standard DFS side holds no more than 31 catalogue entries.</li>
               <li>SSD has one catalogue. DSD has separate side 0 and side 2 catalogues.</li>
               <li>A file must fit in the remaining sectors. Compacting can consolidate fragmented free space.</li>
@@ -5502,7 +5675,7 @@ function showHelp() {
             </ol></div>
             <div class="help-task"><h4>Add files or applications to an open disk</h4><ol>
               <li>Open an SSD/DSD disk, an MMB slot, an ADFS directory, or a RISC OS image and choose <strong>Online Library</strong>.</li>
-              <li>On DFS, files from the downloaded disk are copied into the current catalogue. Normal DFS filename, capacity and conflict rules apply.</li>
+              <li>On DFS, ordinary single-catalogue downloads are copied into the currently open group. Multi-prefix distributions retain their original DFS prefixes so loaders and duplicate leaf names remain valid.</li>
               <li>On ADFS, a downloaded disk is extracted into the current directory by default. Select <strong>Create a folder</strong> to keep each disk separate.</li>
               <li>RISC OS Open packages install only into ADFS/RISC OS images. Application directories are retained, package-control files are omitted, and SparkFS load, execute and filetype metadata is preserved.</li>
             </ol></div>
@@ -5522,13 +5695,13 @@ function showHelp() {
               <h4>Create and organise an ADFS volume</h4>
               <ol>
                 <li>Create an ADFS S/M/L floppy or an HDF/RAW hard-drive image, or open a supported existing image.</li>
-                <li>Double-click directories and use breadcrumbs or <strong>Up</strong> to traverse the hierarchy.</li>
-                <li>Use <strong>Folder</strong> to create directories at the current location.</li>
+                <li>Double-click directories to enter them. Double-click <strong>..</strong> or use the breadcrumbs to move back through the hierarchy.</li>
+                <li>Use <strong>+ Folder</strong> to create a validated ADFS directory at the current location.</li>
                 <li>Use <strong>Add file</strong> to import host files with load/execute addresses and optional RISC OS filetype.</li>
                 <li>When the selected host file is a recognised disk, tape or ZIP image, review its catalogue preview before anything is written.</li>
                 <li>Extraction defaults to the directory currently shown. Optionally choose another existing destination with the directory picker, and optionally create a named child directory there. You can instead store the original image as an ordinary file.</li>
                 <li>Direct extraction never overwrites an existing name. A rollback point protects the complete working image if extraction fails or is aborted.</li>
-                <li>Use the pencil and × icons on each row to rename or delete. Lock or unlock a selected file from the compact Edit menu.</li>
+                <li>Use the pencil and × icons on each row to rename or delete. Use the Access-column actions to mark one or several items read/write or read-only.</li>
                 <li>Drag files and complete directory trees onto another directory in the same image to reorganise them. Installed menu launch paths are updated automatically.</li>
                 <li>Check and compact the working filesystem, then save the image.</li>
               </ol>
@@ -5831,6 +6004,7 @@ function showHelp() {
                 <li>Look for the orange changed dot in the pane heading.</li>
                 <li>Select the <strong>Save Image</strong> icon in the pane heading. After validation, use the ready dialog's direct <strong>Download ZIP</strong> link if the automatic download does not appear.</li>
                 <li>The app validates and finalises the working copy before starting the download. Any failure remains inside the app instead of replacing the page with a JSON response.</li>
+                <li>Once preparation succeeds, the orange changed dot clears in every pane showing that image. It returns after the next edit. A failed save leaves the dot visible.</li>
                 <li>Every save is a ZIP named with the image name and current date/time. This avoids duplicate <code>-edited</code> downloads.</li>
                 <li>Every ZIP contains <code>README.md</code> with checksums, target hardware, compatibility warnings, practical restore notes and a complete catalogue. MMB documentation includes all 511 slots, including empty slots, access state and each disk's DFS files.</li>
                 <li>DAT/DSC pairs stay together in a <code>BeebSCSI0</code> directory inside the ZIP. Edited HFE images are encoded and sector-verified before downloading.</li>

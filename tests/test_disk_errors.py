@@ -82,6 +82,67 @@ class DiskErrorTests(unittest.TestCase):
             self.assertEqual(capacity["free"], 1)
             self.assertEqual(capacity["unit"], "slots")
 
+    def test_dfs_virtual_root_lists_default_and_populated_prefixes(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            service = DiskService(folder)
+            session = service.create_blank("ssd", "PREFIXES")
+            host = Path(folder) / "payload"
+            host.write_bytes(b"test")
+            service.put(session, None, "F.MyFile", host, None, None, None)
+
+            root = service.list_directory(session, "", None)
+            prefix = service.list_directory(session, "F", None)
+
+            self.assertEqual([row["name"] for row in root["entries"]], ["$", "F"])
+            self.assertTrue(all(row["virtual"] for row in root["entries"]))
+            self.assertEqual(root["path"], "")
+            self.assertEqual([row["name"] for row in prefix["entries"]], ["MyFile"])
+
+    def test_dfs_prefix_validation_rejects_hierarchical_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            service = DiskService(folder)
+            session = service.create_blank("ssd", "PREFIXES")
+            host = Path(folder) / "payload"
+            host.write_bytes(b"test")
+
+            with self.assertRaisesRegex(DiskError, "catalogue prefix"):
+                service.put(session, None, "Games.MyFile", host, None, None, None)
+
+    def test_dfs_file_moves_between_catalogue_prefixes(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            service = DiskService(folder)
+            session = service.create_blank("ssd", "PREFIXES")
+            host = Path(folder) / "payload"
+            host.write_bytes(b"test")
+            service.put(session, None, "$.HELLO", host, None, None, None)
+
+            moved = service.move_dfs_items(
+                session,
+                None,
+                [{"source": "$.HELLO", "destination": "F.HELLO"}],
+            )
+
+            self.assertEqual(moved[0]["destination"], "F.HELLO")
+            self.assertEqual(service.list_directory(session, "$", None)["entries"], [])
+            self.assertEqual(
+                [row["name"] for row in service.list_directory(session, "F", None)["entries"]],
+                ["HELLO"],
+            )
+
+    def test_dsd_catalogue_groups_are_isolated_per_side(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            service = DiskService(folder)
+            session = service.create_blank("dsd", "PREFIXES")
+            host = Path(folder) / "payload"
+            host.write_bytes(b"side two")
+            service.put(session, None, "T.FILE", host, None, None, None, side=2)
+
+            side_zero = service.list_directory(session, "", None, side=0)
+            side_two = service.list_directory(session, "", None, side=2)
+
+            self.assertEqual([row["name"] for row in side_zero["entries"]], ["$"])
+            self.assertEqual([row["name"] for row in side_two["entries"]], ["$", "T"])
+
     def test_beebscsi_download_reports_preparation_phases(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             image = Path(folder) / "scsi0.dat"
@@ -115,6 +176,50 @@ class DiskErrorTests(unittest.TestCase):
             self.assertEqual(result, image)
             self.assertEqual([item[1] for item in progress], [0, 1, 2, 3, 4, 5])
             self.assertTrue(all(item[2] == 5 for item in progress))
+
+    def test_mark_saved_clears_and_persists_dirty_state(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            session_folder = Path(folder) / ("f" * 32)
+            session_folder.mkdir()
+            image = session_folder / "saved.ssd"
+            image.write_bytes(b"image")
+            service = DiskService(folder)
+            session = ImageSession(
+                "f" * 32,
+                image.name,
+                "dfs",
+                image,
+                dirty=True,
+            )
+
+            service.mark_saved(session)
+
+            self.assertFalse(session.dirty)
+            restored = service._restore_session(session.id)
+            self.assertFalse(restored.dirty)
+
+    def test_clean_edited_hfe_uses_prepared_export(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            session_folder = Path(folder) / ("1" * 32)
+            session_folder.mkdir()
+            raw = session_folder / "working.img"
+            original = session_folder / "original.hfe"
+            exported = session_folder / "saved.hfe"
+            raw.write_bytes(b"raw")
+            original.write_bytes(b"original")
+            exported.write_bytes(b"edited")
+            service = DiskService(folder)
+            session = ImageSession(
+                "1" * 32,
+                "disk.hfe",
+                "dfs",
+                raw,
+                dirty=False,
+                hfe_original_path=original,
+                hfe_export_path=exported,
+            )
+
+            self.assertEqual(service._prepare_hfe_download(session), exported)
 
     def test_image_rename_preserves_format_and_renames_descriptor_download(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
@@ -202,8 +307,12 @@ class DiskErrorTests(unittest.TestCase):
             source = ImageSession("1" * 32, source_path.name, "dfs", source_path)
             target = ImageSession("2" * 32, target_path.name, "adfs", target_path)
 
-            def listing(session, *_args, **_kwargs):
-                return {"entries": [{"name": "GAME", "type": "file"}]} if session is source else {"entries": []}
+            def listing(session, path, *_args, **_kwargs):
+                if session is not source:
+                    return {"entries": []}
+                if path == "":
+                    return {"entries": [{"name": "$", "type": "dir", "virtual": True}]}
+                return {"entries": [{"name": "GAME", "type": "file"}]}
 
             with (
                 patch.object(service, "require_writable_geometry"),
@@ -237,8 +346,12 @@ class DiskErrorTests(unittest.TestCase):
             source = ImageSession("3" * 32, source_path.name, "dfs", source_path)
             target = ImageSession("4" * 32, target_path.name, "adfs", target_path)
 
-            def listing(session, *_args, **_kwargs):
-                return {"entries": [{"name": "GAME", "type": "file"}]} if session is source else {"entries": []}
+            def listing(session, path, *_args, **_kwargs):
+                if session is not source:
+                    return {"entries": []}
+                if path == "":
+                    return {"entries": [{"name": "$", "type": "dir", "virtual": True}]}
+                return {"entries": [{"name": "GAME", "type": "file"}]}
 
             def fail_copy(*_args, **_kwargs):
                 target_path.write_bytes(b"partly modified")
