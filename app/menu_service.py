@@ -1708,20 +1708,22 @@ def move_adfs_items(
     }
 
 
-def delete_adfs_item(
+def delete_adfs_items(
     service: DiskService,
     session: ImageSession,
-    path: str,
+    paths: list[str],
 ) -> dict:
-    """Delete an ADFS object and remove installed-menu records that launch it."""
+    """Delete ADFS objects and rewrite affected installed menus once."""
     from .disk_service import DiskError
 
     if session.kind != "adfs":
         raise DiskError("This deletion helper requires an ADFS image.")
     service.require_writable_geometry(session)
-    source = str(path or "").strip().rstrip(".")
-    if source == "$" or not source.startswith("$."):
-        raise DiskError("Choose an ADFS file or directory below $.")
+    sources = list(dict.fromkeys(str(path or "").strip().rstrip(".") for path in paths))
+    if not sources:
+        raise DiskError("Choose at least one ADFS file or directory to delete.")
+    if any(source == "$" or not source.startswith("$.") for source in sources):
+        raise DiskError("Choose ADFS files or directories below $.")
     try:
         from oaknut.disc.cli import _walk_post_order_mount
         from oaknut.disc.mount import resolve_mount
@@ -1730,75 +1732,109 @@ def delete_adfs_item(
 
     with session.lock, resolve_mount(f"{session.path}:$", writable=True) as resolved:
         mount = resolved.mount
-        if not mount.exists(source):
-            raise DiskError(f"“{source}” no longer exists.")
-        is_directory = bool(mount.stat(source).is_dir)
-        menus = _installed_adfs_menus(mount, session, [source])
+        deleted_items = []
+        for source in sources:
+            if not mount.exists(source):
+                raise DiskError(f"“{source}” no longer exists.")
+            deleted_items.append(
+                {"path": source, "isDirectory": bool(mount.stat(source).is_dir)}
+            )
+
+        # A selected directory already includes anything selected below it. Removing
+        # descendants from the work list avoids a misleading second "not found".
+        directories = [
+            item["path"] for item in deleted_items if item["isDirectory"]
+        ]
+        deleted_items = [
+            item
+            for item in deleted_items
+            if not any(
+                item["path"].casefold().startswith(f"{directory}.".casefold())
+                for directory in directories
+                if item["path"].casefold() != directory.casefold()
+            )
+        ]
+        menus = _installed_adfs_menus(
+            mount,
+            session,
+            [item["path"] for item in deleted_items],
+        )
         removed = 0
         rewritten: list[tuple[str, list[dict]]] = []
-        source_parent, source_name = source.rsplit(".", 1)
         for menu in menus:
             retained = []
             for record in menu["entries"]:
                 directory = str(record["diskTitle"])
-                points_inside_directory = is_directory and (
-                    directory.casefold() == source.casefold()
-                    or directory.casefold().startswith(f"{source}.".casefold())
+                points_to_deleted_item = any(
+                    (
+                        item["isDirectory"]
+                        and (
+                            directory.casefold() == item["path"].casefold()
+                            or directory.casefold().startswith(
+                                f"{item['path']}.".casefold()
+                            )
+                        )
+                    )
+                    or (
+                        not item["isDirectory"]
+                        and directory.casefold()
+                        == item["path"].rsplit(".", 1)[0].casefold()
+                        and str(record["filename"]).casefold()
+                        == item["path"].rsplit(".", 1)[-1].casefold()
+                    )
+                    for item in deleted_items
                 )
-                points_to_file = (
-                    not is_directory
-                    and directory.casefold() == source_parent.casefold()
-                    and str(record["filename"]).casefold() == source_name.casefold()
-                )
-                if points_inside_directory or points_to_file:
+                if points_to_deleted_item:
                     removed += 1
                 else:
                     retained.append(record)
             if len(retained) != len(menu["entries"]):
                 rewritten.append((menu["root"], retained))
 
-        if is_directory:
-            for target in _walk_post_order_mount(mount, source):
-                mount.remove(target, force=True)
-        else:
-            mount.remove(source, force=True)
+        for item in deleted_items:
+            if item["isDirectory"]:
+                for target in _walk_post_order_mount(mount, item["path"]):
+                    mount.remove(target, force=True)
+            else:
+                mount.remove(item["path"], force=True)
+
+        def path_was_deleted(path: str) -> bool:
+            return any(
+                path.casefold() == item["path"].casefold()
+                or (
+                    item["isDirectory"]
+                    and path.casefold().startswith(f"{item['path']}.".casefold())
+                )
+                for item in deleted_items
+            )
 
         for root, entries in rewritten:
-            if root.casefold() == source.casefold() or root.casefold().startswith(
-                f"{source}.".casefold()
-            ):
+            if path_was_deleted(root):
                 continue
             _write_adfs_menu_records(mount, root, entries)
         session.adfs_menu_roots = [
             root
             for root in (session.adfs_menu_roots or [])
-            if not (
-                root.casefold() == source.casefold()
-                or (
-                    is_directory
-                    and root.casefold().startswith(f"{source}.".casefold())
-                )
-            )
+            if not path_was_deleted(root)
         ]
         session.adfs_source_names = {
             path: source_name
             for path, source_name in session.adfs_source_names.items()
-            if not (
-                path.casefold() == source.casefold()
-                or (
-                    is_directory
-                    and path.casefold().startswith(f"{source}.".casefold())
-                )
-            )
+            if not path_was_deleted(path)
         }
 
     session.dirty = True
     service._persist_session(session)
-    return {
-        "deletedPath": source,
-        "deletedDirectory": is_directory,
+    result = {
+        "deletedItems": deleted_items,
         "menuEntriesRemoved": removed,
     }
+    if len(deleted_items) == 1:
+        result.update(
+            deletedPath=deleted_items[0]["path"],
+            deletedDirectory=deleted_items[0]["isDirectory"],
+        )
+    return result
 
 
 def append_adfs_menu_entry(

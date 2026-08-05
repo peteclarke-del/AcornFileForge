@@ -19,6 +19,7 @@ from app.disk_service import (
     EmptyDiskError,
     ImageSession,
 )
+from app.menu_service import delete_adfs_items
 
 
 class DiskPerformanceTests(unittest.TestCase):
@@ -79,6 +80,68 @@ class DiskPerformanceTests(unittest.TestCase):
             )
             with self.assertRaises(DiskError):
                 service.protect_slots(session, [], True)
+
+    def test_multiple_dfs_files_change_access_in_one_mount(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = DiskService(root / "work")
+            session = service.create_blank("ssd", "ACCESS")
+            first = root / "one.bin"
+            second = root / "two.bin"
+            first.write_bytes(b"one")
+            second.write_bytes(b"two")
+            service.put(session, None, "$.ONE", first, "1900", "1900", None)
+            service.put(session, None, "$.TWO", second, "1900", "1900", None)
+
+            updated = service.set_access(
+                session,
+                None,
+                ["$.ONE", "$.TWO"],
+                False,
+            )
+
+            self.assertEqual(updated, ["$.ONE", "$.TWO"])
+            entries = service.list_directory(session, "$", None)["entries"]
+            self.assertTrue(all("L" in row["attr"] for row in entries))
+
+            service.set_access(session, None, ["$.ONE", "$.TWO"], True)
+            entries = service.list_directory(session, "$", None)["entries"]
+            self.assertTrue(all("L" not in row["attr"] for row in entries))
+
+    def test_multiple_dfs_files_delete_in_one_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = DiskService(root / "work")
+            session = service.create_blank("ssd", "DELETE")
+            for name in ("ONE", "TWO", "KEEP"):
+                host = root / f"{name.lower()}.bin"
+                host.write_bytes(name.encode("ascii"))
+                service.put(session, None, f"$.{name}", host, "1900", "1900", None)
+
+            service.mutate(
+                session,
+                None,
+                ["rm", "--force", "{image}:$.ONE", "$.TWO"],
+            )
+
+            names = {row["name"] for row in service.list_directory(session, "$", None)["entries"]}
+            self.assertEqual(names, {"KEEP"})
+
+    def test_multiple_adfs_items_delete_in_one_mount(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = DiskService(root / "work")
+            session = service.create_blank("adfs-s", "DELETE")
+            for name in ("ONE", "TWO", "KEEP"):
+                host = root / f"{name.lower()}.bin"
+                host.write_bytes(name.encode("ascii"))
+                service.put(session, None, f"$.{name}", host, "1900", "1900", None)
+
+            result = delete_adfs_items(service, session, ["$.ONE", "$.TWO"])
+
+            self.assertEqual(len(result["deletedItems"]), 2)
+            names = {row["name"] for row in service.list_directory(session, "$", None)["entries"]}
+            self.assertEqual(names, {"KEEP"})
 
     def test_bulk_copy_pauses_for_a_blank_disk_when_decision_is_required(self):
         with tempfile.TemporaryDirectory() as directory:

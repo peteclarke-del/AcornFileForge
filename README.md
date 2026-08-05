@@ -571,7 +571,7 @@ that makes sense for the target filing system.
   counts as one image. Unrelated text and artwork files are ignored.
 - Drop an SSD, DSD, HFE, or ZIP containing them onto an empty MMB slot to
   insert it. The HFE must contain a DFS disk.
-- Select an empty MMB slot and use **Slot → Add disk** to insert host or open
+- Select an empty MMB slot and use **Add disk** to insert host or open
   media, or create a formatted blank SSD/DSD directly. This is useful for save
   disks and user-writable data.
 - Drag an open DFS disk onto an empty MMB slot in another pane.
@@ -659,15 +659,15 @@ DSD insertion needs two adjacent empty MMB slots. The two sides become two
 200 KiB SSD slots, which is how MMB stores that content.
 
 When another pane has an SSD, DSD, DFS-formatted HFE, or an individual MMB
-disk open, select one empty destination slot and use **Slot → Import from open
+disk open, select one empty destination slot and use **Add disk → Import from open
 &lt;filename&gt;**. One command is shown for each other open image. Incompatible
 ADFS images and MMB panes that are still at **All disks** remain visible but
 disabled, with the reason shown beside them. This keeps the operation within
 MMB's DFS-only format restrictions. A DSD imported this way still needs two
 adjacent empty slots.
 
-Use **Slot → Mark read-only** or **Mark read / write** to set protection on
-one disk or every formatted disk in a multiple selection. Empty slots have no
+Use ◆ or ◇ in the Access column to mark one disk, file, or every applicable
+item in a multiple selection read-only or read/write. Empty MMB slots have no
 access state until a disk is inserted.
 
 Dropping a whole image onto DFS as an extracted tree is not offered because
@@ -726,10 +726,12 @@ An MMB opens at its slot index, not directly inside slot zero.
 - Double-click a formatted slot to browse its embedded DFS disk.
 - Use **All disks** to return to the MMB index. The slot you came from remains
   selected.
-- Rename, clear, protect, unprotect, move, or swap formatted slots. Ejecting
-  one or several disks also removes every associated record from an installed
-  editable Universal or SPI menu. Records remain when another formatted slot
-  still provides the same disk title.
+- Point at a formatted slot to reveal Rename and Eject beside its name. The
+  Access column holds its read/write and read-only actions. In a multiple
+  selection Rename is hidden, while access changes and Eject apply to the
+  selected batch. Ejecting one or several disks also removes every associated
+  record from an installed editable Universal or SPI menu. Records remain when
+  another formatted slot still provides the same disk title.
 - Import several SSD, DSD, and DFS-formatted HFE images in one operation. The
   importer walks forward looking for the next suitable empty slot or empty
   pair.
@@ -994,12 +996,15 @@ name ascending or descending, or drag entries into a manual order, then use
 alphabetised, and later additions are appended without discarding a saved
 manual order.
 
-ADFS file rows keep the everyday actions close to the object. Use the pencil
-icon to rename a file or directory in place and the × icon to delete it after
-confirmation. Moving is handled by drag and drop, so it does not need a
-separate toolbar command. If a renamed, moved or deleted directory or launcher
-is referenced by an installed menu, Acorn File Forge rewrites the affected
-menu path or removes the obsolete entry and rebuilds its indexes.
+File rows keep everyday actions close to the object in DFS, MMB disks and ADFS.
+Use the pencil icon to rename a single file or directory, and × to delete the
+selection after one confirmation. With several rows selected Rename is hidden,
+while Delete removes the full selection in one filesystem operation. The Access
+column marks one or several applicable files read/write or read-only. Moving is
+handled by drag and drop, so it does not need a separate toolbar command. If a
+renamed, moved or deleted ADFS directory or launcher is referenced by an
+installed menu, Acorn File Forge rewrites the affected menu path or removes all
+obsolete entries and rebuilds its indexes once.
 
 Online matches are always shown for review before anything is written.
 Temporary internet failure does not prevent manual metadata entry.

@@ -1965,6 +1965,54 @@ class DiskService:
             self._run(expanded)
             self._mark_mutated(session, slot)
 
+    def set_access(
+        self,
+        session: ImageSession,
+        slot: int | None,
+        paths: list[str],
+        writable: bool,
+        side: int | None = None,
+    ) -> list[str]:
+        """Set Acorn access on several objects in one writable mount."""
+        if session.kind == "tape":
+            raise DiskError("UEF tapes do not carry editable file access.")
+        self.require_writable_geometry(session)
+        targets = list(dict.fromkeys(str(path or "").strip() for path in paths))
+        if not targets:
+            raise DiskError("Choose at least one file or directory to update.")
+        try:
+            from oaknut.disc.mount import resolve_mount
+            from oaknut.file import Access, AcornMeta
+            from oaknut.filesystem import AcornMetadata
+        except ImportError as exc:
+            raise DiskError("The Oaknut access API is unavailable.") from exc
+
+        with session.lock:
+            disk_path = self.resolve(session, slot)
+            root = self.compound(disk_path, self.inner_for(session, "$", side))
+            with resolve_mount(root, writable=True) as resolved:
+                mount = resolved.mount
+                if not isinstance(mount, AcornMetadata):
+                    raise DiskError("This filesystem does not carry Acorn access bits.")
+                resolved_targets = [self.inner_for(session, path, side) for path in targets]
+                for target in resolved_targets:
+                    if not mount.exists(target):
+                        raise DiskError(f"“{target}” no longer exists.")
+                for target in resolved_targets:
+                    meta = mount.acorn_meta(target)
+                    current = Access(meta.access) if meta.access is not None else Access(0)
+                    access = current & ~Access.L if writable else current | Access.L
+                    mount.set_acorn_meta(
+                        target,
+                        AcornMeta(
+                            load_address=meta.load_address,
+                            exec_address=meta.exec_address,
+                            access=int(access),
+                        ),
+                    )
+            self._mark_mutated(session, slot)
+        return targets
+
     def put(
         self,
         session: ImageSession,
