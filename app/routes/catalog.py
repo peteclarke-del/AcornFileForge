@@ -71,12 +71,13 @@ def _copy_disk_files(service: DiskService, source, target, target_slot, target_p
     sides = [0, 2] if source.path.name.lower().endswith(".dsd") else [None]
     copied = 0
     for source_side in sides:
-        for row in service.list_directory(source, "$", None, source_side)["entries"]:
-            if row.get("type") in {"dir", "directory"}:
-                continue
+        rows = service.list_dfs_catalogue_files(source, None, source_side)
+        preserve_prefixes = any(row["prefix"] != "$" for row in rows)
+        for row in rows:
             name = str(row["name"])
-            destination = f"{target_path}.{name}" if target_path != "$" else f"$.{name}"
-            service.copy(source, None, f"$.{name}", target, target_slot, destination, False, source_side, target_side)
+            destination_prefix = row["prefix"] if preserve_prefixes else target_path
+            destination = f"{destination_prefix}.{name}"
+            service.copy(source, None, row["path"], target, target_slot, destination, False, source_side, target_side)
             copied += 1
     if not copied:
         raise DiskError("The downloaded disk image is empty, so nothing was installed.")
@@ -251,7 +252,7 @@ def create_catalog_blueprint(service: DiskService, work_dir: Path) -> Blueprint:
                             target_slot=target_slot,
                             target_path=target_path,
                         ):
-                            count = len(service.list_directory(target, "$", None)["entries"])
+                            count = len(service.list_dfs_catalogue_files(target, target_slot, target_side))
                         else:
                             count = _copy_disk_files(service, source, target, target_slot, target_path, target_side)
                         results.append({"id": item_id, "title": item["title"], "installed": count, "slots": [], "metadata": None})

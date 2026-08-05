@@ -298,6 +298,18 @@ def create_files_blueprint(
         )
         return jsonify(image=service.summary(session), **result)
 
+    @blueprint.post("/api/images/<image_id>/move-dfs")
+    def move_dfs_items(image_id):
+        data = payload()
+        session = service.get(image_id)
+        moved = service.move_dfs_items(
+            session,
+            optional_int(data.get("slot")),
+            data.get("items", []),
+            optional_int(data.get("side")),
+        )
+        return jsonify(image=service.summary(session), moved=moved)
+
     @blueprint.post("/api/images/<image_id>/delete")
     def delete(image_id):
         data = payload()
@@ -343,10 +355,19 @@ def create_files_blueprint(
     def mkdir(image_id):
         data = payload()
         session = service.get(image_id)
+        if session.kind != "adfs":
+            raise DiskError(
+                "This filing system cannot store directories. "
+                "DFS uses one-character catalogue prefixes instead."
+            )
+        path = str(data.get("path") or "").strip()
+        if not path.startswith("$.") or path.endswith("."):
+            raise DiskError("Choose a valid ADFS parent directory and folder name.")
+        service.validate_leaf_name(session, path.rsplit(".", 1)[-1])
         service.mutate(
             session,
             optional_int(data.get("slot")),
-            ["mkdir", "-p", "{image}:" + data["path"]],
+            ["mkdir", "-p", "{image}:" + path],
             optional_int(data.get("side")),
         )
         return jsonify(image=service.summary(session))
@@ -379,7 +400,9 @@ def create_files_blueprint(
         name = request.form.get("targetName") or DiskService.safe_filename(upload.filename)
         name = service.validate_leaf_name(session, name, slot)
         destination_dir = request.form.get("destination", "$").rstrip(".")
-        destination = f"{destination_dir}.{name}" if destination_dir != "$" else f"$.{name}"
+        if session.kind == "dfs" or (session.kind == "mmb" and slot is not None):
+            destination_dir = service.validate_dfs_prefix(destination_dir)
+        destination = f"{destination_dir}.{name}"
         with tempfile.NamedTemporaryFile(dir=work_dir, prefix="import-", delete=False) as temp:
             upload.save(temp)
             temp_path = Path(temp.name)

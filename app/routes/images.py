@@ -187,6 +187,7 @@ def create_images_blueprint(
         download_path = service.prepare_download(session)
         generated = datetime.now().astimezone()
         readme_path = write_download_readme(service, session, download_path, generated)
+        service.mark_saved(session)
         is_beebscsi = bool(session.descriptor_path and session.path.suffix.lower() == ".dat")
         archive_root = "BeebSCSI0/" if is_beebscsi else ""
         files = [(readme_path, "README.md"), (download_path, f"{archive_root}{session.name}")]
@@ -217,6 +218,7 @@ def create_images_blueprint(
                     operation_id, message, current, total
                 ),
             )
+            service.mark_saved(session)
             operations.finish(operation_id, "Image download is ready")
             return jsonify(image=service.summary(session), ready=True)
         except OperationCancelled as exc:

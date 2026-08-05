@@ -101,11 +101,21 @@ def _filesystem_catalogue(service: DiskService, session: ImageSession) -> list[s
         lines.extend(_row_line(f"$.{row.get('name', 'Untitled')}", row) for row in listing["entries"])
         return [*lines, ""]
 
-    pending: list[tuple[str, int | None]] = (
-        [("$", 0), ("$", 2)]
-        if session.kind == "dfs" and session.path.name.lower().endswith(".dsd")
-        else [("$", None)]
-    )
+    if session.kind == "dfs":
+        sides = [0, 2] if session.path.name.lower().endswith(".dsd") else [None]
+        object_count = 0
+        for side in sides:
+            for row in service.list_dfs_catalogue_files(session, None, side):
+                display_path = row["path"]
+                if side is not None:
+                    display_path = f"Side {side}: {display_path}"
+                lines.append(_row_line(display_path, row))
+                object_count += 1
+        if object_count == 0:
+            lines.append("| _(empty)_ | - | - | - | - | - |")
+        return [*lines, ""]
+
+    pending: list[tuple[str, int | None]] = [("$", None)]
     visited: set[tuple[str, int | None]] = set()
     object_count = 0
     while pending:
