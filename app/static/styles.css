@@ -192,6 +192,10 @@ main { width: 100%; padding: 16px 18px 18px; margin: auto; }
 .file-row[draggable=true] { cursor: grab; }
 .file-row.dragging { opacity: .4; }
 .file-row.folder-drop-target { outline: 2px solid var(--blue); outline-offset: -2px; background: color-mix(in srgb, var(--blue) 12%, var(--paper)); }
+.parent-row { color: var(--muted); }
+.parent-row .file-name-wrap strong { font-family: DM Mono, monospace; }
+.virtual-catalogue-row { background: color-mix(in srgb, var(--blue) 4%, transparent); }
+.virtual-catalogue-row .file-name-wrap strong { font-family: DM Mono, monospace; }
 .file-name-cell { min-width: 0; }
 .file-name-wrap { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .file-name-wrap strong { min-width: 0; flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

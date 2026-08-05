@@ -77,7 +77,8 @@ Bug reports and proposed improvements can be raised in the
 1. The app starts with one full-width work pane. Open or create an image there.
 2. Select **Add Pane** in the header when you need a source, destination or
    scratch area. Add a third in the same way; three is the maximum.
-3. Double-click directories or MMB slots to browse them.
+3. Double-click directories or MMB slots to browse them. Use the `..` row to
+   return to the parent, or select a breadcrumb to jump straight there.
 4. Drag files, directories, disk images, or MMB slots to their destination.
 5. Use **History** to undo the latest operation or create a named checkpoint
    before a larger experiment.
@@ -238,6 +239,8 @@ one pane.
 
 After image validation, Save starts a native timestamped ZIP download and
 opens a small confirmation dialog containing a direct **Download ZIP** link.
+Once the download has been prepared, the orange changed indicator clears in
+every pane showing that image. It returns after the next edit.
 If a browser suppresses the automatic handoff after a long DAT/DSC validation,
 use that link without returning to the work pane or risking the current session.
 Large saves show a foreground progress dialog while hardware checks, geometry,
@@ -474,7 +477,7 @@ still stops only at a safe filesystem boundary.
 
 | Media | Common names | What Acorn File Forge can do |
 |---|---|---|
-| Acorn DFS | SSD, DSD | Browse, add, export, rename, delete, lock, compact, validate, and copy files |
+| Acorn DFS | SSD, DSD | Browse catalogue prefixes, add, export, rename, delete, lock, compact, validate, and copy files |
 | MMB | MMB | Browse all slots, create or insert disks, set read-only/read-write access, edit embedded DFS disks, drag to move or swap, and maintain Universal or SPI game menus |
 | ADFS floppy | ADS, ADM, ADL, ADF, DSK | Traverse directories and perform normal file and directory operations when the FileCore layout is supported |
 | Acorn hard drive | DAT with matching DSC, HDF, HDD | Browse and edit hierarchical ADFS volumes, including virtual hard-drive images |
@@ -542,6 +545,18 @@ that makes sense for the target filing system.
 
 ### Files and directories
 
+- Select **+ Folder** in a writable ADFS floppy or hard-drive pane to create a
+  directory at the current location. The name is checked against the target
+  format before the image is changed.
+- DFS media use **+ Catalogue** instead. The pane root shows `$` and every
+  populated A–Z prefix as virtual catalogue groups. Open one to browse, add,
+  rename, delete or protect its files. Because DFS cannot store an empty group,
+  **+ Catalogue** asks for the first file that will use a new prefix.
+- Double-click `..` to move to the parent directory. Inside an MMB disk, the
+  root-level `..` row returns to **All disks** at the same slot.
+- Drag one or several DFS files onto a catalogue row to move them between
+  prefixes. The same operation works between two panes showing the same SSD,
+  DSD side or MMB slot.
 - Drag a file between any two writable filesystems.
 - Drag an ADFS directory to another ADFS image to copy its complete tree.
 - Within one ADFS image, drag files or complete directories onto another
@@ -1149,7 +1164,9 @@ than silently pretending the conversion was perfect.
 **Save Image** first validates and finalises the current working image, then starts
 the download in an isolated browser target. A validation or network error is
 reported inside Acorn File Forge and cannot replace the application with a raw
-JSON error page.
+JSON error page. A successful preparation clears the pane's orange changed dot;
+a failed preparation leaves it in place so unsaved work cannot be mistaken for
+a completed save.
 
 - Every format is returned as a timestamped ZIP named
   `<image-name>-YYYYMMDD-HHMMSS.zip`, so repeated saves do not silently reuse
