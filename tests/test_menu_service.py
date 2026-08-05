@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 import tempfile
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -24,6 +25,7 @@ from app.menu_service import (
     backup_mmb_menu_slot,
     build_index,
     continuation_metadata_from_mmb_menu,
+    delete_adfs_items,
     configure_mmb_universal_page,
     discover_adfs_menu_paths,
     edit_mmb_menu_entries,
@@ -63,6 +65,56 @@ class FakeService:
 
 
 class MenuServiceTests(unittest.TestCase):
+    def test_bulk_adfs_delete_rewrites_all_matching_menu_records_once(self):
+        class FakeMount:
+            def exists(self, _path):
+                return True
+
+            def stat(self, _path):
+                return SimpleNamespace(is_dir=False)
+
+            def remove(self, _path, force=False):
+                self.removed.append((_path, force))
+
+            removed = []
+
+        mount = FakeMount()
+
+        @contextmanager
+        def resolved_mount(_path, writable=False):
+            self.assertTrue(writable)
+            yield SimpleNamespace(mount=mount)
+
+        records = [
+            {"title": "One", "diskTitle": "$.Games", "filename": "ONE"},
+            {"title": "Two", "diskTitle": "$.Games", "filename": "TWO"},
+            {"title": "Keep", "diskTitle": "$.Games", "filename": "KEEP"},
+        ]
+        session = SimpleNamespace(
+            kind="adfs",
+            lock=threading.RLock(),
+            path=Path("test.adl"),
+            adfs_menu_roots=["$.Games"],
+            adfs_source_names={},
+            dirty=False,
+        )
+        service = Mock()
+
+        with (
+            patch("oaknut.disc.mount.resolve_mount", resolved_mount),
+            patch("app.menu_service._installed_adfs_menus", return_value=[{
+                "root": "$.Games",
+                "entries": records,
+            }]),
+            patch("app.menu_service._write_adfs_menu_records") as write_records,
+        ):
+            result = delete_adfs_items(service, session, ["$.Games.ONE", "$.Games.TWO"])
+
+        write_records.assert_called_once_with(mount, "$.Games", [records[2]])
+        self.assertEqual(result["menuEntriesRemoved"], 2)
+        self.assertEqual(mount.removed, [("$.Games.ONE", True), ("$.Games.TWO", True)])
+        service._persist_session.assert_called_once_with(session)
+
     @patch("app.menu_service.edit_mmb_menu_entries")
     @patch("app.menu_service.parse_mmb_menu_data")
     @patch("app.menu_service.installed_mmb_menu", return_value=(0, "universal"))
