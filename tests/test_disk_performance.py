@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import os
 import sys
 import tempfile
 import types
@@ -23,6 +24,66 @@ from app.menu_service import delete_adfs_items
 
 
 class DiskPerformanceTests(unittest.TestCase):
+    @staticmethod
+    def _small_mmb(root: Path, name: str, titles: dict[int, str]) -> ImageSession:
+        path = root / name
+        header = bytearray(MMB_HEADER_SIZE)
+        for slot in range(8):
+            offset = 16 + slot * MMB_ENTRY_SIZE
+            header[offset + 15] = 0xF0
+        for slot, title in titles.items():
+            offset = 16 + slot * MMB_ENTRY_SIZE
+            header[offset : offset + 12] = title.encode("latin-1")[:12].ljust(12, b"\0")
+            header[offset + 15] = 0x0F
+        with path.open("wb") as image:
+            image.write(header)
+            image.truncate(MMB_HEADER_SIZE + 8 * MMB_SLOT_SIZE)
+            for slot in titles:
+                image.seek(MMB_HEADER_SIZE + slot * MMB_SLOT_SIZE)
+                image.write(bytes([slot]) * MMB_SLOT_SIZE)
+        return ImageSession(name[0] * 32, name, "mmb", path)
+
+    def test_mmb_cut_paste_allows_an_overlapping_slot_range(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = DiskService(root / "work")
+            session = self._small_mmb(
+                root,
+                "source.mmb",
+                {2: "TWO", 3: "THREE", 4: "FOUR"},
+            )
+
+            result = service.paste_mmb_slots(
+                session, session, [2, 3, 4], 3, cut=True
+            )
+
+            self.assertTrue(result["pasted"])
+            slots = service.list_slots(session)
+            self.assertTrue(slots[2]["empty"])
+            self.assertEqual([slots[number]["name"] for number in (3, 4, 5)], [
+                "TWO", "THREE", "FOUR",
+            ])
+            with session.path.open("rb") as image:
+                image.seek(MMB_HEADER_SIZE + 5 * MMB_SLOT_SIZE)
+                self.assertEqual(image.read(1), b"\x04")
+
+    def test_mmb_copy_paste_reports_then_replaces_occupied_slots(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = DiskService(root / "work")
+            source = self._small_mmb(root, "source.mmb", {1: "SOURCE"})
+            target = self._small_mmb(root, "target.mmb", {4: "OCCUPIED"})
+
+            conflict = service.paste_mmb_slots(source, target, [1], 4)
+            self.assertFalse(conflict["pasted"])
+            self.assertEqual(conflict["conflicts"], [{"slot": 4, "name": "OCCUPIED"}])
+            self.assertEqual(service.list_slots(target)[4]["name"], "OCCUPIED")
+
+            copied = service.paste_mmb_slots(source, target, [1], 4, replace=True)
+            self.assertTrue(copied["pasted"])
+            self.assertEqual(service.list_slots(source)[1]["name"], "SOURCE")
+            self.assertEqual(service.list_slots(target)[4]["name"], "SOURCE")
+
     def test_copy_stream_falls_back_for_an_in_memory_upload(self):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "upload.img"
@@ -31,6 +92,32 @@ class DiskPerformanceTests(unittest.TestCase):
             DiskService._copy_stream(io.BytesIO(content), target)
 
             self.assertEqual(target.read_bytes(), content)
+
+    def test_local_checkpoint_copy_preserves_sparse_zero_ranges(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.dat"
+            target = Path(directory) / "checkpoint.dat"
+            with source.open("wb") as output:
+                output.write(b"ADFS")
+                output.seek(32 * 1024 * 1024 - 1)
+                output.write(b"\0")
+
+            DiskService._copy_local_file(source, target)
+
+            self.assertEqual(target.read_bytes(), source.read_bytes())
+            self.assertLess(target.stat().st_blocks * 512, target.stat().st_size // 4)
+
+    def test_sparse_optimisation_does_not_look_like_an_image_edit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            image = Path(directory) / "scsi0.dat"
+            image.write_bytes(b"ADFS" + bytes(8 * 1024 * 1024))
+            timestamp = 1_700_000_000_123_456_789
+            os.utime(image, ns=(timestamp, timestamp))
+
+            DiskService._optimise_sparse_file(image)
+
+            self.assertEqual(image.stat().st_mtime_ns, timestamp)
+            self.assertEqual(image.read_bytes()[:4], b"ADFS")
 
     def test_directory_tree_copy_uses_one_engine_invocation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -142,6 +229,69 @@ class DiskPerformanceTests(unittest.TestCase):
             self.assertEqual(len(result["deletedItems"]), 2)
             names = {row["name"] for row in service.list_directory(session, "$", None)["entries"]}
             self.assertEqual(names, {"KEEP"})
+
+    def test_host_folder_import_preserves_an_adfs_tree_in_one_batch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = DiskService(root / "work")
+            session = service.create_blank("adfs-s", "FOLDERS")
+            one = root / "one.bin"
+            two = root / "two.bin"
+            one.write_bytes(b"one")
+            two.write_bytes(b"two")
+
+            result = service.put_host_tree(
+                session,
+                None,
+                "$",
+                [
+                    {
+                        "targetPath": "Pack/One",
+                        "hostPath": one,
+                        "metadata": {"load": "0xFFFF1900", "execute": "0xFFFF8023"},
+                    },
+                    {"targetPath": "Pack/Sub/Two", "hostPath": two},
+                ],
+                preserve_directories=True,
+            )
+
+            self.assertEqual(result["conflicts"], [])
+            self.assertEqual(
+                {row["name"] for row in service.list_directory(session, "$.Pack", None)["entries"]},
+                {"One", "Sub"},
+            )
+            self.assertEqual(
+                [row["name"] for row in service.list_directory(session, "$.Pack.Sub", None)["entries"]],
+                ["Two"],
+            )
+            imported = next(
+                row for row in service.list_directory(session, "$.Pack", None)["entries"]
+                if row["name"] == "One"
+            )
+            self.assertEqual(imported["load"], 0xFFFF1900)
+            self.assertEqual(imported["exec"], 0xFFFF8023)
+
+    def test_host_folder_import_reports_existing_files_before_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = DiskService(root / "work")
+            session = service.create_blank("ssd", "FOLDERS")
+            old = root / "old.bin"
+            new = root / "new.bin"
+            old.write_bytes(b"old")
+            new.write_bytes(b"new")
+            service.put(session, None, "$.SAME", old, None, None, None)
+
+            result = service.put_host_tree(
+                session,
+                None,
+                "$",
+                [{"targetPath": "SAME", "hostPath": new}],
+                preserve_directories=False,
+            )
+
+            self.assertEqual(result["conflicts"], ["$.SAME"])
+            self.assertEqual(service.read_file(session, None, "$.SAME"), b"old")
 
     def test_bulk_copy_pauses_for_a_blank_disk_when_decision_is_required(self):
         with tempfile.TemporaryDirectory() as directory:

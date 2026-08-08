@@ -247,6 +247,8 @@ class DiskService:
             if session.kind == "tape":
                 session.tape = parse_uef(path.read_bytes())
             self._normalise_beebscsi_dat_size(session)
+            if session.descriptor_path and session.path.suffix.lower() == ".dat":
+                self._optimise_sparse_file(session.path)
         except (OSError, KeyError, ValueError, json.JSONDecodeError, UEFError) as exc:
             raise DiskError("That image session no longer exists.") from exc
         with self._lock:
@@ -405,6 +407,8 @@ class DiskService:
             if detected_kind != kind:
                 session.kind = detected_kind
         self._normalise_beebscsi_dat_size(session)
+        if session.descriptor_path and session.path.suffix.lower() == ".dat":
+            self._optimise_sparse_file(session.path)
         self._apply_target_hardware(session)
         with self._lock:
             self.sessions[image_id] = session
@@ -687,6 +691,27 @@ class DiskService:
             )
 
     @staticmethod
+    def _optimise_sparse_file(path: Path) -> None:
+        """Turn allocated zero ranges into holes without changing file bytes."""
+        try:
+            original = path.stat()
+            subprocess.run(
+                ["fallocate", "--dig-holes", str(path)],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            os.utime(
+                path,
+                ns=(original.st_atime_ns, original.st_mtime_ns),
+                follow_symlinks=False,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            # Sparse optimisation is an optional performance improvement. The
+            # image remains valid on filesystems or platforms without it.
+            return
+
+    @staticmethod
     def _finalise_beebscsi_directories(session: ImageSession) -> int:
         """Synchronise old ADFS directory sequence numbers for BBC hardware.
 
@@ -834,9 +859,21 @@ class DiskService:
         is_beebscsi = bool(
             session.descriptor_path and session.path.suffix.lower() == ".dat"
         )
+        if is_beebscsi:
+            self._optimise_sparse_file(session.path)
+        if (
+            is_beebscsi
+            and not session.dirty
+            and session.finalised_mtime_ns == session.path.stat().st_mtime_ns
+        ):
+            report("The previously validated hardware-ready pair is prepared", 1, 1)
+            return session.path
         total = 5 if is_beebscsi else 2
         report("Applying the selected hardware profile", 0, total)
-        self._apply_target_hardware(session)
+        # A paired DAT receives the same directory validation immediately
+        # below. Avoid traversing a large directory tree twice during save.
+        if not is_beebscsi:
+            self._apply_target_hardware(session)
         if is_beebscsi:
             report("Checking DAT size against the DSC geometry", 1, total)
             self._normalise_beebscsi_dat_size(session)
@@ -857,6 +894,7 @@ class DiskService:
                 )
             report("Validating the final DAT and DSC pair", 4, total)
             self._validate_created_beebscsi_pair(session)
+            self._optimise_sparse_file(session.path)
             report("The hardware-ready pair is prepared", total, total)
         if session.hfe_original_path:
             report("Encoding and verifying the HFE image", 1, total)
@@ -930,7 +968,7 @@ class DiskService:
 
     @staticmethod
     def _copy_local_file(source: Path, target: Path) -> None:
-        """Clone a local image when possible, otherwise use the kernel copy path."""
+        """Clone or sparsely copy a local image without allocating zero ranges."""
         try:
             import fcntl
 
@@ -938,6 +976,23 @@ class DiskService:
                 fcntl.ioctl(target_file.fileno(), FICLONE, source_file.fileno())
             return
         except OSError:
+            target.unlink(missing_ok=True)
+        try:
+            subprocess.run(
+                [
+                    "cp",
+                    "--reflink=auto",
+                    "--sparse=always",
+                    "--",
+                    str(source),
+                    str(target),
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return
+        except (OSError, subprocess.CalledProcessError):
             target.unlink(missing_ok=True)
         shutil.copyfile(source, target)
 
@@ -1467,6 +1522,8 @@ class DiskService:
                     self._canonicalise_created_beebscsi_root(session, title[:12])
                     self._validate_created_beebscsi_pair(session)
                 self._apply_target_hardware(session)
+                if native_format == "beebscsi":
+                    self._optimise_sparse_file(session.path)
                 if format_name in hfe_formats:
                     original = folder / f"{self.safe_filename(title) or 'blank'}.hfe"
                     hfe_layout = {
@@ -1748,6 +1805,133 @@ class DiskService:
             session.slot_source_names[source_slot] = target_name
         self._persist_session(session)
         session.dirty = True
+
+    def paste_mmb_slots(
+        self,
+        source: ImageSession,
+        target: ImageSession,
+        source_slots: list[int],
+        target_start: int,
+        *,
+        cut: bool = False,
+        replace: bool = False,
+    ) -> dict:
+        """Copy an MMB slot selection while preserving gaps and safe overlap.
+
+        Source bytes are snapshotted before anything is written.  That makes an
+        overlapping cut within one MMB behave like a block move, rather than a
+        sequence of swaps which can destroy a later source slot.
+        """
+        if source.kind != "mmb" or target.kind != "mmb":
+            raise DiskError("MMB slot paste requires an MMB source and destination.")
+        checked = sorted({self._check_slot(source, int(slot)) for slot in source_slots})
+        source_index = self.list_slots(source)
+        checked = [slot for slot in checked if source_index[slot]["formatted"]]
+        if not checked:
+            raise DiskError("Copy or cut at least one formatted MMB slot first.")
+        target_start = self._check_slot(target, int(target_start))
+        first = checked[0]
+        mapping = [(slot, target_start + slot - first) for slot in checked]
+        target_count = len(self.list_slots(target))
+        if any(destination >= target_count for _slot, destination in mapping):
+            raise DiskError(
+                "The pasted slot range would extend beyond the end of the MMB image."
+            )
+        same_image = source.id == target.id
+        if same_image and all(slot == destination for slot, destination in mapping):
+            return {
+                "pasted": False,
+                "noChange": True,
+                "sourceSlots": checked,
+                "targetSlots": [destination for _slot, destination in mapping],
+                "conflicts": [],
+            }
+
+        target_index = self.list_slots(target)
+        available_cut_slots = set(checked) if cut and same_image else set()
+        conflicts = [
+            {
+                "slot": destination,
+                "name": target_index[destination]["name"],
+            }
+            for _slot, destination in mapping
+            if target_index[destination]["formatted"]
+            and destination not in available_cut_slots
+        ]
+        if conflicts and not replace:
+            return {
+                "pasted": False,
+                "sourceSlots": checked,
+                "targetSlots": [destination for _slot, destination in mapping],
+                "conflicts": conflicts,
+            }
+
+        snapshots: dict[int, tuple[bytes, bytes, str | None]] = {}
+        with self._locked_sessions(source, target):
+            with source.path.open("rb") as image:
+                for slot in checked:
+                    image.seek(16 + slot * MMB_ENTRY_SIZE)
+                    entry = image.read(MMB_ENTRY_SIZE)
+                    image.seek(MMB_HEADER_SIZE + slot * MMB_SLOT_SIZE)
+                    disk = image.read(MMB_SLOT_SIZE)
+                    if len(entry) != MMB_ENTRY_SIZE or len(disk) != MMB_SLOT_SIZE:
+                        raise DiskError(f"MMB slot {slot} could not be read completely.")
+                    snapshots[slot] = (
+                        entry,
+                        disk,
+                        source.slot_source_names.get(slot),
+                    )
+
+            if cut:
+                with source.path.open("r+b") as image:
+                    for slot in checked:
+                        image.seek(16 + slot * MMB_ENTRY_SIZE)
+                        image.write(b"\0" * 15 + b"\xf0")
+                        image.seek(MMB_HEADER_SIZE + slot * MMB_SLOT_SIZE)
+                        image.write(b"\0" * MMB_SLOT_SIZE)
+
+            with target.path.open("r+b") as image:
+                for slot, destination in mapping:
+                    entry, disk, _source_name = snapshots[slot]
+                    image.seek(16 + destination * MMB_ENTRY_SIZE)
+                    image.write(entry)
+                    image.seek(MMB_HEADER_SIZE + destination * MMB_SLOT_SIZE)
+                    image.write(disk)
+
+        destinations = {destination for _slot, destination in mapping}
+        if cut:
+            for slot in checked:
+                source.slot_cache.pop(slot, None)
+                source.slot_source_names.pop(slot, None)
+        for slot, destination in mapping:
+            target.slot_cache.pop(destination, None)
+            target.slot_source_names.pop(destination, None)
+            source_name = snapshots[slot][2]
+            if source_name is not None:
+                target.slot_source_names[destination] = source_name
+
+        if cut and same_image and source.menu_slot in checked:
+            source.menu_slot = dict(mapping)[source.menu_slot]
+        elif target.menu_slot in destinations and target.menu_slot not in {
+            destination for slot, destination in mapping if slot == source.menu_slot
+        }:
+            target.menu_slot = None
+            target.menu_type = None
+            target.menu_scanned = False
+            target.menu_entries = None
+
+        source.dirty = source.dirty or cut
+        target.dirty = True
+        if cut and not same_image:
+            self._persist_session(source)
+        self._persist_session(target)
+        return {
+            "pasted": True,
+            "sourceSlots": checked,
+            "targetSlots": [destination for _slot, destination in mapping],
+            "conflicts": conflicts,
+            "cut": cut,
+        }
 
     def set_mmb_drive_mapping(
         self,
@@ -2191,6 +2375,109 @@ class DiskService:
         with session.lock:
             self._run(args)
             self._mark_mutated(session, slot)
+
+    def put_host_tree(
+        self,
+        session: ImageSession,
+        slot: int | None,
+        destination_dir: str,
+        items: list[dict],
+        *,
+        preserve_directories: bool,
+        replace: bool = False,
+        side: int | None = None,
+    ) -> dict:
+        """Import a reviewed host folder in one writable filesystem mount.
+
+        Each item contains a validated target path relative to
+        ``destination_dir`` and a local temporary ``hostPath``.  Keeping the
+        complete batch in one mount avoids reopening and checkpointing a large
+        ADFS image for every small file.
+        """
+        if session.kind == "tape" or (session.kind == "mmb" and slot is None):
+            raise DiskError("Open a writable disk before importing a host folder.")
+        self.require_writable_geometry(session)
+        is_dfs = session.kind == "dfs" or (session.kind == "mmb" and slot is not None)
+        if preserve_directories and is_dfs:
+            raise DiskError("DFS cannot preserve host folders; import their files into one catalogue group instead.")
+        if is_dfs:
+            destination_dir = self.validate_dfs_prefix(destination_dir)
+        elif not destination_dir.startswith("$"):
+            raise DiskError("Choose a valid ADFS destination directory.")
+        if not items:
+            raise DiskError("No relevant files were selected for import.")
+
+        plans: list[dict] = []
+        seen: set[str] = set()
+        for item in items:
+            relative = str(item.get("targetPath") or "").replace("\\", "/").strip("/")
+            parts = [part for part in relative.split("/") if part]
+            if not parts or any(part in {".", ".."} for part in parts):
+                raise DiskError("A selected folder contains an invalid relative path.")
+            if is_dfs and len(parts) != 1:
+                raise DiskError("DFS folder imports must use flat target filenames.")
+            for part in parts:
+                self.validate_leaf_name(session, part, slot)
+            destination = ".".join([destination_dir.rstrip("."), *parts])
+            key = destination.casefold()
+            if key in seen:
+                raise DiskError(f"More than one selected file maps to {destination}.")
+            seen.add(key)
+            plans.append({**item, "parts": parts, "destination": destination})
+
+        try:
+            from oaknut.disc.mount import resolve_mount
+            from oaknut.file import AcornMeta
+        except ImportError as exc:
+            raise DiskError("The Oaknut folder import API is unavailable.") from exc
+
+        with session.lock:
+            disk_path = self.resolve(session, slot)
+            root = self.compound(disk_path, self.inner_for(session, "$", side))
+            with resolve_mount(root, writable=True) as resolved:
+                mount = resolved.mount
+                conflicts: list[str] = []
+                directories: set[str] = set()
+                if preserve_directories:
+                    for plan in plans:
+                        for depth in range(1, len(plan["parts"])):
+                            directories.add(".".join([destination_dir.rstrip("."), *plan["parts"][:depth]]))
+                for directory in sorted(directories, key=lambda value: (value.count("."), value.casefold())):
+                    if mount.exists(directory) and not mount.stat(directory).is_dir:
+                        raise DiskError(f"{directory} is an ordinary file, so a folder cannot be created there.")
+                for plan in plans:
+                    destination = plan["destination"]
+                    if mount.exists(destination):
+                        if mount.stat(destination).is_dir:
+                            raise DiskError(f"{destination} is a directory, so a file cannot replace it.")
+                        conflicts.append(destination)
+                if conflicts and not replace:
+                    return {"imported": [], "conflicts": conflicts}
+                for directory in sorted(directories, key=lambda value: (value.count("."), value.casefold())):
+                    mount.make_directory(directory, parents=True, exist_ok=True)
+                imported: list[str] = []
+
+                def parse_address(value, fallback):
+                    return int(str(value), 0) if value else fallback
+
+                for plan in plans:
+                    mount.write_bytes(plan["destination"], Path(plan["hostPath"]).read_bytes())
+                    metadata = plan.get("metadata") or {}
+                    if metadata.get("load") or metadata.get("execute"):
+                        current = mount.acorn_meta(plan["destination"])
+                        mount.set_acorn_meta(
+                            plan["destination"],
+                            AcornMeta(
+                                load_address=parse_address(metadata.get("load"), current.load_address),
+                                exec_address=parse_address(metadata.get("execute"), current.exec_address),
+                                access=current.access,
+                            ),
+                        )
+                    if metadata.get("filetype") and hasattr(mount, "set_filetype"):
+                        mount.set_filetype(plan["destination"], metadata["filetype"])
+                    imported.append(plan["destination"])
+            self._mark_mutated(session, slot)
+        return {"imported": imported, "conflicts": []}
 
     def copy(
         self,
@@ -3313,6 +3600,39 @@ class DiskService:
             return self._tape_file(session, inner).data
         disk_path = self.resolve(session, slot)
         return self._run(["get", "--meta-format", "none", self.compound(disk_path, self.inner_for(session, inner, side)), "-"], binary=True)
+
+    def file_metadata(
+        self,
+        session: ImageSession,
+        slot: int | None,
+        inner: str,
+        side: int | None = None,
+    ) -> dict:
+        """Return portable Acorn metadata for one exported loose file."""
+        if session.kind == "tape":
+            item = self._tape_file(session, inner)
+            return {
+                "load": item.load,
+                "execute": item.execute,
+                "access": 0,
+                "length": len(item.data),
+            }
+        try:
+            from oaknut.disc.mount import resolve_mount
+        except ImportError as exc:
+            raise DiskError("The Oaknut metadata API is unavailable.") from exc
+        disk_path = self.resolve(session, slot)
+        root = self.compound(disk_path, self.inner_for(session, "$", side))
+        with session.lock, resolve_mount(root) as resolved:
+            target = self.inner_for(session, inner, side)
+            stat = resolved.mount.stat(target)
+            metadata = resolved.mount.acorn_meta(target)
+            return {
+                "load": int(metadata.load_address or 0),
+                "execute": int(metadata.exec_address or 0),
+                "access": int(metadata.access or 0),
+                "length": int(stat.length or 0),
+            }
 
     def export_file(
         self,

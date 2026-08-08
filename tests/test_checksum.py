@@ -1,0 +1,26 @@
+from __future__ import annotations
+
+import hashlib
+import tempfile
+import unittest
+from pathlib import Path
+
+from app.checksum import sha256_path
+
+
+class SparseChecksumTests(unittest.TestCase):
+    def test_sparse_file_hash_matches_ordinary_sha256(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "sparse.dat"
+            with path.open("wb") as image:
+                image.write(b"ADFS")
+                image.seek(16 * 1024 * 1024)
+                image.write(b"catalogue")
+
+            expected = hashlib.sha256(path.read_bytes()).hexdigest()
+
+            self.assertEqual(sha256_path(path), expected)
+
+
+if __name__ == "__main__":
+    unittest.main()
