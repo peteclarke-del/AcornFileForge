@@ -254,6 +254,124 @@ def create_mmb_blueprint(service: DiskService) -> Blueprint:
         _refresh_mmc_desktop(service, session)
         return jsonify(image=service.summary(session))
 
+    @blueprint.post("/api/images/<image_id>/slots/paste")
+    def paste_slots(image_id):
+        data = payload()
+        target = service.get(image_id)
+        source = service.get(str(data["sourceImage"]))
+        cut = bool(data.get("cut"))
+        source_checkpoint = None
+        if cut and source.id != target.id:
+            source_checkpoint = service.begin_automatic_checkpoint(
+                source,
+                "cutting MMB slots to another image",
+            )
+        try:
+            replace = bool(data.get("replace"))
+            source_slots = data.get("sourceSlots", [])
+            if replace:
+                preview = service.paste_mmb_slots(
+                    source,
+                    target,
+                    source_slots,
+                    int(data["targetStart"]),
+                    cut=cut and source.id == target.id,
+                    replace=False,
+                )
+                occupied_targets = [
+                    int(item["slot"]) for item in preview.get("conflicts", [])
+                ]
+                if occupied_targets:
+                    eject_mmb_slots(service, target, occupied_targets)
+            result = service.paste_mmb_slots(
+                source,
+                target,
+                source_slots,
+                int(data["targetStart"]),
+                # Across images, copy first and use the menu-aware eject path
+                # only after the destination is complete.
+                cut=cut and source.id == target.id,
+                replace=replace,
+            )
+            if result.get("pasted"):
+                if cut and source.id != target.id:
+                    eject_mmb_slots(service, source, source_slots)
+                    result["cut"] = True
+                _refresh_mmc_desktop(service, target)
+                if cut and source.id != target.id:
+                    _refresh_mmc_desktop(service, source)
+            if source_checkpoint is not None:
+                service.finish_automatic_checkpoint(source, source_checkpoint)
+            return jsonify(
+                image=service.summary(target),
+                sourceImage=service.summary(source),
+                **result,
+            )
+        except Exception:
+            if source_checkpoint is not None:
+                service.rollback_automatic_checkpoint(source, source_checkpoint)
+            raise
+
+    @blueprint.post("/api/images/<image_id>/slots/build-from-files")
+    def build_slots_from_files(image_id):
+        data = payload()
+        target = service.get(image_id)
+        source = service.get(str(data["sourceImage"]))
+        disk_format = str(data.get("format", "ssd")).lower()
+        if target.kind != "mmb" or disk_format not in {"ssd", "dsd"}:
+            raise DiskError("Loose files can only be assembled as SSD or DSD disks in an MMB.")
+        plans = data.get("disks", [])
+        if not isinstance(plans, list) or not plans:
+            raise DiskError("No DFS disk contents were supplied.")
+        start = int(data["targetStart"])
+        slots_per_disk = 2 if disk_format == "dsd" else 1
+        required = [
+            start + disk_number * slots_per_disk + offset
+            for disk_number in range(len(plans))
+            for offset in range(slots_per_disk)
+        ]
+        slots = service.list_slots(target)
+        if any(slot < 0 or slot >= len(slots) for slot in required):
+            raise DiskError("The new disks would extend beyond the end of the MMB image.")
+        occupied = [slot for slot in required if slots[slot]["formatted"]]
+        if occupied:
+            raise DiskError(
+                "Choose an empty consecutive slot range. Occupied: "
+                + ", ".join(str(slot) for slot in occupied[:12])
+            )
+        inserted_slots = []
+        for disk_number, plan in enumerate(plans):
+            temporary = service.create_blank(
+                disk_format,
+                str(plan.get("title") or f"FILES{disk_number + 1}"),
+            )
+            try:
+                files = plan.get("files", [])
+                if not isinstance(files, list) or not files:
+                    raise DiskError("A generated MMB disk cannot be empty.")
+                for item in files:
+                    prefix = service.validate_dfs_prefix(str(item.get("prefix") or "$"))
+                    name = service.validate_leaf_name(temporary, str(item["targetName"]))
+                    service.copy(
+                        source,
+                        optional_int(data.get("sourceSlot")),
+                        str(item["sourcePath"]),
+                        temporary,
+                        None,
+                        f"{prefix}.{name}",
+                        False,
+                        optional_int(data.get("sourceSide")),
+                        optional_int(item.get("targetSide")),
+                    )
+                destination = start + disk_number * slots_per_disk
+                inserted_slots.extend(
+                    service.insert_slot_from_session(target, destination, temporary, None)
+                )
+            finally:
+                service.discard_session(temporary)
+        _refresh_mmc_desktop(service, target)
+        return jsonify(image=service.summary(target), slots=inserted_slots)
+
     @blueprint.post("/api/images/<image_id>/slots/protect")
     def protect_slot(image_id):
         data = payload()

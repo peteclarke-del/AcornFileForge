@@ -29,10 +29,46 @@ function restoredDfsPath(saved) {
 const MAX_PANES = 3;
 const panes = [newPaneState()];
 
-const { api, uploadApi, esc, humanSize, modal, modalContent, setModalAbort, setModalProgress, showModal, toast } = window.AcornUI;
+const {
+  api: rawApi,
+  uploadApi: rawUploadApi,
+  esc,
+  humanSize,
+  modal,
+  modalContent,
+  setModalAbort,
+  setModalProgress,
+  showModal,
+  toast,
+} = window.AcornUI;
 const formats = window.AcornFormats;
 const OPEN_PANES_STORAGE_KEY = "acorn-file-forge-dynamic-panes";
 let workspacePersistenceReady = false;
+let workspaceClipboard = null;
+let clipboardMutationInProgress = false;
+
+function clearWorkspaceClipboard(message = "", rerender = true) {
+  if (!workspaceClipboard) return;
+  workspaceClipboard = null;
+  document.querySelectorAll(".clipboard-cut").forEach(row => row.classList.remove("clipboard-cut"));
+  if (rerender) panes.forEach((_pane, index) => renderPane(index, true));
+  if (message) toast(message);
+}
+
+function api(url, options = {}) {
+  const method = String(options.method || "GET").toUpperCase();
+  if (!["GET", "HEAD"].includes(method) && workspaceClipboard && !clipboardMutationInProgress) {
+    clearWorkspaceClipboard("Clipboard cleared because another change was started.");
+  }
+  return rawApi(url, options);
+}
+
+function uploadApi(url, formData, options = {}) {
+  if (workspaceClipboard && !clipboardMutationInProgress) {
+    clearWorkspaceClipboard("Clipboard cleared because another change was started.");
+  }
+  return rawUploadApi(url, formData, options);
+}
 
 const PANE_ICONS = {
   newImage: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8l4 4V20.5H6z"/><path d="M14 3.5v4h4M9 14h6M12 11v6"/></svg>',
@@ -429,7 +465,15 @@ async function trackedPaneOperation(index, message, operation) {
         pane.loadingMessage = nextMessage;
         pane.progressCurrent = progress.current;
         pane.progressTotal = progress.total;
-        if (modal.open) setModalProgress(`${message} · ${nextMessage}`);
+        if (modal.open) {
+          setModalProgress({
+            title: message,
+            message: progress.message,
+            details: progress.total != null ? [
+              { label: "Progress", value: `${Math.round(100 * Number(progress.current || 0) / Number(progress.total || 1))}% complete` }
+            ] : []
+          }, progress.current, progress.total);
+        }
         renderPane(index);
       }
     } catch {
@@ -580,6 +624,60 @@ function selectedEntry(index) {
   return entries.length === 1 ? entries[0] : null;
 }
 
+function clipboardItemsForPane(index) {
+  const pane = panes[index];
+  if (!pane?.image) return [];
+  const isSlots = pane.image.kind === "mmb" && pane.slot === null;
+  if (isSlots) {
+    return selectedEntries(index)
+      .filter(entry => entry.type === "disk" && entry.formatted)
+      .map(entry => ({
+        pane: index,
+        image: pane.image.id,
+        slot: Number(entry.slot),
+        name: entry.name,
+      }));
+  }
+  return selectedEntries(index)
+    .filter(entry => !entry.virtual && entry.type !== "disk")
+    .map(entry => ({
+      pane: index,
+      image: pane.image.id,
+      slot: pane.slot,
+      side: pane.side,
+      path: fullPath(pane.path, entry.name),
+      name: entry.name,
+      length: Number(entry.length || 0),
+      recursive: entry.type === "dir" || entry.type === "directory",
+    }));
+}
+
+function rowIsPendingCut(pane, entry) {
+  if (!workspaceClipboard || workspaceClipboard.mode !== "cut") return false;
+  if (pane.image.kind === "mmb" && pane.slot === null) {
+    return workspaceClipboard.kind === "mmb-slots"
+      && workspaceClipboard.items.some(item =>
+        item.image === pane.image.id && Number(item.slot) === Number(entry.slot)
+      );
+  }
+  const path = fullPath(pane.path, entry.name).toLowerCase();
+  return workspaceClipboard.kind === "files"
+    && workspaceClipboard.items.some(item =>
+      item.image === pane.image.id
+      && item.slot === pane.slot
+      && item.side === pane.side
+      && String(item.path).toLowerCase() === path
+    );
+}
+
+function canPasteIntoPane(pane) {
+  if (!workspaceClipboard || !pane?.image || pane.image.readOnly || pane.image.kind === "tape") return false;
+  const isSlots = pane.image.kind === "mmb" && pane.slot === null;
+  if (workspaceClipboard.kind === "mmb-slots") return isSlots || pane.image.kind === "adfs";
+  if (isSlots) return true;
+  return !(isDfsPane(pane) && pane.path === "");
+}
+
 function selectRow(index, key, { toggle = false, range = false } = {}) {
   const pane = panes[index];
   const rowKeys = pane.entries.map(entry => String(entry.slot ?? entry.name));
@@ -706,13 +804,60 @@ function renderPane(index, preserveScroll = false) {
       <td class="meta">${esc(isVirtual ? "DFS catalogue" : isDir ? "Directory" : "File")}</td>
       <td class="meta">${esc(size)}</td>
       ${accessCell}`;
-    return `<tr class="file-row${selectedKeys.has(entryKey) ? " selected" : ""}${entry.empty ? " empty-slot" : ""}${isVirtual ? " virtual-catalogue-row" : ""}"
+    return `<tr class="file-row${selectedKeys.has(entryKey) ? " selected" : ""}${entry.empty ? " empty-slot" : ""}${isVirtual ? " virtual-catalogue-row" : ""}${rowIsPendingCut(pane, entry) ? " clipboard-cut" : ""}"
       aria-selected="${selectedKeys.has(entryKey)}"
       tabindex="0" draggable="${!isVirtual && entry.formatted !== false}" data-key="${esc(entryKey)}" data-name="${esc(entry.name)}" data-type="${entryType}" data-slot="${entry.slot ?? ""}" data-empty="${entry.empty ? "1" : "0"}" data-virtual="${isVirtual ? "1" : "0"}">
       ${cells}
     </tr>`;
   }).join("");
   const selectedEmptySlot = Boolean(selected && selected.type === "disk" && selected.empty);
+  const clipboardSelection = clipboardItemsForPane(index);
+  const clipboardTools = `<details class="tool-menu edit-tools">
+    <summary class="tool"><b>✎</b><span>Edit</span></summary>
+    <div class="tool-menu-panel">
+      <button class="menu-command clipboard-cut-action" ${clipboardSelection.length && !pane.image.readOnly && !isTape ? "" : "disabled"} title="Cut selected items"><b>✂</b><span>Cut <small>Ctrl/Cmd+X</small></span></button>
+      <button class="menu-command clipboard-copy-action" ${clipboardSelection.length ? "" : "disabled"} title="Copy selected items"><b>⧉</b><span>Copy <small>Ctrl/Cmd+C</small></span></button>
+      <button class="menu-command clipboard-paste-action" ${canPasteIntoPane(pane) ? "" : "disabled"} title="Paste once into this location"><b>▣</b><span>Paste <small>Ctrl/Cmd+V</small></span></button>
+      ${pane.image.readOnly || isTape ? "" : `<span class="menu-separator" role="separator"></span>
+        <button class="menu-command undo-image" ${pane.image.checkpoints?.canUndo ? "" : "disabled"}><b>↶</b><span>Undo last change</span></button>
+        <button class="menu-command manage-checkpoints"><b>◉</b><span>Checkpoints…</span></button>`}
+    </div>
+  </details>`;
+  const fileTools = `<details class="tool-menu file-tools${isSlots ? " add-disk-tools" : ""}">
+    <summary class="tool"><b>▤</b><span>File</span></summary>
+    <div class="tool-menu-panel">
+      <button class="menu-command menu-new-image"><b>＋</b><span>New blank image…</span></button>
+      <button class="menu-command menu-load-image"><b>▤</b><span>Open image…</span></button>
+      <button class="menu-command menu-save-image"><b>⇩</b><span>Save image</span></button>
+      ${isTape || pane.image.readOnly ? "" : `<span class="menu-separator" role="separator"></span>`}
+      ${isSlots ? `<div class="open-disk-imports">${openDiskImportMarkup(index)}</div>
+        <button class="menu-command insert-disk" ${selectedEmptySlot ? "" : "disabled"}><b>↥</b><span>Insert SSD / DSD / HFE / ZIP…</span></button>
+        <button class="menu-command import-folder" ${pane.entries.some(entry => entry.empty) ? "" : "disabled"}><b>▣</b><span>Insert folder of disk images…</span></button>
+        <button class="menu-command create-blank-ssd" ${selectedEmptySlot ? "" : "disabled"}><b>○</b><span>Create blank SSD here</span></button>
+        <button class="menu-command create-blank-dsd" ${selectedEmptySlot ? "" : "disabled"}><b>◎</b><span>Create blank DSD here</span></button>`
+        : !isTape && !pane.image.readOnly ? `<button class="menu-command import-file" ${canEditFiles ? "" : 'disabled title="Open $ or another DFS catalogue group before adding files."'}><b>＋</b><span>Add file…</span></button>
+          <button class="menu-command import-folder" ${canEditFiles ? "" : 'disabled title="Open $ or another DFS catalogue group before adding files."'}><b>▣</b><span>Add folder…</span></button>
+          ${isDfs
+            ? `<button class="menu-command new-dfs-catalogue"><b>▢</b><span>New catalogue group…</span></button>`
+            : `<button class="menu-command new-folder" ${canFolder ? "" : 'disabled title="This format cannot store directories."'}><b>▢</b><span>New folder…</span></button>`}` : ""}
+      <span class="menu-separator" role="separator"></span>
+      <button class="menu-command menu-close-pane"><b>×</b><span>Close pane</span></button>
+    </div>
+  </details>`;
+  const viewTools = `<details class="tool-menu view-tools">
+    <summary class="tool"><b>◫</b><span>View</span></summary>
+    <div class="tool-menu-panel">
+      <button class="menu-command view-refresh"><b>↻</b><span>Refresh current view</span></button>
+      ${pane.slot !== null ? '<button class="menu-command view-all-disks"><b>▦</b><span>Return to all MMB disks</span></button>' : ""}
+      ${isDsd ? `<button class="menu-command switch-side"><b>⇄</b><span>Switch to side ${pane.side === 2 ? "0" : "2"}</span></button>` : ""}
+    </div>
+  </details>`;
+  const libraryTools = isTape || pane.image.readOnly ? "" : `<details class="tool-menu library-tools">
+    <summary class="tool"><b>⌕</b><span>Library</span></summary>
+    <div class="tool-menu-panel">
+      <button class="menu-command online-library" ${!isSlots && isDfsRoot ? 'disabled title="Open a DFS catalogue group before installing files."' : ""}><b>⌕</b><span>${isSlots ? "Find disks online…" : "Find software online…"}</span></button>
+    </div>
+  </details>`;
   const menuTools = pane.image.kind === "mmb"
     ? `<details class="tool-menu">
         <summary class="tool"><b>☰</b><span>Menu</span></summary>
@@ -735,15 +880,6 @@ function renderPane(index, preserveScroll = false) {
           </div>
         </details>`
       : "";
-  const checkpointTools = pane.image.readOnly || isTape
-    ? ""
-    : `<details class="tool-menu">
-        <summary class="tool"><b>↶</b><span>History</span></summary>
-        <div class="tool-menu-panel tool-menu-panel-right">
-          <button class="menu-command undo-image" ${pane.image.checkpoints?.canUndo ? "" : "disabled"}><b>↶</b><span>Undo last change</span></button>
-          <button class="menu-command manage-checkpoints"><b>◉</b><span>Checkpoints…</span></button>
-        </div>
-      </details>`;
   const analysisTools = `<details class="tool-menu">
     <summary class="tool"><b>⌁</b><span>Analyse</span></summary>
     <div class="tool-menu-panel tool-menu-panel-right">
@@ -759,38 +895,18 @@ function renderPane(index, preserveScroll = false) {
       <button class="menu-command export-manifest"><b>⇩</b><span>Export collection manifest</span></button>
     </div>
   </details>`;
-  const toolbarMarkup = isSlots
-    ? `<button class="tool online-library"><b>⌕</b><span>Find Discs</span></button>
-      <details class="tool-menu add-disk-tools">
-        <summary class="tool"><b>＋</b><span>Add disk</span></summary>
-        <div class="tool-menu-panel">
-          <div class="open-disk-imports">${openDiskImportMarkup(index)}</div>
-          <button class="menu-command insert-disk" ${selectedEmptySlot ? "" : "disabled"}><b>↥</b><span>Insert SSD / DSD / HFE / ZIP…</span></button>
-          <button class="menu-command create-blank-ssd" ${selectedEmptySlot ? "" : "disabled"}><b>○</b><span>Create blank SSD here</span></button>
-          <button class="menu-command create-blank-dsd" ${selectedEmptySlot ? "" : "disabled"}><b>◎</b><span>Create blank DSD here</span></button>
-        </div>
-      </details>
+  const toolbarMarkup = `${fileTools}${clipboardTools}${viewTools}${libraryTools}
       ${pane.image.readOnly ? "" : menuTools}
-      ${checkpointTools}
       ${analysisTools}
-      <span class="toolbar-hint">Drag disks to move or swap slots</span>
-      <span class="tool-spacer"></span>`
-    : `${!isTape && !pane.image.readOnly ? `<button class="tool online-library" ${isDfsRoot ? 'disabled title="Open a DFS catalogue group before installing files."' : ""}><b>⌕</b><span>Online Library</span></button>` : ""}
-      ${canEdit ? `<button class="tool import-file" ${canEditFiles ? "" : 'disabled title="Open $ or another DFS catalogue group before adding files."'}><b>＋</b><span>Add file</span></button>` : ""}
-      ${isDfs
-        ? `<button class="tool new-dfs-catalogue" ${pane.image.readOnly ? 'disabled title="This image is read-only."' : ""}><b>▢</b><span>+ Catalogue</span></button>`
-        : !isTape ? `<button class="tool new-folder" ${canFolder ? "" : `disabled title="${supportsFolders ? "This image is read-only." : "This format cannot store directories."}"`}><b>▢</b><span>+ Folder</span></button>` : ""}
-      ${isDsd ? `<button class="tool switch-side"><b>⇄</b><span>Side ${pane.side === 2 ? "2" : "0"}</span></button>` : ""}
-      ${pane.image.readOnly ? "" : menuTools}
-      ${checkpointTools}
-      ${analysisTools}
+      ${isSlots ? "" : `
       <details class="tool-menu">
         <summary class="tool"><b>⋯</b><span>Tools</span></summary>
         <div class="tool-menu-panel tool-menu-panel-right">
           <button class="menu-command validate-image"><b>✓</b><span>Check filesystem</span></button>
           ${isTape ? '<button class="menu-command convert-tape"><b>⇥</b><span>Convert tape to disk</span></button>' : pane.image.readOnly ? "" : '<button class="menu-command compact-image"><b>≋</b><span>Compact filesystem</span></button>'}
         </div>
-      </details>
+      </details>`}
+      ${isSlots ? '<span class="toolbar-hint">Drag selected disks to cut and paste slots</span>' : ""}
       <span class="tool-spacer"></span>`;
 
   host.className = `pane${pane.image.dirty ? " dirty" : ""}`;
@@ -808,7 +924,7 @@ function renderPane(index, preserveScroll = false) {
         <button class="icon-button close-image" title="Close Pane" aria-label="Close Pane">${PANE_ICONS.closePane}</button>
       </div>
     </header>
-    <nav class="toolbar" aria-label="File actions">
+    <nav class="toolbar" aria-label="Pane menus">
       ${toolbarMarkup}
     </nav>
     <div class="breadcrumbs">${isSlots ? '<span class="crumb current">All disks</span>' : pane.slot !== null ? `<button class="crumb mmb-home">All disks</button><span>›</span>${crumbs(pane.path, isDfs)}` : crumbs(pane.path, isDfs)}</div>
@@ -834,9 +950,19 @@ function renderPane(index, preserveScroll = false) {
     }
   };
   host.querySelector(".refresh-image").onclick = () => refreshCurrentView(index);
+  host.querySelector(".menu-new-image")?.addEventListener("click", () => guardedPaneAction(index, () => showCreateImageModal(index)));
+  host.querySelector(".menu-load-image")?.addEventListener("click", () => chooseImage(index));
+  host.querySelector(".menu-save-image")?.addEventListener("click", () => guardedPaneAction(index, () => saveImage(index)));
+  host.querySelector(".menu-close-pane")?.addEventListener("click", () => closePane(index));
+  host.querySelector(".view-refresh")?.addEventListener("click", () => refreshCurrentView(index));
+  host.querySelector(".view-all-disks")?.addEventListener("click", () => returnToMmb(index));
+  host.querySelector(".clipboard-cut-action")?.addEventListener("click", () => setWorkspaceClipboard(index, "cut"));
+  host.querySelector(".clipboard-copy-action")?.addEventListener("click", () => setWorkspaceClipboard(index, "copy"));
+  host.querySelector(".clipboard-paste-action")?.addEventListener("click", () => pasteWorkspaceClipboard(index));
   host.querySelector(".close-image").onclick = () => closePane(index);
   host.querySelector(".mmb-home")?.addEventListener("click", () => returnToMmb(index));
   host.querySelector(".import-file")?.addEventListener("click", () => guardedPaneAction(index, () => chooseHostFile(index)));
+  host.querySelector(".import-folder")?.addEventListener("click", () => guardedPaneAction(index, () => chooseHostFolder(index)));
   host.querySelector(".new-folder")?.addEventListener("click", () => guardedPaneAction(index, () => createFolder(index)));
   host.querySelector(".new-dfs-catalogue")?.addEventListener("click", () => guardedPaneAction(index, () => createDfsCatalogue(index)));
   host.querySelector(".switch-side")?.addEventListener("click", () => switchDsdSide(index));
@@ -940,10 +1066,12 @@ function wireRow(row, index) {
       const destination = row.dataset.name;
       const encoded = event.dataTransfer.getData("application/x-acorn-files");
       if (encoded) return transferFiles(index, JSON.parse(encoded), destination);
-      const files = [...event.dataTransfer.files];
+      const dropped = await collectDroppedHostFiles(event.dataTransfer);
+      const files = dropped.map(item => item.file);
       if (!files.length) return;
       await navigate(index, destination);
-      await addSelectedHostFiles(index, files);
+      if (dropped.some(item => item.relativePath.includes("/"))) await addSelectedHostFolder(index, dropped);
+      else await addSelectedHostFiles(index, files);
     };
     return;
   }
@@ -1071,6 +1199,9 @@ function wireRow(row, index) {
       const slotBatch = event.dataTransfer.getData("application/x-acorn-mmb-slots");
       if (slotBatch) {
         const sources = JSON.parse(slotBatch);
+        if (sources.length && sources.every(source => source.image === panes[index].image.id)) {
+          return moveMmbSlotsByDrag(index, Number(row.dataset.slot), sources);
+        }
         if (sources.length > 1) {
           if (row.dataset.empty !== "1") return toast("Drop multiple disks onto an empty destination slot.", true);
           return transferMmbSlots(index, Number(row.dataset.slot), sources);
@@ -1079,9 +1210,6 @@ function wireRow(row, index) {
       const slotData = event.dataTransfer.getData("application/x-beeb-mmb-slot");
       if (slotData) {
         const source = JSON.parse(slotData);
-        if (source.image === panes[index].image.id) {
-          return moveMmbSlotByDrag(index, source.slot, Number(row.dataset.slot));
-        }
         if (row.dataset.empty === "1") {
           return insertSessionIntoSlot(index, Number(row.dataset.slot), { image: source.image, slot: source.slot });
         }
@@ -1090,7 +1218,11 @@ function wireRow(row, index) {
       if (row.dataset.empty !== "1") return;
       const disk = event.dataTransfer.getData("application/x-beeb-disk");
       if (disk) return insertSessionIntoSlot(index, Number(row.dataset.slot), JSON.parse(disk));
-      const files = [...event.dataTransfer.files].filter(item => formats.isDfsImage(item.name));
+      const dropped = await collectDroppedHostFiles(event.dataTransfer);
+      if (dropped.some(item => item.relativePath.includes("/"))) {
+        return addSelectedHostFolder(index, dropped, Number(row.dataset.slot));
+      }
+      const files = dropped.map(item => item.file).filter(item => formats.isDfsImage(item.name));
       if (files.length) return insertFilesIntoSlots(index, Number(row.dataset.slot), files);
       toast("Drop an SSD, DSD, DFS-formatted HFE, or ZIP into an empty slot.", true);
     };
@@ -1156,6 +1288,10 @@ function refreshSelectionDisplay(index) {
   disable(".create-blank-ssd", !selected?.empty);
   disable(".create-blank-dsd", !selected?.empty);
   disable(".menu-entry", !selected?.formatted);
+  const clipboardSelection = clipboardItemsForPane(index);
+  disable(".clipboard-cut-action", !clipboardSelection.length || pane.image.readOnly || pane.image.kind === "tape");
+  disable(".clipboard-copy-action", !clipboardSelection.length);
+  disable(".clipboard-paste-action", !canPasteIntoPane(pane));
 
   const footer = host.querySelector(".pane-foot > span:first-child");
   if (footer) {
@@ -1166,24 +1302,21 @@ function refreshSelectionDisplay(index) {
   }
 }
 
-async function moveMmbSlotByDrag(index, sourceSlot, targetSlot) {
-  if (sourceSlot === targetSlot) return;
+async function moveMmbSlotsByDrag(index, targetSlot, sources) {
   const pane = panes[index];
-  setLoading(index, true, "Moving MMB slot…");
+  const clipboard = {
+    mode: "cut",
+    kind: "mmb-slots",
+    items: sources,
+    sourceImage: pane.image.id,
+    sourceName: pane.image.name,
+    createdAt: Date.now(),
+  };
   try {
-    const data = await api(`/api/images/${pane.image.id}/slots/move`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sourceSlot, targetSlot })
-    });
-    pane.image = data.image;
-    await acceptImage(index, pane.image);
-    setSelection(panes[index], [String(targetSlot)], String(targetSlot));
-    renderPane(index);
-    toast(`Slot ${sourceSlot} moved or swapped with slot ${targetSlot}`);
+    return await pasteMmbSlots(index, clipboard, targetSlot);
   } catch (error) {
-    pane.loading = false;
-    renderPane(index);
     toast(error.message, true);
+    return false;
   }
 }
 
@@ -1288,8 +1421,12 @@ function wireDropZone(host, index) {
     if (internalBatch) return transferFiles(index, JSON.parse(internalBatch));
     const internal = event.dataTransfer.getData("application/x-beeb-file");
     if (internal) return transferFiles(index, [JSON.parse(internal)]);
-    const files = [...event.dataTransfer.files];
+    const dropped = await collectDroppedHostFiles(event.dataTransfer);
+    const files = dropped.map(item => item.file);
     if (!files.length) return;
+    if (dropped.some(item => item.relativePath.includes("/")) && panes[index].image) {
+      return addSelectedHostFolder(index, dropped);
+    }
     const images = files.filter(file => formats.isImportableImage(file.name) || formats.isDescriptor(file.name));
     if (!panes[index].image) return openFiles(index, files);
     if (images.length && panes[index].image.kind === "adfs") {
@@ -1306,28 +1443,38 @@ function wireDropZone(host, index) {
   };
 }
 
-function copyMmbSlotToAdfs(index, source) {
+function copyMmbSlotToAdfs(index, source, afterCopy = null) {
   const target = panes[index];
   if (target.image.name.toLowerCase().endsWith(".dat") && !target.image.hasDescriptor) {
     return toast("Reopen this BeebSCSI DAT with its matching DSC file before copying disks into it.", true);
   }
   const rule = targetNameRule(target, source.name || `DISK${source.slot}`);
-  showModal(`
+  return new Promise(resolve => {
+    let submitted = false;
+    const closed = showModal(`
     <h2>Copy MMB disk to ADFS</h2>
     <p>${rule.valid ? "A child directory will be created and the complete DFS catalogue copied into it." : `“${esc(source.name)}” is not a legal ADFS directory name, so a safe replacement has been suggested.`}</p>
     <div class="field"><label>Directory name · max ${rule.limit} characters</label>
       <input name="directoryName" maxlength="${rule.limit}" value="${esc(rule.suggested)}" required></div>
     <label class="check-field"><input type="checkbox" name="addMenu" value="yes"> Offer this directory as an ADFS menu entry</label>
     <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="copy">Copy disk contents</button></div>`,
-  form => performMmbSlotToAdfsCopy(
-    index,
-    source,
-    form.get("directoryName"),
-    form.get("addMenu") === "yes"
-  ));
+    async form => {
+      submitted = true;
+      await performMmbSlotToAdfsCopy(
+        index,
+        source,
+        form.get("directoryName"),
+        form.get("addMenu") === "yes"
+      );
+      if (afterCopy) await afterCopy([source]);
+      resolve(true);
+      return true;
+    });
+    closed.then(() => { if (!submitted) resolve(false); });
+  });
 }
 
-function copyMmbSlotsToAdfs(index, sources) {
+function copyMmbSlotsToAdfs(index, sources, afterCopy = null) {
   const target = panes[index];
   const savedRecipes = storedCollection(RECIPE_STORAGE_KEY, []);
   const initialRecipe = savedRecipes[0] || { naming: "source", groupPrefix: "DISCS", addMenu: false, online: true, compatibility: true };
@@ -1409,7 +1556,8 @@ function copyMmbSlotsToAdfs(index, sources) {
   const skippedItems = new Map();
   const replaceItems = new Set();
   const collectedMetadata = [];
-  showModal(`
+  let submitted = false;
+  const closed = showModal(`
     <div class="bulk-copy-planner">
       <header class="bulk-planner-heading">
         <div><small>MMB → ADFS BULK IMPORT</small><h2>Review the copy plan</h2></div>
@@ -1488,7 +1636,8 @@ function copyMmbSlotsToAdfs(index, sources) {
         <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="copy">Copy ${items.length} disks</button></div>
       </footer>
     </div>`,
-  form => {
+  async form => {
+    submitted = true;
     const preparedItems = items.map(item => ({
       source: item.source,
       directoryName: form.get(`directoryName${item.offset}`),
@@ -1526,7 +1675,7 @@ function copyMmbSlotsToAdfs(index, sources) {
       submittedNames.set(key, item);
       preparedItems[offset].directoryName = rule.suggested;
     }
-    return performMmbSlotsToAdfsCopy(
+    const result = await performMmbSlotsToAdfsCopy(
       index,
       preparedItems,
       form.get("addMenu") === "yes",
@@ -1536,6 +1685,11 @@ function copyMmbSlotsToAdfs(index, sources) {
       collectedMetadata,
       { onlineMetadata: chosenRecipe.online !== false, compatibility: chosenRecipe.compatibility !== false }
     );
+    if (result && afterCopy) {
+      const copied = sources.filter(source => result.completedSlots.includes(Number(source.slot)));
+      if (copied.length) await afterCopy(copied);
+    }
+    return result;
   });
   const applyNamingStrategy = strategy => {
     modalContent.querySelectorAll('[name^="directoryName"]').forEach(input => {
@@ -1571,6 +1725,9 @@ function copyMmbSlotsToAdfs(index, sources) {
     });
   });
   applyNamingStrategy(initialNamingStrategy);
+  return new Promise(resolve => {
+    closed.then(() => resolve(submitted));
+  });
 }
 
 async function performMmbSlotsToAdfsCopy(
@@ -1666,6 +1823,10 @@ async function performMmbSlotsToAdfsCopy(
         await queueAdfsMenuEntries(index, menuRoot, collectedMetadata);
       }
     }, 0);
+    return {
+      completedSlots: [...completedItems].map(key => Number(key.split(":").at(-1))),
+      skippedSlots: [...skippedItems.values()].map(item => Number(item.sourceSlot)),
+    };
   } catch (error) {
     if (error.data?.image) target.image = error.data.image;
     collectMetadata(error.data?.metadata);
@@ -1715,7 +1876,7 @@ async function performMmbSlotsToAdfsCopy(
       if (addMenu && collectedMetadata.length) {
         setTimeout(() => queueAdfsMenuEntries(index, menuRoot, collectedMetadata), 0);
       }
-      return;
+      return false;
     }
     const destinationConflict = error.data?.destinationConflict;
     if (
@@ -1746,7 +1907,7 @@ async function performMmbSlotsToAdfsCopy(
         if (addMenu && collectedMetadata.length) {
           setTimeout(() => queueAdfsMenuEntries(index, menuRoot, collectedMetadata), 0);
         }
-        return;
+        return false;
       }
       modal.classList.add("busy");
       setModalProgress({
@@ -1886,9 +2047,11 @@ async function queueAdfsMenuEntries(index, menuRoot, metadataItems) {
       toast(`Could not update the ADFS menu: ${error.message}`, true);
     }
   }
-  for (const metadata of ambiguous) {
-    reviewAdfsMenuMetadata(index, menuRoot, metadata, false);
-    if (modal.open) {
+  const reviewBatch = { acceptAll: false, current: 0, total: ambiguous.length };
+  for (const [offset, metadata] of ambiguous.entries()) {
+    reviewBatch.current = offset + 1;
+    const shown = await reviewAdfsMenuMetadata(index, menuRoot, metadata, false, reviewBatch);
+    if (shown && modal.open) {
       await new Promise(resolve => modal.addEventListener("close", resolve, { once: true }));
     }
     previewHighlight = metadata.path || metadata.title || previewHighlight;
@@ -2100,7 +2263,7 @@ async function showCheckpointManager(index) {
     <p>Create a permanent named checkpoint before a larger experiment, or restore any recent automatic undo point.</p>
     <div class="field"><label>New checkpoint name · max 60 characters</label><input name="name" maxlength="60" placeholder="Before reorganising Games" required></div>
     <ul class="checkpoint-list">${rows || '<li class="checkpoint-empty">No checkpoints yet. Image-changing operations will add automatic undo points here.</li>'}</ul>
-    <div class="help-note"><strong>Storage:</strong> checkpoints stay inside this browser-owned working session. On supported filesystems, large images use fast copy-on-write clones.</div>
+    <div class="help-note"><strong>Storage:</strong> checkpoints stay inside this browser-owned working session. Large images use fast copy-on-write clones where available, with a sparse safe-copy fallback for zero-filled HDD capacity.</div>
     <div class="modal-actions"><button class="button ghost" value="cancel">Close</button><button class="button primary" value="create">Create named checkpoint</button></div>`,
   async form => {
     const result = await api(`/api/images/${pane.image.id}/checkpoints`, {
@@ -2263,7 +2426,7 @@ function chooseImage(index) {
 }
 
 function promptAdfsTargetHardware(index, files) {
-  return showModal(`
+  const closed = showModal(`
     <h2>Choose ADFS target hardware</h2>
     <p>The selected hardware profile controls filesystem validation and repairs. Choose the machine that will use the finished image.</p>
     <div class="field"><label>Target hardware</label>
@@ -2764,17 +2927,222 @@ function chooseHostFile(index) {
   input.click();
 }
 
+function chooseHostFolder(index) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.multiple = true;
+  input.setAttribute("webkitdirectory", "");
+  input.setAttribute("directory", "");
+  if (panes[index].image?.kind === "mmb" && panes[index].slot === null) {
+    input.accept = ".ssd,.dsd,.hfe,.zip";
+  }
+  input.onchange = () => {
+    const files = [...input.files];
+    if (!files.length) return;
+    addSelectedHostFolder(index, files.map(file => ({
+      file,
+      relativePath: file.webkitRelativePath || file.name,
+    })));
+  };
+  input.click();
+}
+
+function readDroppedDirectory(entry) {
+  const reader = entry.createReader();
+  const children = [];
+  return new Promise((resolve, reject) => {
+    const readBatch = () => reader.readEntries(batch => {
+      if (!batch.length) return resolve(children);
+      children.push(...batch);
+      readBatch();
+    }, reject);
+    readBatch();
+  });
+}
+
+async function collectDroppedEntry(entry, parentPath, output) {
+  const path = parentPath ? `${parentPath}/${entry.name}` : entry.name;
+  if (entry.isFile) {
+    const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+    output.push({ file, relativePath: path });
+    return;
+  }
+  if (!entry.isDirectory) return;
+  for (const child of await readDroppedDirectory(entry)) {
+    await collectDroppedEntry(child, path, output);
+  }
+}
+
+async function collectDroppedHostFiles(dataTransfer) {
+  const entries = [...(dataTransfer.items || [])]
+    .filter(item => item.kind === "file")
+    .map(item => item.webkitGetAsEntry?.())
+    .filter(Boolean);
+  if (entries.some(entry => entry.isDirectory)) {
+    const output = [];
+    for (const entry of entries) await collectDroppedEntry(entry, "", output);
+    return output;
+  }
+  return [...dataTransfer.files].map(file => ({
+    file,
+    relativePath: file.webkitRelativePath || file.name,
+  }));
+}
+
+function folderTargetPlans(pane, records, mode) {
+  const preserve = mode === "preserve" && pane.image.kind === "adfs";
+  const componentNames = new Map();
+  const usedByParent = new Map();
+  const changes = [];
+  const allocate = (parent, original, identity = "") => {
+    const mapKey = `${parent}\u0000${original}\u0000${identity}`;
+    if (componentNames.has(mapKey)) return componentNames.get(mapKey);
+    const rule = targetNameRule(pane, original);
+    const used = usedByParent.get(parent) || new Set();
+    let candidate = rule.suggested;
+    let suffix = 1;
+    while (used.has(candidate.toLowerCase())) {
+      const tail = String(suffix++);
+      candidate = `${rule.suggested.slice(0, rule.limit - tail.length)}${tail}`;
+    }
+    used.add(candidate.toLowerCase());
+    usedByParent.set(parent, used);
+    componentNames.set(mapKey, candidate);
+    if (candidate !== original) changes.push(`${original} → ${candidate}`);
+    return candidate;
+  };
+  return {
+    changes,
+    plans: records.map(item => {
+      const sourceParts = item.relativePath.replace(/\\/g, "/").split("/").filter(Boolean);
+      if (item.metadata?.targetName) sourceParts[sourceParts.length - 1] = item.metadata.targetName;
+      const keptParts = preserve ? sourceParts : sourceParts.slice(-1);
+      const targetParts = [];
+      for (const [partIndex, part] of keptParts.entries()) {
+        const parent = targetParts.join("/").toLowerCase();
+        const identity = !preserve && partIndex === keptParts.length - 1 ? item.relativePath : "";
+        targetParts.push(allocate(parent, part, identity));
+      }
+      return { ...item, targetPath: targetParts.join("/") };
+    }),
+  };
+}
+
+function ignoredFolderFile(name) {
+  const parts = String(name).replace(/\\/g, "/").split("/");
+  const leaf = parts.at(-1).toLowerCase();
+  return leaf === ".ds_store" || leaf === "thumbs.db" || leaf === "desktop.ini"
+    || parts.some(part => part === "__MACOSX");
+}
+
+async function prepareHostFolderMetadata(records) {
+  const sidecars = new Map();
+  for (const item of records.filter(row => /\.inf$/i.test(row.relativePath))) {
+    const key = item.relativePath.replace(/\.inf$/i, "").toLowerCase();
+    const fields = (await item.file.text()).trim().match(/"[^"]*"|\S+/g) || [];
+    sidecars.set(key, {
+      targetName: String(fields[0] || "").replace(/^"|"$/g, "").split(".").at(-1),
+      load: normaliseHostAddress(fields[1]),
+      execute: normaliseHostAddress(fields[2]),
+    });
+  }
+  return records.filter(item => !/\.inf$/i.test(item.relativePath)).map(item => ({
+    ...item,
+    metadata: {
+      ...metadataFromHostFilename(item.file.name),
+      ...(sidecars.get(item.relativePath.toLowerCase()) || {}),
+    },
+  }));
+}
+
+async function addSelectedHostFolder(index, records, requestedSlot = null) {
+  const pane = panes[index];
+  if (!records.length || !pane.image) return;
+  const isMmbRoot = pane.image.kind === "mmb" && pane.slot === null;
+  const reviewedRecords = isMmbRoot ? records : await prepareHostFolderMetadata(records);
+  const relevant = reviewedRecords.filter(item => !ignoredFolderFile(item.relativePath)
+    && (!isMmbRoot || formats.isDfsImage(item.file.name)));
+  const ignoredCount = records.length - relevant.length;
+  if (!relevant.length) {
+    return toast(isMmbRoot
+      ? "That folder contains no SSD, DSD, HFE or ZIP disk images."
+      : "That folder contains no importable files.", true);
+  }
+  if (isMmbRoot) {
+    const selected = selectedEntries(index).find(entry => entry.empty);
+    const firstEmpty = pane.entries.find(entry => entry.empty);
+    const startSlot = Number.isInteger(requestedSlot) ? requestedSlot : (selected?.slot ?? firstEmpty?.slot);
+    if (!Number.isInteger(startSlot)) return toast("This MMB has no empty slot available.", true);
+    return showModal(`
+      <h2>Insert disk images from folders</h2>
+      <p>Acorn File Forge found <strong>${relevant.length}</strong> supported disk image${relevant.length === 1 ? "" : "s"}. They will be flattened from every selected folder and inserted from slot ${startSlot}, using the next suitable empty slots.</p>
+      <div class="folder-import-preview">${relevant.slice(0, 12).map(item => `<code>${esc(item.relativePath)}</code>`).join("")}${relevant.length > 12 ? `<small>…and ${relevant.length - 12} more</small>` : ""}</div>
+      ${ignoredCount ? `<div class="help-note">${ignoredCount} unrelated, metadata, or unsupported file${ignoredCount === 1 ? "" : "s"} will be ignored.</div>` : ""}
+      <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="import">Insert ${relevant.length} image${relevant.length === 1 ? "" : "s"}</button></div>`,
+    () => insertFilesIntoSlots(index, startSlot, relevant.map(item => item.file)));
+  }
+
+  const canPreserve = pane.image.kind === "adfs";
+  const initialMode = canPreserve ? "preserve" : "flatten";
+  const roots = new Set(relevant.map(item => item.relativePath.replace(/\\/g, "/").split("/")[0]));
+  const initial = folderTargetPlans(pane, relevant, initialMode);
+  const closed = showModal(`
+    <h2>Import ${roots.size} folder${roots.size === 1 ? "" : "s"}</h2>
+    <p>${relevant.length} file${relevant.length === 1 ? "" : "s"} will be imported into <code>${esc(pane.path)}</code>. Review how host folders should map to the target filing system.</p>
+    ${canPreserve ? `<div class="choice-grid folder-import-modes">
+      <label><input type="radio" name="folderMode" value="preserve" checked><span><b>Preserve folder structure</b><small>Create the selected folder tree under the current ADFS directory.</small></span></label>
+      <label><input type="radio" name="folderMode" value="flatten"><span><b>Import all files here</b><small>Ignore host folders and place every file in the current directory.</small></span></label>
+    </div>` : `<input type="hidden" name="folderMode" value="flatten"><div class="help-note">DFS has a flat catalogue. Files from all selected folders will be imported into <strong>${esc(pane.path)}</strong>.</div>`}
+    <div class="folder-import-preview" data-folder-preview>${initial.plans.slice(0, 12).map(item => `<code>${esc(item.relativePath)} → ${esc(item.targetPath)}</code>`).join("")}</div>
+    ${ignoredCount ? `<div class="help-note">${ignoredCount} metadata sidecar or operating-system housekeeping file${ignoredCount === 1 ? "" : "s"} will not be stored as a separate file.</div>` : ""}
+    <label class="check-field"><input type="checkbox" name="replace" value="yes"> Replace ordinary files that already have the same target path</label>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="import">Import ${relevant.length} file${relevant.length === 1 ? "" : "s"}</button></div>`,
+  async formValues => {
+    const mode = String(formValues.get("folderMode") || initialMode);
+    const plan = folderTargetPlans(pane, relevant, mode);
+    const form = new FormData();
+    plan.plans.forEach(item => form.append("files", item.file));
+    form.append("targetPaths", JSON.stringify(plan.plans.map(item => item.targetPath)));
+    form.append("metadata", JSON.stringify(plan.plans.map(item => item.metadata || {})));
+    form.append("destination", pane.path);
+    form.append("mode", mode);
+    form.append("replace", formValues.get("replace") === "yes" ? "true" : "false");
+    if (pane.slot !== null) form.append("slot", pane.slot);
+    if (pane.side !== null) form.append("side", pane.side);
+    const data = await paneOperation(index, `Importing ${relevant.length} folder file${relevant.length === 1 ? "" : "s"}…`, () =>
+      api(`/api/images/${pane.image.id}/folder-import`, { method: "POST", body: form }));
+    if (data.conflicts?.length) {
+      throw new Error(`${data.conflicts.length} target file${data.conflicts.length === 1 ? " already exists" : "s already exist"}. Tick “Replace ordinary files” to overwrite: ${data.conflicts.slice(0, 4).join(", ")}${data.conflicts.length > 4 ? "…" : ""}`);
+    }
+    pane.image = data.image;
+    await loadDirectory(index);
+    toast(`${data.imported.length} file${data.imported.length === 1 ? "" : "s"} imported`);
+  });
+  if (canPreserve) {
+    modalContent.querySelectorAll('input[name="folderMode"]').forEach(input => {
+      input.onchange = () => {
+        const plan = folderTargetPlans(pane, relevant, input.value);
+        modalContent.querySelector("[data-folder-preview]").innerHTML = plan.plans.slice(0, 12)
+          .map(item => `<code>${esc(item.relativePath)} → ${esc(item.targetPath)}</code>`).join("");
+      };
+    });
+  }
+  return closed;
+}
+
 async function addSelectedHostFiles(index, files) {
   if (!files.length) return;
   const pane = panes[index];
+  const preparedFiles = await prepareHostFileMetadata(files);
+  if (!preparedFiles.length) return toast("The selection contained metadata sidecars but no data files.", true);
+  const batch = { current: 0, total: preparedFiles.length, acceptAll: false, currentMetadata: null };
   pane.actionPending = true;
   renderPane(index);
   try {
-    for (const [offset, file] of files.entries()) {
-      await importHostFile(index, file, false, {
-        current: offset + 1,
-        total: files.length
-      });
+    for (const [offset, item] of preparedFiles.entries()) {
+      batch.current = offset + 1;
+      batch.currentMetadata = item.metadata;
+      await importHostFile(index, item.file, false, batch);
       // A raw-image choice replaces its extraction dialog on the next task.
       // Give that replacement time to open and wait for it as part of the
       // current file before moving on to the next selection.
@@ -2791,6 +3159,45 @@ async function addSelectedHostFiles(index, files) {
       renderPane(index);
     }
   }
+  if (batch.adfsMenuMetadata?.length) {
+    await queueAdfsMenuEntries(index, pane.path, batch.adfsMenuMetadata);
+  }
+}
+
+function normaliseHostAddress(value) {
+  const match = String(value || "").trim().match(/^(?:0x|&)?([0-9a-f]{1,8})$/i);
+  return match ? `0x${match[1].toUpperCase()}` : "";
+}
+
+function metadataFromHostFilename(filename) {
+  const match = String(filename).match(/^(.*?),(?:0x|&)?([0-9a-f]{4,8})(?:-(?:0x|&)?([0-9a-f]{4,8}))?$/i);
+  if (!match) return {};
+  return {
+    targetName: match[1],
+    load: normaliseHostAddress(match[2]),
+    execute: normaliseHostAddress(match[3] || match[2]),
+  };
+}
+
+async function prepareHostFileMetadata(files) {
+  const sidecars = new Map();
+  for (const file of files.filter(item => /\.inf$/i.test(item.name))) {
+    const key = file.name.replace(/\.inf$/i, "").toLowerCase();
+    const fields = (await file.text()).trim().match(/"[^"]*"|\S+/g) || [];
+    const catalogueName = String(fields[0] || "").replace(/^"|"$/g, "").split(".").at(-1);
+    sidecars.set(key, {
+      targetName: catalogueName || file.name.replace(/\.inf$/i, ""),
+      load: normaliseHostAddress(fields[1]),
+      execute: normaliseHostAddress(fields[2]),
+    });
+  }
+  return files.filter(file => !/\.inf$/i.test(file.name)).map(file => ({
+    file,
+    metadata: {
+      ...metadataFromHostFilename(file.name),
+      ...(sidecars.get(file.name.toLowerCase()) || {}),
+    },
+  }));
 }
 
 async function importHostFile(index, file, forceRaw = false, batch = null) {
@@ -2799,32 +3206,57 @@ async function importHostFile(index, file, forceRaw = false, batch = null) {
   if (!forceRaw && pane.image.kind === "adfs" && formats.isImportableImage(file.name)) {
     return promptImageExtraction(index, file, batch);
   }
-  const nameRule = targetNameRule(pane, file.name);
+  const detected = batch?.currentMetadata || metadataFromHostFilename(file.name);
+  const nameRule = targetNameRule(pane, detected.targetName || file.name);
+  if (batch?.acceptAll) {
+    return addHostFileWithPlan(index, file, {
+      targetName: nameRule.suggested,
+      load: detected.load,
+      execute: detected.execute,
+      filetype: detected.filetype,
+    });
+  }
   const batchLabel = batch?.total > 1
     ? `<p class="batch-position">Selected file ${batch.current} of ${batch.total}</p>`
     : "";
-  return showModal(`
+  const canApplyAll = batch?.total > batch?.current;
+  const closed = showModal(`
     <h2>Add ${esc(file.name)}</h2>${batchLabel}<p>${nameRule.valid ? "Choose the target filename and optional Acorn metadata." : `${esc(file.name)} is not a legal ${nameRule.label} filename, so a safe replacement has been suggested.`}</p>
     <div class="field"><label>Target filename · max ${nameRule.limit} characters</label>
       <input name="targetName" maxlength="${nameRule.limit}" value="${esc(nameRule.suggested)}" required></div>
-    <div class="field"><label>Load address (for example 0x1900)</label><input name="load" placeholder="0xFFFF"></div>
-    <div class="field"><label>Execute address</label><input name="execute" placeholder="0xFFFF"></div>
+    <div class="field"><label>Load address (for example 0x1900)</label><input name="load" value="${esc(detected.load || "")}" placeholder="0xFFFF"></div>
+    <div class="field"><label>Execute address</label><input name="execute" value="${esc(detected.execute || "")}" placeholder="0xFFFF"></div>
     ${pane.image.kind === "adfs" ? '<div class="field"><label>RISC OS filetype</label><input name="filetype" placeholder="Text or 0xFFF"></div>' : ""}
-    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="add">Add file</button></div>`,
+    <input type="hidden" name="applyRemaining" value="no">
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button>${canApplyAll ? '<button class="button ghost apply-import-all" value="add">Add and apply to all remaining</button>' : ""}<button class="button primary" value="add">Add file</button></div>`,
   async formValues => {
-    const form = new FormData();
-    form.append("file", file);
-    form.append("destination", pane.path);
-    form.append("targetName", formValues.get("targetName"));
-    if (pane.slot !== null) form.append("slot", pane.slot);
-    if (pane.side !== null) form.append("side", pane.side);
-    for (const key of ["load", "execute", "filetype"]) if (formValues.get(key)) form.append(key, formValues.get(key));
-    const data = await paneOperation(index, "Adding file to image…", () =>
-      api(`/api/images/${pane.image.id}/files`, { method: "POST", body: form }));
-    pane.image = data.image;
-    await loadDirectory(index);
-    toast(`${file.name} added`);
+    const plan = Object.fromEntries(["targetName", "load", "execute", "filetype"]
+      .map(key => [key, formValues.get(key)]));
+    if (batch && formValues.get("applyRemaining") === "yes") {
+      batch.acceptAll = true;
+    }
+    return addHostFileWithPlan(index, file, plan);
   });
+  modalContent.querySelector(".apply-import-all")?.addEventListener("click", () => {
+    modalContent.querySelector('[name="applyRemaining"]').value = "yes";
+  });
+  return closed;
+}
+
+async function addHostFileWithPlan(index, file, plan) {
+  const pane = panes[index];
+  const form = new FormData();
+  form.append("file", file);
+  form.append("destination", pane.path);
+  form.append("targetName", plan.targetName);
+  if (pane.slot !== null) form.append("slot", pane.slot);
+  if (pane.side !== null) form.append("side", pane.side);
+  for (const key of ["load", "execute", "filetype"]) if (plan[key]) form.append(key, plan[key]);
+  const data = await paneOperation(index, "Adding file to image…", () =>
+    api(`/api/images/${pane.image.id}/files`, { method: "POST", body: form }));
+  pane.image = data.image;
+  await loadDirectory(index);
+  toast(`${file.name} added`);
 }
 
 async function promptImageExtraction(index, file, batch = null) {
@@ -2847,6 +3279,24 @@ async function promptImageExtraction(index, file, batch = null) {
     const preview = await api(`/api/images/${prepared.id}/preview`);
     const rule = targetNameRule(pane, formats.stem(file.name));
     let sourceConsumed = false;
+    if (batch?.acceptAll) {
+      const stored = batch.imagePlan || { storageMethod: "extract", targetPath: pane.path, createDirectory: false, addMenu: false };
+      if (stored.storageMethod === "raw") {
+        await api(`/api/images/${prepared.id}`, { method: "DELETE" });
+        sourceConsumed = true;
+        return addHostFileWithPlan(index, file, { targetName: targetNameRule(pane, file.name).suggested });
+      }
+      const plan = {
+        targetPath: stored.targetPath || pane.path,
+        createDirectory: Boolean(stored.createDirectory),
+        directoryName: stored.createDirectory ? rule.suggested : null,
+        addMenu: Boolean(stored.addMenu),
+      };
+      const result = await extractPreparedHostImage(index, prepared, file.name, plan, batch);
+      await api(`/api/images/${prepared.id}`, { method: "DELETE" });
+      sourceConsumed = true;
+      return result;
+    }
     const closed = showImageExtractionPlan(index, {
       heading: `Import ${file.name}`,
       sourceName: file.name,
@@ -2855,13 +3305,24 @@ async function promptImageExtraction(index, file, batch = null) {
       allowRaw: true,
       batch,
       submitLabel: "Continue",
-      onRaw: async () => {
+      onRaw: async choice => {
+        if (batch && choice?.applyAll) {
+          batch.acceptAll = true;
+          batch.imagePlan = { storageMethod: "raw" };
+        }
         await api(`/api/images/${prepared.id}`, { method: "DELETE" });
         sourceConsumed = true;
+        if (choice?.applyAll) {
+          return addHostFileWithPlan(index, file, { targetName: targetNameRule(pane, file.name).suggested });
+        }
         setTimeout(() => importHostFile(index, file, true, batch), 0);
       },
       onExtract: async plan => {
-        const result = await extractPreparedHostImage(index, prepared, file.name, plan);
+        if (batch && plan.applyAll) {
+          batch.acceptAll = true;
+          batch.imagePlan = { ...plan, storageMethod: "extract", directoryName: null, applyAll: undefined };
+        }
+        const result = await extractPreparedHostImage(index, prepared, file.name, plan, batch);
         await api(`/api/images/${prepared.id}`, { method: "DELETE" })
           .then(() => { sourceConsumed = true; })
           .catch(() => {});
@@ -2904,6 +3365,7 @@ function showImageExtractionPlan(index, options) {
   const batchLabel = options.batch?.total > 1
     ? `<p class="batch-position">Selected file ${options.batch.current} of ${options.batch.total}</p>`
     : "";
+  const canApplyAll = options.batch?.total > options.batch?.current;
   const closed = showModal(`
     <h2>${esc(options.heading)}</h2>
     ${batchLabel}
@@ -2927,17 +3389,23 @@ function showImageExtractionPlan(index, options) {
       <div class="help-note">Existing names are never overwritten. A failed or aborted direct extraction restores the working image.</div>
       <label class="check-field" data-menu-offer><input type="checkbox" name="addMenu" value="yes"> Offer the imported program as an ADFS menu entry</label>
     </div>
-    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="continue">${esc(options.submitLabel)}</button></div>`,
+    <input type="hidden" name="applyRemaining" value="no">
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button>${canApplyAll ? '<button class="button ghost apply-import-all" value="continue">Continue and apply to all remaining</button>' : ""}<button class="button primary" value="continue">${esc(options.submitLabel)}</button></div>`,
   async form => {
-    if (form.get("storageMethod") === "raw") return options.onRaw?.();
+    const applyAll = form.get("applyRemaining") === "yes";
+    if (form.get("storageMethod") === "raw") return options.onRaw?.({ applyAll });
     return options.onExtract({
       targetPath: form.get("pickDestination") === "yes" ? form.get("targetPath") : pane.path,
       createDirectory: form.get("createDirectory") === "yes",
       directoryName: form.get("directoryName"),
       addMenu: form.get("addMenu") === "yes",
+      applyAll,
     });
   });
   bindImageExtractionPlan(index, Boolean(options.allowRaw));
+  modalContent.querySelector(".apply-import-all")?.addEventListener("click", () => {
+    modalContent.querySelector('[name="applyRemaining"]').value = "yes";
+  });
   return closed;
 }
 
@@ -2998,7 +3466,7 @@ function bindImageExtractionPlan(index, allowRaw) {
   showDirectory();
 }
 
-async function extractPreparedHostImage(index, sourceImage, sourceName, plan) {
+async function extractPreparedHostImage(index, sourceImage, sourceName, plan, batch = null) {
   const pane = panes[index];
   const menuRoot = pane.path;
   const destinationLabel = plan.createDirectory ? plan.directoryName : plan.targetPath;
@@ -3019,7 +3487,10 @@ async function extractPreparedHostImage(index, sourceImage, sourceName, plan) {
   pane.image = data.image;
   await loadDirectory(index);
   toast(`${sourceName} contents extracted into ${data.path}`);
-  if (plan.addMenu && data.metadata) setTimeout(() => offerAdfsMenuEntry(index, menuRoot, data.metadata), 0);
+  if (plan.addMenu && data.metadata) {
+    if (batch) (batch.adfsMenuMetadata ||= []).push(data.metadata);
+    else setTimeout(() => offerAdfsMenuEntry(index, menuRoot, data.metadata), 0);
+  }
 }
 
 function selectedLaunchCandidateIndex(metadata) {
@@ -3162,12 +3633,20 @@ async function offerAdfsMenuEntry(index, menuRoot, metadata) {
   }
 }
 
-async function reviewAdfsMenuMetadata(index, menuRoot, metadata, previewAfter = true) {
+async function reviewAdfsMenuMetadata(index, menuRoot, metadata, previewAfter = true, batch = null) {
   const matches = metadata.matches || [];
   const evidence = [...(metadata.evidence || []), ...(metadata.warnings || [])];
   const launchCandidates = metadata.launchCandidates || [];
   let recommendedPage = metadata.page;
-  showModal(`
+  if (batch?.acceptAll) {
+    const entry = detectedAdfsMenuEntry(metadata);
+    if (entry) {
+      await saveAdfsMenuEntry(index, menuRoot, entry, false);
+      return false;
+    }
+  }
+  const canApplyAll = batch?.total > batch?.current;
+  const closed = showModal(`
     <h2>Add directory to ADFS menu</h2>
     <p>Review the extracted program’s launch details before the menu in ${esc(menuRoot)} is updated. Confidence: ${metadata.confidence}%.</p>
     ${matches.length ? `<div class="field"><label>Online matches</label><select name="match">
@@ -3190,7 +3669,8 @@ async function reviewAdfsMenuMetadata(index, menuRoot, metadata, previewAfter = 
     </div>
     <div class="field"><label>ADFS directory</label><input name="path" value="${esc(metadata.path)}" readonly></div>
     ${evidence.length ? `<div class="scan-notes">${evidence.map(item => `<span>${esc(item)}</span>`).join("")}</div>` : ""}
-    <div class="modal-actions"><button class="button ghost" value="cancel">Keep off-menu</button><button class="button primary" value="save">Update menu</button></div>`,
+    <input type="hidden" name="applyRemaining" value="no">
+    <div class="modal-actions"><button class="button ghost" value="cancel">Keep off-menu</button>${canApplyAll ? '<button class="button ghost apply-menu-all" value="save">Update and accept all remaining</button>' : ""}<button class="button primary" value="save">Update menu</button></div>`,
   async form => {
     const matchValue = form.get("match");
     const selectedMatch = matchValue === "" || matchValue === null ? null : matches[Number(matchValue)];
@@ -3206,8 +3686,12 @@ async function reviewAdfsMenuMetadata(index, menuRoot, metadata, previewAfter = 
       path: candidate.path,
       system: "H"
     };
+    if (batch && form.get("applyRemaining") === "yes") batch.acceptAll = true;
     await saveAdfsMenuEntry(index, menuRoot, entry);
     if (previewAfter) previewMenuAfterCurrentDialog(index, entry.path || entry.title);
+  });
+  modalContent.querySelector(".apply-menu-all")?.addEventListener("click", () => {
+    modalContent.querySelector('[name="applyRemaining"]').value = "yes";
   });
   const matchSelect = modalContent.querySelector('[name="match"]');
   const candidateSelect = modalContent.querySelector('[name="launchCandidate"]');
@@ -3225,6 +3709,313 @@ async function reviewAdfsMenuMetadata(index, menuRoot, metadata, previewAfter = 
     modalContent.querySelector('[name="title"]').value = selected.title;
     modalContent.querySelector('[name="publisher"]').value = selected.publisher;
   });
+  return Boolean(closed);
+}
+
+function setWorkspaceClipboard(index, mode) {
+  const pane = panes[index];
+  const items = clipboardItemsForPane(index);
+  if (!items.length) return toast("Select one or more files, directories, or formatted MMB slots first.", true);
+  clearWorkspaceClipboard("", false);
+  workspaceClipboard = {
+    mode,
+    kind: pane.image.kind === "mmb" && pane.slot === null ? "mmb-slots" : "files",
+    items,
+    sourceImage: pane.image.id,
+    sourceName: pane.image.name,
+    createdAt: Date.now(),
+  };
+  panes.forEach((_item, paneIndex) => renderPane(paneIndex, true));
+  toast(`${items.length} item${items.length === 1 ? "" : "s"} ${mode === "cut" ? "cut" : "copied"}. Choose a destination and paste.`);
+}
+
+async function refreshClipboardImages(imageIds) {
+  for (let index = 0; index < panes.length; index += 1) {
+    if (!imageIds.has(panes[index].image?.id)) continue;
+    await refreshCurrentView(index, true);
+  }
+}
+
+function mmbPasteConflictDecision(conflicts) {
+  return new Promise(resolve => {
+    let submitted = false;
+    const closed = showModal(`
+      <h2>Replace occupied MMB slots?</h2>
+      <p>${conflicts.length} destination slot${conflicts.length === 1 ? " is" : "s are"} already occupied. Replacing removes those complete disk images and their menu records.</p>
+      <div class="clipboard-conflicts">${conflicts.map(item => `<span><b>Slot ${item.slot}</b>${esc(item.name)}</span>`).join("")}</div>
+      <div class="modal-actions"><button class="button ghost" value="cancel">Cancel paste</button><button class="button danger" value="replace">Replace and paste</button></div>`,
+    () => { submitted = true; resolve(true); });
+    closed.then(() => { if (!submitted) resolve(false); });
+  });
+}
+
+async function pasteMmbSlots(index, clipboard, targetSlot = null) {
+  const pane = panes[index];
+  const destination = targetSlot === null
+    ? selectedEntry(index)
+    : pane.entries.find(entry => entry.type === "disk" && Number(entry.slot) === Number(targetSlot));
+  if (!destination) {
+    toast("Select the first destination MMB slot, then choose Paste.", true);
+    return false;
+  }
+  const request = async replace => api(`/api/images/${pane.image.id}/slots/paste`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      sourceImage: clipboard.sourceImage,
+      sourceSlots: clipboard.items.map(item => item.slot),
+      targetStart: Number(destination.slot),
+      cut: clipboard.mode === "cut",
+      replace,
+    }),
+  });
+  let data = await request(false);
+  if (data.noChange) {
+    toast("Those slots are already at that position.");
+    return false;
+  }
+  if (!data.pasted && data.conflicts?.length) {
+    const replace = await mmbPasteConflictDecision(data.conflicts);
+    if (!replace) return false;
+    data = await request(true);
+  }
+  if (!data.pasted) return false;
+  pane.image = data.image;
+  const affected = new Set([pane.image.id, clipboard.sourceImage]);
+  await refreshClipboardImages(affected);
+  setSelection(panes[index], data.targetSlots.map(String), String(data.targetSlots[0]));
+  renderPane(index, true);
+  toast(`${data.targetSlots.length} MMB disk${data.targetSlots.length === 1 ? "" : "s"} ${clipboard.mode === "cut" ? "moved" : "copied"}`);
+  return true;
+}
+
+async function deleteCutFileSources(clipboard) {
+  const first = clipboard.items[0];
+  const data = await api(`/api/images/${first.image}/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      slot: first.slot,
+      side: first.side,
+      items: clipboard.items.map(item => ({ path: item.path, recursive: item.recursive })),
+    }),
+  });
+  await refreshClipboardImages(new Set([first.image]));
+  return data;
+}
+
+async function ejectCutMmbSources(clipboard, copiedSources) {
+  if (!copiedSources.length) return;
+  const slots = copiedSources.map(source => Number(source.slot));
+  await api(`/api/images/${clipboard.sourceImage}/slots/clear`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ slots }),
+  });
+  await refreshClipboardImages(new Set([clipboard.sourceImage]));
+  toast(`${slots.length} source MMB slot${slots.length === 1 ? "" : "s"} ejected after extraction.`);
+}
+
+function allocateFilesToDfsDisks(items, diskFormat) {
+  const sidesPerDisk = diskFormat === "dsd" ? 2 : 1;
+  const disks = [];
+  let disk = null;
+  let side = 0;
+  let sideFiles = 0;
+  let sideSectors = 0;
+  for (const item of items) {
+    const sectors = Math.max(1, Math.ceil(Number(item.length || 0) / 256));
+    if (sectors > 798) throw new Error(`${item.name} is too large for one DFS disk side.`);
+    if (!disk || sideFiles >= 31 || sideSectors + sectors > 798) {
+      if (disk && side + 1 < sidesPerDisk) {
+        side += 1;
+      } else {
+        disk = { files: [] };
+        disks.push(disk);
+        side = 0;
+      }
+      sideFiles = 0;
+      sideSectors = 0;
+    }
+    disk.files.push({ ...item, targetSide: side === 1 ? 2 : 0 });
+    sideFiles += 1;
+    sideSectors += sectors;
+  }
+  return disks;
+}
+
+function uniqueDfsNames(items) {
+  const used = new Set();
+  return items.map(item => {
+    const rule = targetNameRule({ image: { kind: "dfs" } }, item.name);
+    let proposed = rule.suggested;
+    let suffix = 1;
+    while (used.has(proposed.toLowerCase())) {
+      const tail = String(suffix++);
+      proposed = `${rule.suggested.slice(0, Math.max(1, 7 - tail.length))}${tail}`;
+    }
+    used.add(proposed.toLowerCase());
+    const first = String(item.path || "").split(".")[0].toUpperCase();
+    return { ...item, targetName: proposed, prefix: /^[A-Z$]$/.test(first) ? first : "$" };
+  });
+}
+
+function buildMmbDisksFromClipboard(index, clipboard) {
+  const pane = panes[index];
+  const destination = selectedEntry(index);
+  if (!destination || destination.type !== "disk" || !destination.empty) {
+    toast("Select the first empty MMB slot for the generated disk or disks.", true);
+    return false;
+  }
+  if (clipboard.items.some(item => item.recursive)) {
+    toast("DFS disks cannot contain folders. Open the folder and copy its files instead.", true);
+    return false;
+  }
+  const prepared = uniqueDfsNames(clipboard.items);
+  const prefixes = ["$", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"];
+  let initialPlan;
+  try {
+    initialPlan = allocateFilesToDfsDisks(prepared, "ssd");
+  } catch (error) {
+    toast(error.message, true);
+    return false;
+  }
+  return new Promise(resolve => {
+    let submitted = false;
+    const closed = showModal(`
+      <div class="dfs-build-planner">
+        <h2>Build DFS disks in the MMB</h2>
+        <p>Loose files must first be assembled into complete DFS images. Files are packed in order, with no more than 31 catalogue entries or 798 data sectors on each side.</p>
+        <div class="field"><label>Disk format</label><select name="diskFormat"><option value="ssd">SSD · one 200 KiB side per slot</option><option value="dsd">DSD · two sides across two slots</option></select></div>
+        <div class="field"><label>Disk title prefix · max 8 characters</label><input name="titlePrefix" maxlength="8" value="FILES" required></div>
+        <div class="dfs-build-summary" aria-live="polite"><b>${initialPlan.length} SSD disk${initialPlan.length === 1 ? "" : "s"}</b><span>Starting at slot ${destination.slot}</span></div>
+        <div class="transfer-name-list">
+          ${prepared.map((item, itemIndex) => `<div class="dfs-build-row" data-build-row="${itemIndex}">
+            <label title="${esc(item.path)}">${esc(item.name)}<small class="dfs-build-allocation"></small></label>
+            <select name="prefix${itemIndex}" aria-label="DFS catalogue group for ${esc(item.name)}">${prefixes.map(prefix => `<option value="${prefix}" ${prefix === item.prefix ? "selected" : ""}>${prefix}</option>`).join("")}</select>
+            <input name="targetName${itemIndex}" maxlength="7" value="${esc(item.targetName)}" aria-label="DFS filename for ${esc(item.name)}" required>
+          </div>`).join("")}
+        </div>
+        <div class="help-note"><strong>DFS naming:</strong> the one-character group and seven-character filename are editable. ADFS directories are not copied because DFS is flat.</div>
+        <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="build">Build and paste</button></div>
+      </div>`,
+    async form => {
+      submitted = true;
+      const diskFormat = form.get("diskFormat");
+      const namedItems = prepared.map((item, itemIndex) => ({
+        ...item,
+        prefix: form.get(`prefix${itemIndex}`),
+        targetName: form.get(`targetName${itemIndex}`),
+      }));
+      const disks = allocateFilesToDfsDisks(namedItems, diskFormat);
+      const titlePrefix = String(form.get("titlePrefix") || "FILES").trim();
+      const data = await api(`/api/images/${pane.image.id}/slots/build-from-files`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sourceImage: clipboard.sourceImage,
+          sourceSlot: clipboard.items[0].slot,
+          sourceSide: clipboard.items[0].side,
+          targetStart: Number(destination.slot),
+          format: diskFormat,
+          disks: disks.map((disk, diskIndex) => ({
+            title: `${titlePrefix}${diskIndex + 1}`.slice(0, 12),
+            files: disk.files.map(item => ({
+              sourcePath: item.path,
+              targetName: item.targetName,
+              prefix: item.prefix,
+              targetSide: item.targetSide,
+            })),
+          })),
+        }),
+      });
+      pane.image = data.image;
+      await refreshClipboardImages(new Set([pane.image.id]));
+      if (clipboard.mode === "cut") await deleteCutFileSources(clipboard);
+      setSelection(panes[index], data.slots.map(String), String(data.slots[0]));
+      renderPane(index, true);
+      toast(`${disks.length} DFS disk image${disks.length === 1 ? "" : "s"} built in ${data.slots.length} MMB slot${data.slots.length === 1 ? "" : "s"}`);
+      resolve(true);
+      return true;
+    });
+    const updatePlan = () => {
+      const format = modalContent.querySelector('[name="diskFormat"]').value;
+      try {
+        const plan = allocateFilesToDfsDisks(prepared, format);
+        const slotsNeeded = plan.length * (format === "dsd" ? 2 : 1);
+        modalContent.querySelector(".dfs-build-summary").innerHTML = `<b>${plan.length} ${format.toUpperCase()} disk${plan.length === 1 ? "" : "s"}</b><span>Slots ${destination.slot} to ${Number(destination.slot) + slotsNeeded - 1}</span>`;
+        plan.forEach((disk, diskIndex) => disk.files.forEach(item => {
+          const itemIndex = prepared.findIndex(candidate => candidate.path === item.path);
+          const side = format === "dsd" ? ` · side ${item.targetSide === 2 ? 2 : 0}` : "";
+          modalContent.querySelector(`[data-build-row="${itemIndex}"] .dfs-build-allocation`).textContent = `Disk ${diskIndex + 1}${side}`;
+        }));
+      } catch (error) {
+        modalContent.querySelector(".dfs-build-summary").textContent = error.message;
+      }
+    };
+    modalContent.querySelector('[name="diskFormat"]').addEventListener("change", updatePlan);
+    updatePlan();
+    closed.then(() => { if (!submitted) resolve(false); });
+  });
+}
+
+async function pasteFileItems(index, clipboard) {
+  const pane = panes[index];
+  if (pane.image.kind === "mmb" && pane.slot === null) {
+    return buildMmbDisksFromClipboard(index, clipboard);
+  }
+  if (isDfsPane(pane) && pane.path === "") {
+    toast("Open $, A-Z, or another DFS catalogue group before pasting files.", true);
+    return false;
+  }
+  if (isDfsPane(pane) && clipboard.items.some(item => item.recursive)) {
+    toast("DFS cannot contain directories. Open the source directory and copy its files instead.", true);
+    return false;
+  }
+  const sameImage = clipboard.items.every(item => item.image === pane.image.id);
+  const success = await transferFiles(index, clipboard.items);
+  if (!success) return false;
+  const movedInternally = sameImage && (
+    pane.image.kind === "adfs" || (isDfsPane(pane) && clipboard.items.every(item => !item.recursive))
+  );
+  if (clipboard.mode === "cut" && !movedInternally) {
+    await deleteCutFileSources(clipboard);
+    toast(`${clipboard.items.length} source item${clipboard.items.length === 1 ? "" : "s"} removed after paste.`);
+  }
+  return true;
+}
+
+async function pasteWorkspaceClipboard(index) {
+  if (!workspaceClipboard) return;
+  const clipboard = workspaceClipboard;
+  clipboardMutationInProgress = true;
+  try {
+    let success = false;
+    const pane = panes[index];
+    if (clipboard.kind === "mmb-slots") {
+      if (pane.image.kind === "mmb" && pane.slot === null) {
+        success = await pasteMmbSlots(index, clipboard);
+      } else if (pane.image.kind === "adfs") {
+        const afterCopy = clipboard.mode === "cut"
+          ? copied => ejectCutMmbSources(clipboard, copied)
+          : null;
+        success = Boolean(await (clipboard.items.length > 1
+          ? copyMmbSlotsToAdfs(index, clipboard.items, afterCopy)
+          : copyMmbSlotToAdfs(index, clipboard.items[0], afterCopy)));
+      } else {
+        toast("Complete MMB disks can be pasted into an MMB or extracted into ADFS.", true);
+      }
+    } else {
+      success = await pasteFileItems(index, clipboard);
+    }
+    return success;
+  } catch (error) {
+    toast(error.message, true);
+    return false;
+  } finally {
+    clipboardMutationInProgress = false;
+    clearWorkspaceClipboard("", true);
+  }
 }
 
 async function transferFiles(targetIndex, sources, targetPath = null) {
@@ -3252,7 +4043,9 @@ async function transferFiles(targetIndex, sources, targetPath = null) {
     rule: targetNameRule(target, source.name)
   }));
   if (transfers.some(item => !item.rule.valid)) {
-    showModal(`
+    return new Promise(resolve => {
+      let submitted = false;
+      const closed = showModal(`
       <div class="transfer-batch">
         <h2>Check destination names</h2>
         <p>Names must follow the destination filesystem’s rules. Suggested replacements are ready for any incompatible names.</p>
@@ -3264,11 +4057,17 @@ async function transferFiles(targetIndex, sources, targetPath = null) {
         </div>
         <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="copy">Copy ${transfers.length} item${transfers.length === 1 ? "" : "s"}</button></div>
       </div>`,
-    form => performTransfers(targetIndex, transfers.map(item => ({
-      ...item.source,
-      targetName: form.get(`targetName${item.index}`)
-    })), destination));
-    return;
+      async form => {
+        submitted = true;
+        const result = await performTransfers(targetIndex, transfers.map(item => ({
+          ...item.source,
+          targetName: form.get(`targetName${item.index}`)
+        })), destination);
+        resolve(result);
+        return result;
+      });
+      closed.then(() => { if (!submitted) resolve(false); });
+    });
   }
   return performTransfers(
     targetIndex,
@@ -3285,7 +4084,7 @@ async function performDfsMoves(targetIndex, sources, destination) {
       destination: fullPath(destination, source.name),
     }))
     .filter(item => item.source.toLowerCase() !== item.destination.toLowerCase());
-  if (!items.length) return toast("Those files are already in this catalogue group.");
+  if (!items.length) { toast("Those files are already in this catalogue group."); return false; }
   try {
     const data = await paneOperation(
       targetIndex,
@@ -3302,8 +4101,10 @@ async function performDfsMoves(targetIndex, sources, destination) {
       await loadDirectory(index);
     }
     toast(`${items.length} file${items.length === 1 ? "" : "s"} moved to catalogue ${destination}`);
+    return true;
   } catch (error) {
     toast(error.message, true);
+    return false;
   }
 }
 
@@ -3315,7 +4116,7 @@ async function performAdfsMoves(targetIndex, sources, destination) {
       destination: fullPath(destination, source.name),
     }))
     .filter(item => item.source.toLowerCase() !== item.destination.toLowerCase());
-  if (!items.length) return toast("Those items are already in this directory.");
+  if (!items.length) { toast("Those items are already in this directory."); return false; }
   setLoading(
     targetIndex,
     true,
@@ -3334,10 +4135,12 @@ async function performAdfsMoves(targetIndex, sources, destination) {
       ? `; ${data.menuEntriesUpdated} menu ${data.menuEntriesUpdated === 1 ? "entry" : "entries"} updated`
       : "";
     toast(`${items.length} item${items.length === 1 ? "" : "s"} moved${menuMessage}`);
+    return true;
   } catch (error) {
     target.loading = false;
     renderPane(targetIndex);
     toast(error.message, true);
+    return false;
   }
 }
 
@@ -3405,12 +4208,14 @@ async function performTransfers(targetIndex, transfers, destination = null) {
     toast(transfers.length === 1
       ? `${transfers[0].name} copied as ${transfers[0].targetName}`
       : `${transfers.length} items copied`);
+    return true;
   } catch (error) {
     target.loading = false;
     target.progressCurrent = null;
     target.progressTotal = null;
     renderPane(targetIndex);
     toast(error.message, true);
+    return false;
   }
 }
 
@@ -3487,10 +4292,10 @@ async function saveImage(index) {
         title: pane.image.hasDescriptor ? "Preparing DAT + DSC download" : "Preparing image download",
         message: "Starting hardware and filesystem checks…",
         details: [
-          { label: "Large images", value: "This may take a while; keep this page open" },
-          { label: "Next", value: "Your browser will show the byte-transfer progress when the ZIP starts" },
+          { label: "Stages", value: "Validate, checksum, catalogue, then build the complete ZIP" },
+          { label: "Ready means ready", value: "The download starts only after the ZIP has finished building" },
         ],
-      }, 0, pane.image.hasDescriptor ? 5 : 2);
+      }, 0, 100);
     }
     const data = await trackedPaneOperation(
       index,
@@ -3501,11 +4306,19 @@ async function saveImage(index) {
         body: JSON.stringify({ operationId }),
       })
     );
+    if (!existingDialog && modal.open) {
+      setModalProgress({
+        title: "Download ZIP complete",
+        message: "The complete timestamped ZIP is ready for the browser.",
+        details: [{ label: "Status", value: "Checksums, README and every image file are included" }]
+      }, 100, 100);
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
     applySavedImageSummary(data.image);
     const downloadUrl = `/api/images/${pane.image.id}/download`;
     triggerImageDownload(downloadUrl);
     if (!existingDialog) showDownloadReady(pane.image, downloadUrl);
-    toast("Timestamped image and README ZIP download started.");
+    toast("Complete timestamped image and README ZIP download started.");
     return true;
   } catch (error) {
     if (!existingDialog && modal.open) modal.close();
@@ -3601,7 +4414,7 @@ async function recoverPreviousSession(index) {
 
 function downloadFile(index, name) {
   const pane = panes[index];
-  const query = new URLSearchParams({ path: fullPath(pane.path, name) });
+  const query = new URLSearchParams({ path: fullPath(pane.path, name), bundle: "metadata" });
   if (pane.slot !== null) query.set("slot", pane.slot);
   if (pane.side !== null) query.set("side", pane.side);
   window.location.href = `/api/images/${pane.image.id}/file?${query}`;
@@ -3712,9 +4525,13 @@ async function insertFilesIntoSlots(index, slot, files) {
 }
 
 async function queueMenuReviews(index, metadataItems) {
-  for (const metadata of metadataItems) {
-    await reviewMenuMetadata(index, metadata, false);
-    await new Promise(resolve => modal.addEventListener("close", resolve, { once: true }));
+  const batch = { acceptAll: false, current: 0, total: metadataItems.length };
+  for (const [offset, metadata] of metadataItems.entries()) {
+    batch.current = offset + 1;
+    const shown = await reviewMenuMetadata(index, metadata, false, batch);
+    if (shown && modal.open) {
+      await new Promise(resolve => modal.addEventListener("close", resolve, { once: true }));
+    }
   }
   await showMenuPreview(index, metadataItems.at(-1)?.diskTitle || "");
 }
@@ -4007,8 +4824,8 @@ async function showMenuPreview(index, highlight = "") {
               <span>Order</span>
               <select name="previewOrder" aria-label="Menu item order">
                 <option value="installed">Installed order</option>
-                <option value="title-asc">Name A–Z</option>
-                <option value="title-desc">Name Z–A</option>
+                <option value="title-asc">Name A-Z</option>
+                <option value="title-desc">Name Z-A</option>
                 <option value="manual">Manual drag order</option>
               </select>
             </label>` : ""}
@@ -4297,7 +5114,7 @@ async function showMmbBulkMenuEditor(index, menu, installedEntries) {
         <p>Edit several records before saving once. Drag rows to reorder them, clone compilation titles, or remove records without changing their MMB disks.</p>
         <div class="bulk-menu-tools">
           <input name="bulkMenuSearch" type="search" placeholder="Filter title, publisher, disk or launcher…" aria-label="Filter menu records">
-          <button class="button ghost sort-menu-ascending" type="button">Name A–Z</button>
+          <button class="button ghost sort-menu-ascending" type="button">Name A-Z</button>
           <button class="button ghost add-menu-row" type="button">Add row</button>
         </div>
         <div class="bulk-menu-table-wrap">
@@ -5017,7 +5834,7 @@ async function scanMenuEntry(index) {
   } catch (error) { toast(error.message, true); }
 }
 
-async function reviewMenuMetadata(index, metadata, previewAfter = true) {
+async function reviewMenuMetadata(index, metadata, previewAfter = true, batch = null) {
   const pane = panes[index];
   let menu = { configured: false, menuSlot: null };
   try { menu = await api(`/api/images/${pane.image.id}/menu`); } catch (_) {}
@@ -5027,7 +5844,21 @@ async function reviewMenuMetadata(index, metadata, previewAfter = true) {
   const evidence = [...(metadata.evidence || []), ...(metadata.warnings || [])];
   const spiMenu = menu.menuType === "spi-game-menu";
   let recommendedPage = metadata.page;
-  showModal(`
+  const defaultEntry = {
+    title: metadata.title,
+    publisher: metadata.publisher,
+    filename: spiMenu ? "!BOOT" : metadata.filename,
+    action: spiMenu ? "E" : metadata.action,
+    page: spiMenu ? "1900" : (metadata.page || "1900"),
+    diskTitle: metadata.diskTitle,
+    system: "M",
+  };
+  if (batch?.acceptAll) {
+    await saveMmbMenuMetadata(index, metadata, menuSlot, defaultEntry, false, spiMenu);
+    return false;
+  }
+  const canApplyAll = batch?.total > batch?.current;
+  const closed = showModal(`
     <h2>Add disk to MMB menu</h2>
     <p>Review the detected ${spiMenu ? "title and publisher" : "launch details"} before the menu database is changed. Confidence: ${metadata.confidence}%.
       ${metadata.ambiguous ? "This disk was ambiguous, so the online Acorn and homebrew catalogues were checked." : ""}</p>
@@ -5051,7 +5882,8 @@ async function reviewMenuMetadata(index, metadata, previewAfter = true) {
     <div class="field"><label>Menu disk slot</label><input name="menuSlot" type="number" min="0" max="510" value="${menuSlot}" ${menu.configured ? "readonly" : ""} required></div>
     ${evidence.length ? `<div class="scan-notes">${evidence.map(item => `<span>${esc(item)}</span>`).join("")}</div>` : ""}
     ${metadata.sources?.length ? `<div class="source-links">${metadata.sources.map(item => `<a href="${esc(item.url)}" target="_blank" rel="noreferrer">${esc(item.label)}</a>`).join("")}</div>` : ""}
-    <div class="modal-actions"><button class="button ghost" value="cancel">Keep off-menu</button><button class="button primary" value="save">Update menu</button></div>`,
+    <input type="hidden" name="applyRemaining" value="no">
+    <div class="modal-actions"><button class="button ghost" value="cancel">Keep off-menu</button>${canApplyAll ? '<button class="button ghost apply-menu-all" value="save">Update and accept all remaining</button>' : ""}<button class="button primary" value="save">Update menu</button></div>`,
   async form => {
     const matchValue = form.get("match");
     const selectedMatch = matchValue === "" || matchValue === null ? null : matches[Number(matchValue)];
@@ -5062,25 +5894,12 @@ async function reviewMenuMetadata(index, metadata, previewAfter = true) {
       filename: spiMenu ? "!BOOT" : form.get("filename"), action: spiMenu ? "E" : form.get("action"), page: spiMenu ? "1900" : form.get("page"),
       diskTitle: form.get("diskTitle"), system: "M"
     };
-    const action = { "": "CHAIN", R: "RUN", E: "EXEC", L: "LOAD" }[entry.action] || entry.action;
     const targetMenuSlot = Number(form.get("menuSlot"));
-    const data = await paneOperation(index, {
-      title: `Updating the MMB menu in slot ${targetMenuSlot}`,
-      message: `Adding “${entry.title}” and rebuilding the ${spiMenu ? "SPI Game Menu" : "Universal Menu"} databases and indexes.`,
-      details: [
-        { label: "Disk title", value: entry.diskTitle },
-        { label: "Source slot", value: String(metadata.slot) },
-        { label: "Launch command", value: spiMenu ? `*DIN 0 ${entry.diskTitle} then *EXEC !BOOT` : `*${action} ${entry.filename}` },
-        { label: "Current stage", value: "Writing title and publisher records" }
-      ]
-    }, () => api(`/api/images/${pane.image.id}/menu/entry`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ menuSlot: targetMenuSlot, metadata: entry })
-    }));
-    pane.image = data.image;
-    await acceptImage(index, pane.image);
-    toast(`${entry.title} added to the menu in slot ${data.menuSlot}`);
-    if (previewAfter) previewMenuAfterCurrentDialog(index, entry.diskTitle || entry.title);
+    if (batch && form.get("applyRemaining") === "yes") batch.acceptAll = true;
+    return saveMmbMenuMetadata(index, metadata, targetMenuSlot, entry, previewAfter, spiMenu);
+  });
+  modalContent.querySelector(".apply-menu-all")?.addEventListener("click", () => {
+    modalContent.querySelector('[name="applyRemaining"]').value = "yes";
   });
   const matchSelect = modalContent.querySelector('[name="match"]');
   const refreshRecommendedPage = async () => {
@@ -5115,6 +5934,30 @@ async function reviewMenuMetadata(index, metadata, previewAfter = true) {
     modalContent.querySelector('[name="title"]').value = selected.title;
     modalContent.querySelector('[name="publisher"]').value = selected.publisher;
   });
+  return Boolean(closed);
+}
+
+async function saveMmbMenuMetadata(index, metadata, menuSlot, entry, previewAfter, spiMenu) {
+  const pane = panes[index];
+  const action = { "": "CHAIN", R: "RUN", E: "EXEC", L: "LOAD" }[entry.action] || entry.action;
+  const data = await paneOperation(index, {
+    title: `Updating the MMB menu in slot ${menuSlot}`,
+    message: `Adding “${entry.title}” and rebuilding the ${spiMenu ? "SPI Game Menu" : "Universal Menu"} databases and indexes.`,
+    details: [
+      { label: "Disk title", value: entry.diskTitle },
+      { label: "Source slot", value: String(metadata.slot) },
+      { label: "Launch command", value: spiMenu ? `*DIN 0 ${entry.diskTitle} then *EXEC !BOOT` : `*${action} ${entry.filename}` },
+      { label: "Current stage", value: "Writing title and publisher records" },
+    ],
+  }, () => api(`/api/images/${pane.image.id}/menu/entry`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ menuSlot, metadata: entry }),
+  }));
+  pane.image = data.image;
+  await acceptImage(index, pane.image);
+  toast(`${entry.title} added to the menu in slot ${data.menuSlot}`);
+  if (previewAfter) previewMenuAfterCurrentDialog(index, entry.diskTitle || entry.title);
 }
 
 async function buildAdfsMenu(index) {
@@ -5380,7 +6223,7 @@ function showHelp() {
     <div class="help-guide">
       <div class="help-heading">
         <div><small>ACORN FILE FORGE HANDBOOK</small><h2>How to use Acorn File Forge</h2></div>
-        <p>A complete, illustrated guide to creating, editing, transferring, checking and saving Acorn media images.</p>
+        <p>Practical instructions for creating, editing, transferring, checking and saving Acorn media images.</p>
       </div>
       <div class="help-layout">
         <nav class="help-toc" aria-label="Help topics">
@@ -5469,10 +6312,11 @@ function showHelp() {
               <li>The current pane count, order and open images are remembered across a normal page refresh. A completely fresh workspace starts with one pane.</li>
             </ol>
             <div class="help-note"><strong>Two different drag handles:</strong> drag the numbered grip to rearrange panes. Drag file rows, MMB slots or a supported image heading to transfer content between images.</div>
+            <div class="help-note"><strong>Familiar pane menus:</strong> File and Edit are always first, followed by View, Library, the format-specific Menu when available, Analyse and Tools. File holds open, save, add and create commands. Edit holds Cut, Copy, Paste, Undo and Checkpoints. View holds refresh, DSD side switching and return-to-MMB commands. The heading icons remain quick shortcuts for common image actions.</div>
             <div class="help-note"><strong>Free-space meter:</strong> the lower-right bar uses the image filesystem's real allocation data. Green means under 70% used, orange means 70% or more, and red means 90% or more. Hover over it for used, free and total values. An MMB root counts disk slots; opening one of its disks switches the meter to that slot's DFS bytes. UEF tapes have no fixed free-space capacity and show a neutral striped meter.</div>
             <h4>Navigate an image</h4>
             <ol>
-              <li>Double-click a directory to enter it. Double-click a file to download that file.</li>
+              <li>Double-click a directory to enter it. Double-click a file to download a ZIP containing the file and its <code>.inf</code> metadata.</li>
               <li>Double-click <strong>..</strong> to move to the parent directory, or select any breadcrumb to jump directly to that location.</li>
               <li>Inside an MMB disk, use <strong>All disks</strong> to return to the slot list. The disk you left remains selected and is scrolled back into view.</li>
               <li>Select ↻ in the pane heading to reread the current directory or slot list without closing the image.</li>
@@ -5496,7 +6340,7 @@ function showHelp() {
             <div class="help-task">
               <h4>Undo the latest operation</h4>
               <ol>
-                <li>Open <strong>History</strong> in the affected pane.</li>
+                <li>Open <strong>Edit</strong> in the affected pane.</li>
                 <li>Select <strong>Undo last change</strong>. The button is disabled until an automatic restore point exists.</li>
                 <li>Confirm the undo. The most recent automatic point is restored and consumed.</li>
                 <li>All panes showing that same image return to its root or MMB disk list and refresh from the restored bytes.</li>
@@ -5506,14 +6350,14 @@ function showHelp() {
             <div class="help-task">
               <h4>Create and restore a named checkpoint</h4>
               <ol>
-                <li>Before a large reorganisation, open <strong>History → Checkpoints</strong>.</li>
+                <li>Before a large reorganisation, open <strong>Edit → Checkpoints</strong>.</li>
                 <li>Enter a useful name such as <code>Before rebuilding Universal Menu</code>, then select <strong>Create named checkpoint</strong>.</li>
                 <li>Return to the same dialog at any time to inspect named checkpoints and automatic undo points.</li>
                 <li>Select ↶ beside a checkpoint and confirm to restore it. The state being replaced is first retained as a new automatic undo point.</li>
                 <li>Select × beside an unwanted checkpoint to delete only that snapshot.</li>
               </ol>
             </div>
-            <div class="help-note"><strong>Large HDD images:</strong> Acorn File Forge asks the host filesystem for a copy-on-write clone, which is normally almost immediate and initially consumes only changed blocks. If cloning is unavailable, checkpoint creation falls back to a full safe copy and may take longer.</div>
+            <div class="help-note"><strong>Large HDD images:</strong> Acorn File Forge asks the host filesystem for a copy-on-write clone. If cloning is unavailable, its safe-copy fallback preserves sparse zero ranges instead of writing unused DAT capacity. Either form remains a complete byte-for-byte restore point.</div>
             <div class="help-warning"><strong>Checkpoints belong to the working session:</strong> they are private to the same browser owner and survive refreshes and container restarts, but clearing the recovered session or deleting the Docker work volume removes them too. Download important finished images separately.</div>
           </section>
           <section id="help-files">
@@ -5522,17 +6366,32 @@ function showHelp() {
               <h4>Add one or more host files</h4>
               <ol>
                 <li>Navigate the destination pane to the required DFS catalogue or ADFS directory.</li>
-                <li>Select <strong>Add file</strong> and choose one or more files.</li>
+                <li>Open <strong>File → Add file</strong> and choose one or more files.</li>
                 <li>For each file, review the target name, load address, execute address and, on ADFS, its RISC OS filetype.</li>
                 <li>If a name is illegal for the target filing system, accept the safe suggestion or type a valid replacement.</li>
-                <li>Select <strong>Add file</strong>. Each successful addition appears in the current view.</li>
+                <li>Select <strong>Add file</strong> in the dialog. Each successful addition appears in the current view.</li>
+                <li>For a multiple selection, choose <strong>Add and apply to all remaining</strong> to accept each later file's own detected name and metadata without reopening the same review.</li>
               </ol>
+              <p>Files copied from SSD, DSD, ADFS, HFE or MMB retain their catalogue load/execute addresses and other supported metadata. For loose host files, select their companion <code>.inf</code> sidecars too, or use a conventional <code>name,load-exec</code> filename. Raw host bytes alone do not contain a trustworthy address.</p>
+            </div>
+            <div class="help-task">
+              <h4>Import one or more host folders</h4>
+              <ol>
+                <li>Navigate to the destination and choose <strong>File → Add folder</strong>, or drag folders from the desktop onto the pane. Use drag and drop to select several top-level folders when your browser supports it.</li>
+                <li>Review the preflight. Desktop housekeeping files are ignored and any target-name shortening is shown before the image changes.</li>
+                <li>On ADFS, keep <strong>Preserve folder structure</strong> to recreate the tree under the current directory, or choose <strong>Import all files here</strong> to flatten it.</li>
+                <li>On DFS, the batch is always flattened into the open catalogue group because A-Z are filename prefixes, not nested folders.</li>
+                <li>Tick the explicit replacement option only when existing ordinary files with the same target paths should be overwritten.</li>
+                <li>At an MMB disk index, use <strong>File → Insert folder of disk images</strong>. The whole tree is scanned for SSD, DSD, DFS-formatted HFE and ZIP files; unrelated files are listed as ignored and the matches fill suitable slots from the selected or first empty slot.</li>
+                <li>When later disk or menu reviews repeat, use <strong>Apply to all remaining</strong>. Every item keeps its own detected filename, launch data, PAGE and catalogue metadata.</li>
+              </ol>
+              <p>The complete batch uses one filesystem mount and one undo checkpoint, which is substantially quicker and safer than adding every small file separately.</p>
             </div>
             <div class="help-task">
               <h4>Create an ADFS directory</h4>
               <ol>
                 <li>Navigate to the parent directory.</li>
-                <li>Select <strong>+ Folder</strong>, enter a legal name and select <strong>Create folder</strong>.</li>
+                <li>Choose <strong>File → New folder</strong>, enter a legal name and select <strong>Create folder</strong>.</li>
                 <li>Double-click the new directory to enter it, then add or drag content into it.</li>
               </ol>
               <p>ADFS directories are real hierarchical objects. DFS uses the separate catalogue-group workflow below.</p>
@@ -5540,8 +6399,8 @@ function showHelp() {
             <div class="help-task">
               <h4>Use DFS catalogue groups</h4>
               <ol>
-                <li>At the DFS virtual root, open <strong>$</strong> or any populated A–Z catalogue row.</li>
-                <li>Select <strong>+ Catalogue</strong> to choose another one-character prefix and then choose its first file.</li>
+                <li>At the DFS virtual root, open <strong>$</strong> or any populated A-Z catalogue row.</li>
+                <li>Choose <strong>File → New catalogue group</strong> to choose another one-character prefix and then choose its first file.</li>
                 <li>An empty group cannot be saved because DFS stores the prefix on each file, not as a separate directory entry.</li>
                 <li>Drag selected files onto a catalogue row to move them to that prefix. Open the same image in two panes when you want source and destination catalogues visible together.</li>
                 <li>Double-click <strong>..</strong> to return to the catalogue list. At an MMB disk's catalogue root, <strong>..</strong> returns to <strong>All disks</strong>.</li>
@@ -5560,7 +6419,7 @@ function showHelp() {
               <h4>Change access, download or delete</h4>
               <ol>
                 <li>Point at the Access column and select ◇ for read/write or ◆ for read-only. Select several files first to update them together.</li>
-                <li>Double-click an ordinary file to download an individual copy without changing the image.</li>
+                <li>Double-click an ordinary file to download a ZIP containing the loose file and its matching <code>.inf</code> metadata sidecar without changing the image.</li>
                 <li>To remove one or several items, select them and use any visible × on the selected rows, or press <kbd>Delete</kbd>.</li>
                 <li>Read the single confirmation carefully. Deleting an ADFS directory recursively removes everything below it. Every affected installed-menu record is removed in the same batch update.</li>
               </ol>
@@ -5573,8 +6432,8 @@ function showHelp() {
               <ol>
                 <li>Create an SSD for one 200 KiB side, or a DSD for two sides.</li>
                 <li>On a DSD, use <strong>Side 0</strong>/<strong>Side 2</strong> to choose the catalogue you are editing.</li>
-                <li>Open <strong>$</strong> for the default catalogue, or another populated A–Z prefix. Use <strong>+ Catalogue</strong> when the first file will introduce a new prefix.</li>
-                <li>Use <strong>Add file</strong>, or drag selected files from another pane or onto a catalogue row.</li>
+                <li>Open <strong>$</strong> for the default catalogue, or another populated A-Z prefix. Use <strong>File → New catalogue group</strong> when the first file will introduce a new prefix.</li>
+                <li>Use <strong>File → Add file</strong>, or drag selected files from another pane or onto a catalogue row.</li>
                 <li>Review shortened names and Acorn load/execute addresses before confirming each import.</li>
                 <li>Use the row actions to rename or delete. Use the Access column to mark one or several files read/write or read-only.</li>
                 <li>Use <strong>Tools → Check filesystem</strong>, optionally compact it, then select <strong>Save Image</strong> in the pane heading.</li>
@@ -5583,7 +6442,7 @@ function showHelp() {
             <h4>DFS rules enforced by the app</h4>
             <ul>
               <li>A leaf name is at most seven characters and its DFS directory prefix is one character.</li>
-              <li>The virtual root contains sibling groups <strong>$</strong> and A–Z. These are filename prefixes, not nested directories.</li>
+              <li>The virtual root contains sibling groups <strong>$</strong> and A-Z. These are filename prefixes, not nested directories.</li>
               <li><strong>$</strong> is always shown so a blank disk can receive its first default-catalogue file. Other prefixes appear when populated and disappear when their last file is removed.</li>
               <li>A standard DFS side holds no more than 31 catalogue entries.</li>
               <li>SSD has one catalogue. DSD has separate side 0 and side 2 catalogues.</li>
@@ -5608,12 +6467,12 @@ function showHelp() {
           </section>
           <section id="help-mmb">
             <h3>MMB disk banks: slots and embedded disks</h3>
-            <figure><img src="/help/mmb-actions.png" alt="MMB Add disk and Menu controls with slot row actions"><figcaption>Every physical slot is listed. Add disk is a flat menu; rename, access and eject controls live on each formatted slot row.</figcaption></figure>
+            <figure><img src="/help/mmb-actions.png" alt="MMB File and Menu controls with slot row actions"><figcaption>Every physical slot is listed. File contains disk insertion and creation; Edit contains clipboard actions; rename, access and eject controls live on each formatted slot row.</figcaption></figure>
             <div class="help-task">
               <h4>Insert SSD, DSD or HFE image files and ZIP distributions</h4>
               <ol>
                 <li>Select the first empty destination slot.</li>
-                <li>Open <strong>Add disk → Insert SSD / DSD / HFE / ZIP</strong>.</li>
+                <li>Open <strong>File → Insert SSD / DSD / HFE / ZIP</strong>.</li>
                 <li>Select one or several SSD/DSD/HFE files, or ZIP files containing them. Every supported ZIP member is imported in archive order and unrelated documentation or artwork is ignored.</li>
                 <li>A DSD needs two adjacent empty slots. Its two sides occupy two SSD-sized MMB slots.</li>
                 <li>Review the allocation message and, if a menu is installed, review or skip each offered menu entry.</li>
@@ -5623,7 +6482,7 @@ function showHelp() {
               <h4>Create a blank writable disk in a slot</h4>
               <ol>
                 <li>Select an empty slot.</li>
-                <li>Choose <strong>Add disk → Create blank SSD here</strong> or <strong>Create blank DSD here</strong>.</li>
+                <li>Choose <strong>File → Create blank SSD here</strong> or <strong>Create blank DSD here</strong>.</li>
                 <li>Enter the disk title and choose whether it is read/write.</li>
                 <li>Select <strong>Create and insert</strong>. Blank formatted disks are useful for saved games and user data.</li>
               </ol>
@@ -5633,7 +6492,7 @@ function showHelp() {
               <ol>
                 <li>Open an SSD, DSD, DFS-formatted HFE, or an individual disk inside another MMB pane.</li>
                 <li>In the destination MMB, return to <strong>All disks</strong> and select one empty slot.</li>
-                <li>Choose <strong>Add disk → Import from open &lt;filename&gt;</strong>. Each other open image has its own entry. The visible SSD/DSD image title becomes the destination slot title; an MMB source keeps its existing slot title.</li>
+                <li>Choose <strong>File → Import from open &lt;filename&gt;</strong>. Each other open image has its own entry. The visible SSD/DSD image title becomes the destination slot title; an MMB source keeps its existing slot title.</li>
                 <li>Entries for incompatible ADFS filesystems or an MMB still showing <strong>All disks</strong> are disabled and explain why. MMB can contain DFS disk sectors only.</li>
                 <li>Review any installed-menu metadata offered after the disk is inserted. A DSD still requires two adjacent empty slots.</li>
               </ol>
@@ -5653,7 +6512,7 @@ function showHelp() {
                 <li>Select a formatted slot. Ctrl/Cmd-click or Shift-click to select several.</li>
                 <li>Point at one slot and use the pencil beside its name to rename its disk title.</li>
                 <li>In the Access column, use ◇ to mark every selected formatted disk read/write or ◆ to mark them read-only.</li>
-                <li>Drag one disk onto another position in the same MMB to move or swap it. Drag several selected disks onto an empty slot to move the batch.</li>
+                <li>Drag one or several selected disks onto another position in the same MMB to cut and paste them as one block. Relative slot spacing is retained. Overlapping moves are safe, and replacing unrelated occupied slots always requires confirmation.</li>
                 <li>Select one or several formatted slots, then use × beside any selected name. One confirmation clears every selected catalogue entry and its disk data. Records for those disk titles are removed from an installed Universal or SPI menu in the same operation. If another non-ejected slot has the same title, its records remain available. The list keeps its selection area and scroll position after slot actions.</li>
               </ol>
             </div>
@@ -5665,7 +6524,7 @@ function showHelp() {
             <p class="help-lead">The Online Library uses the same format checks, metadata review, undo point and menu workflow as a file selected from your computer. A link is never treated as an installable image unless its source provides a direct supported download.</p>
             <div class="help-task"><h4>Add disks to an MMB</h4><ol>
               <li>Open the MMB at <strong>All disks</strong>. Optionally select one or more empty slots.</li>
-              <li>Choose <strong>Find Discs</strong>. Its initial machine comes from the Workbench profile applied to this pane, or the remembered active Workbench profile when the pane has none. Change it when this search needs another machine, then search by title, publisher or keyword. Leave the search blank to browse the current catalogue page. Search results remain installable for one hour and survive a normal app restart.</li>
+              <li>Choose <strong>Library → Find disks online</strong>. Its initial machine comes from the Workbench profile applied to this pane, or the remembered active Workbench profile when the pane has none. Change it when this search needs another machine, then search by title, publisher or keyword. Leave the search blank to browse the current catalogue page. Search results remain installable for one hour and survive a normal app restart.</li>
               <li>Select the <strong>Title</strong>, <strong>Publisher</strong>, <strong>Year</strong> or <strong>Source</strong> heading to sort. The active heading shows ↑ for ascending or ↓ for descending; select it again to reverse the order. Checked results stay selected while sorting.</li>
               <li>Use <strong>Not already present</strong> to hide likely matches found by disk title, remembered online distribution name, or an installed MMB menu record. The comparison ignores punctuation and the publisher suffix saved with online imports. This is a helpful duplicate check, not a checksum guarantee.</li>
               <li>Select several downloadable results. If you did not select empty slots, set a starting slot; the app finds the next suitable empty run and wraps around safely. DSD images still require two adjacent slots.</li>
@@ -5674,7 +6533,7 @@ function showHelp() {
               <li>If an archive contains the same release as both SSD and UEF, the native SSD is selected once. Installing into a blank SSD adopts its catalogue and title; shortened SSD files are safely padded to the target's standard geometry.</li>
             </ol></div>
             <div class="help-task"><h4>Add files or applications to an open disk</h4><ol>
-              <li>Open an SSD/DSD disk, an MMB slot, an ADFS directory, or a RISC OS image and choose <strong>Online Library</strong>.</li>
+              <li>Open an SSD/DSD disk, an MMB slot, an ADFS directory, or a RISC OS image and choose <strong>Library → Find software online</strong>.</li>
               <li>On DFS, ordinary single-catalogue downloads are copied into the currently open group. Multi-prefix distributions retain their original DFS prefixes so loaders and duplicate leaf names remain valid.</li>
               <li>On ADFS, a downloaded disk is extracted into the current directory by default. Select <strong>Create a folder</strong> to keep each disk separate.</li>
               <li>RISC OS Open packages install only into ADFS/RISC OS images. Application directories are retained, package-control files are omitted, and SparkFS load, execute and filetype metadata is preserved.</li>
@@ -5696,8 +6555,8 @@ function showHelp() {
               <ol>
                 <li>Create an ADFS S/M/L floppy or an HDF/RAW hard-drive image, or open a supported existing image.</li>
                 <li>Double-click directories to enter them. Double-click <strong>..</strong> or use the breadcrumbs to move back through the hierarchy.</li>
-                <li>Use <strong>+ Folder</strong> to create a validated ADFS directory at the current location.</li>
-                <li>Use <strong>Add file</strong> to import host files with load/execute addresses and optional RISC OS filetype.</li>
+                <li>Use <strong>File → New folder</strong> to create a validated ADFS directory at the current location.</li>
+                <li>Use <strong>File → Add file</strong> to import host files with load/execute addresses and optional RISC OS filetype.</li>
                 <li>When the selected host file is a recognised disk, tape or ZIP image, review its catalogue preview before anything is written.</li>
                 <li>Extraction defaults to the directory currently shown. Optionally choose another existing destination with the directory picker, and optionally create a named child directory there. You can instead store the original image as an ordinary file.</li>
                 <li>Direct extraction never overwrites an existing name. A rollback point protects the complete working image if extraction fails or is aborted.</li>
@@ -5712,7 +6571,7 @@ function showHelp() {
               <figure><img src="/help/image-import-preview.png" alt="Image import dialog previewing Chuckulus files with optional destination and child-directory controls"><figcaption>Inspect the source before writing. Direct extraction into the current directory is the default; destination browsing and a new child directory are independent options.</figcaption></figure>
               <ol>
                 <li>Navigate to the ADFS directory that will contain the imported software.</li>
-                <li>Drag an open MMB slot, SSD/DSD/HFE image, UEF tape or another supported image from another pane; alternatively use <strong>Add file</strong> and select an image from the host.</li>
+                <li>Drag an open MMB slot, SSD/DSD/HFE image, UEF tape or another supported image from another pane; alternatively use <strong>File → Add file</strong> and select an image from the host.</li>
                 <li>Review the source preview. The current directory is selected by default; optionally tick <strong>Choose a different existing directory</strong> and browse the destination tree.</li>
                 <li>Optionally tick <strong>Create a new child directory</strong> and enter its name. Leave it unticked to place the source contents directly in the selected destination.</li>
                 <li>Choose whether to offer the imported program as a menu entry. Keeping it off-menu does not require a launch file.</li>
@@ -5730,9 +6589,10 @@ function showHelp() {
               <li>In the pairing dialog, the chosen file is already retained. Select only the missing companion.</li>
               <li>Confirm that both base names match, for example <code>SCSI0.dat</code> and <code>SCSI0.dsc</code>, then select <strong>Open DAT + DSC</strong>.</li>
               <li>Traverse, create, add, rename, move, lock and delete content using the normal ADFS controls.</li>
-              <li>Select <strong>Save Image</strong> in the pane heading. A foreground progress dialog reports hardware checks, DAT geometry, directory verification, the map checksum, and final pair validation. The application then streams a hardware-ready ZIP containing <code>BeebSCSI0/scsi0.dat</code> and <code>BeebSCSI0/scsi0.dsc</code>. Transfer progress appears in the browser download panel; if the automatic download does not begin, use the direct <strong>Download ZIP</strong> link in the ready dialog.</li>
+              <li>Select <strong>Save Image</strong> in the pane heading. The same foreground progress dialog used by every format reports validation, checksums, catalogue generation and construction of the complete ZIP. For DAT it also names geometry, directory and map checks. The ready dialog appears only after the hardware-ready ZIP containing <code>BeebSCSI0/scsi0.dat</code> and <code>BeebSCSI0/scsi0.dsc</code> is complete on disk. If the automatic download does not begin, use the direct <strong>Download ZIP</strong> link.</li>
               <li>Extract the ZIP into the root of the BeebSCSI SD card. Keep the <code>BeebSCSI0</code> directory itself. The firmware does not look for DAT/DSC files directly in the SD-card root.</li>
             </ol>
+            <div class="help-note"><strong>Large-image performance:</strong> zero-filled free DAT capacity is kept sparse in the working image and undo checkpoints. Sparse DAT downloads use fast ZIP compression and sparse-aware checksumming, so unused hundreds of megabytes are not repeatedly written or transferred. The extracted DAT retains its complete logical size and exact bytes.</div>
             <div class="help-note"><strong>Why the target matters:</strong> official 8-bit ADFS requires matching <code>Hugo</code> directory headers, footers and parent sequence copies. An edited old-map volume must also receive a new two-byte disc ID, otherwise ADFS can retain state belonging to the original volume and report <em>Broken directory</em> or <em>Disc changed</em>. The BeebSCSI target performs those checks, advances the disc ID and rebuilds its map checksum before download.</div>
             <div class="help-warning"><strong>Do not substitute a descriptor:</strong> DSC geometry belongs to its particular DAT. A DAT without valid matching geometry may be browsed when identifiable, but writing is deliberately blocked to prevent corruption. The DAT ends at the old-format ADFS map boundary, as in the official BeebSCSI Quickstart image; the DSC may describe a slightly larger device. Newly created pairs are checked against that map extent and BeebSCSI's 256-byte sector, 33-sector track, 16-head and ADFS 21-bit size limits before download.</div>
           </section>
@@ -5755,6 +6615,26 @@ function showHelp() {
           <section id="help-transfer">
             <h3>Copy and drag between panes</h3>
             <figure><img src="/help/workspace.png" alt="Acorn images open together for drag and drop"><figcaption>Navigate the destination first, select one or more source items, then drag any selected row into another pane.</figcaption></figure>
+            <div class="help-task">
+              <h4>Cut, copy and paste</h4>
+              <ol>
+                <li>Select one or several source rows, then choose <strong>Edit → Cut</strong> or <strong>Edit → Copy</strong>. Ctrl/Cmd-X and Ctrl/Cmd-C do the same while the pane has focus.</li>
+                <li>Navigate normally to the destination. Opening directories, catalogue groups, MMB disks and other panes does not lose the pending selection.</li>
+                <li>Choose <strong>Edit → Paste</strong>, or press Ctrl/Cmd-V in the destination pane. The same filename, capacity and filesystem checks used by drag and drop are applied.</li>
+                <li>The clipboard is single-use. Paste, cancelling a paste, pressing Escape, or starting a different modifying operation clears it. A cut is not removed from its source until its destination has been written successfully.</li>
+                <li>When ADFS files are pasted into DFS, review the proposed seven-character leaf names and paste into the required <strong>$</strong> or A-Z catalogue group. Directories cannot be pasted into flat DFS media.</li>
+              </ol>
+            </div>
+            <div class="help-task">
+              <h4>Reorganise MMB slots with the clipboard</h4>
+              <ol>
+                <li>Select any formatted slots, including a range containing gaps, and choose Cut or Copy from <strong>Edit</strong>.</li>
+                <li>Select the first destination slot and paste. Relative offsets are retained, so a selected section stays laid out the same way.</li>
+                <li>An overlapping cut is safe: its source slots count as available and the complete block is snapshotted before anything is moved.</li>
+                <li>If other occupied slots would be replaced, inspect their slot numbers and titles, then cancel or explicitly replace them.</li>
+                <li>To paste loose files at the MMB index, select an empty starting slot. Choose SSD or DSD in the build planner, review each DFS catalogue group and seven-character name, and inspect how files will be divided when a side reaches 31 entries or its 200 KiB capacity.</li>
+              </ol>
+            </div>
             <div class="help-task">
               <h4>Copy files or directories</h4>
               <ol>
@@ -5780,6 +6660,7 @@ function showHelp() {
                 <li>At the MMB index, select one or several formatted slots.</li>
                 <li>To another MMB, drag them onto an empty destination slot. The disks are copied into available positions.</li>
                 <li>To ADFS, drag them into the chosen destination directory. Each non-empty disk becomes a directory named from its slot title.</li>
+                <li>Cut and paste can move the same slots into ADFS. Each directory is completed first; only successfully extracted source slots are then ejected, with their obsolete MMB menu records removed.</li>
                 <li>Review and edit the parent group directories. Names such as DISCS1 are suggestions, not fixed names.</li>
                 <li>If shortened ADFS names would clash, keep the default unique DISC-0000 naming scheme or review the highlighted names manually.</li>
                 <li>The preflight keeps naming, parent groups and the menu option on the left. Review or edit the dense slot-to-directory table on the right; its rows scroll without moving the Copy button.</li>
@@ -5872,7 +6753,7 @@ function showHelp() {
               <ol>
                 <li>Choose <strong>Menu → Create / manage menu</strong>.</li>
                 <li>For a Universal or SPI Game Menu, choose <strong>Bulk edit entries</strong>. The installed database opens as a compact table with headers, similar to a CSV in a spreadsheet.</li>
-                <li>Edit names, publishers, disks, launch files, actions and PAGE values across as many rows as needed. Search narrows the visible rows without discarding edits. Choose <strong>Name A–Z</strong> for an alphabetical order, or drag rows by their numbered handle for a manual order.</li>
+                <li>Edit names, publishers, disks, launch files, actions and PAGE values across as many rows as needed. Search narrows the visible rows without discarding edits. Choose <strong>Name A-Z</strong> for an alphabetical order, or drag rows by their numbered handle for a manual order.</li>
                 <li>Use the copy icon to clone an entry when one MMB disk contains several games, the × icon to remove an entry, or <strong>Add row</strong> for a new title. A Universal Menu launch field opens a dropdown from that row's selected disk catalogue when focused. SPI rows omit launch settings because SPI always executes the disk's <code>!BOOT</code>.</li>
                 <li>Choose <strong>Save all edits</strong> once. Acorn File Forge validates changed launchers, detects a menu changed in another tab, then replaces all menu database files together. Cancel leaves the installed menu untouched.</li>
                 <li>If an inserted disk is absent, choose <strong>Add missing disks</strong> in the preview. A newly created game menu also opens this scan automatically when the MMB already contains formatted disks.</li>
@@ -5984,7 +6865,7 @@ function showHelp() {
             <figure><img src="/help/duplicate-check.png" alt="MMB duplicate game review showing selectable menu records and equivalent disk content"><figcaption>The MMB All disks duplicate command lives only in Analyse. Tick the exact menu records to review; disks are kept unless the separate final review explicitly ejects them.</figcaption></figure>
             <div class="help-task"><h4>Profiles, recipes and projects</h4><ol>
               <li>Choose <strong>Workbench → Hardware profiles</strong>. Start from Electron Plus 3, BBC MMFS, BeebSCSI, Master ADFS or RISC OS, choose its Online Library filter, then save or apply the profile to an open image.</li>
-              <li>A profile records machine, Online Library filter, filing system, MMFS build, Tube state, expected PAGE and validation target. An applied profile controls that pane. The active Workbench profile is remembered and becomes the workspace default for panes without an applied profile. On first use this is Electron Plus 3. Selecting, saving or applying another profile changes the default, and Find Discs and Online Library use it on their very first search.</li>
+              <li>A profile records the machine, Library filter, filing system, MMFS build, Tube state, expected PAGE and validation target. An applied profile controls that pane. The active Workbench profile is remembered and becomes the default for panes without their own profile. On first use this is Electron Plus 3. Selecting, saving or applying another profile also sets the initial machine for <strong>Find disks online</strong> and <strong>Find software online</strong>.</li>
               <li>Choose <strong>Import recipes</strong> to save naming, group prefix, online metadata, compatibility and menu choices. Saved recipes appear in the MMB-to-ADFS planner.</li>
               <li>Choose <strong>Portable project</strong> to export the current pane order, session references, paths, profiles and recipes. Import it on the same retained installation to restore that working context. Theme remains a browser preference.</li>
             </ol></div>
@@ -6002,8 +6883,9 @@ function showHelp() {
               <h4>Keep your changes</h4>
               <ol>
                 <li>Look for the orange changed dot in the pane heading.</li>
-                <li>Select the <strong>Save Image</strong> icon in the pane heading. After validation, use the ready dialog's direct <strong>Download ZIP</strong> link if the automatic download does not appear.</li>
-                <li>The app validates and finalises the working copy before starting the download. Any failure remains inside the app instead of replacing the page with a JSON response.</li>
+                <li>Select the <strong>Save Image</strong> icon in the pane heading. The progress bar consistently covers validation, checksums, catalogue generation and complete ZIP construction for every format.</li>
+                <li>The ready dialog appears only when the timestamped ZIP is actually complete. The automatic browser download should start immediately; use the dialog's direct <strong>Download ZIP</strong> link if it does not appear.</li>
+                <li>Any validation, checksum or archive failure remains inside the app instead of replacing the page with a JSON response.</li>
                 <li>Once preparation succeeds, the orange changed dot clears in every pane showing that image. It returns after the next edit. A failed save leaves the dot visible.</li>
                 <li>Every save is a ZIP named with the image name and current date/time. This avoids duplicate <code>-edited</code> downloads.</li>
                 <li>Every ZIP contains <code>README.md</code> with checksums, target hardware, compatibility warnings, practical restore notes and a complete catalogue. MMB documentation includes all 511 slots, including empty slots, access state and each disk's DFS files.</li>
@@ -6047,11 +6929,15 @@ function showHelp() {
               <dt>Ctrl/Cmd-click</dt><dd>Add or remove an item from the selection.</dd>
               <dt>Shift-click</dt><dd>Select a continuous range.</dd>
               <dt>Ctrl/Cmd-A</dt><dd>Select every usable item in the current view.</dd>
+              <dt>Ctrl/Cmd-X</dt><dd>Cut the selected items or MMB slots for one safe paste.</dd>
+              <dt>Ctrl/Cmd-C</dt><dd>Copy the selected items or MMB slots for one paste.</dd>
+              <dt>Ctrl/Cmd-V</dt><dd>Paste into the current directory, DFS catalogue group, or selected MMB slot.</dd>
+              <dt>Escape</dt><dd>Cancel a pending clipboard selection when no dialog is open.</dd>
               <dt>Double-click / Enter</dt><dd>Open a directory or MMB disk.</dd>
-              <dt>Double-click a file</dt><dd>Download that individual file.</dd>
+              <dt>Double-click a file</dt><dd>Download a ZIP containing the file and its <code>.inf</code> metadata.</dd>
               <dt>Delete</dt><dd>Delete the selected object after confirmation.</dd>
               <dt>Drag selected files</dt><dd>Copy them to a compatible destination.</dd>
-              <dt>Drag MMB slots</dt><dd>Move/swap within one MMB or copy to another image.</dd>
+              <dt>Drag MMB slots</dt><dd>Cut and paste as one block within an MMB, or copy to another image.</dd>
               <dt>Breadcrumb</dt><dd>Jump directly to an ancestor directory.</dd>
               <dt>Refresh ↻</dt><dd>Reread the current view while preserving useful selection state.</dd>
             </dl>
@@ -6640,6 +7526,27 @@ document.querySelector("#addPaneButton").onclick = addPane;
 document.querySelector("#helpButton").onclick = showHelp;
 document.querySelector("#workbenchButton").onclick = () => renderWorkbench();
 document.querySelector("#jobsButton").onclick = showJobsPanel;
+document.addEventListener("keydown", event => {
+  const editing = event.target.closest("input, textarea, select, [contenteditable=true]");
+  if (editing || modal.open) return;
+  if (event.key === "Escape" && workspaceClipboard) {
+    event.preventDefault();
+    clearWorkspaceClipboard("Clipboard cancelled.");
+    return;
+  }
+  if (!(event.ctrlKey || event.metaKey)) return;
+  const paneHost = event.target.closest(".pane[data-pane]");
+  if (!paneHost) return;
+  const index = Number(paneHost.dataset.pane);
+  const key = event.key.toLowerCase();
+  if (key === "c" || key === "x") {
+    event.preventDefault();
+    setWorkspaceClipboard(index, key === "x" ? "cut" : "copy");
+  } else if (key === "v" && workspaceClipboard) {
+    event.preventDefault();
+    pasteWorkspaceClipboard(index);
+  }
+});
 async function refreshJobsBadge() {
   try {
     const data = await api("/api/operations");

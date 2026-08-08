@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import tempfile
+import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -421,6 +423,51 @@ def create_files_blueprint(
             temp_path.unlink(missing_ok=True)
         return jsonify(image=service.summary(session))
 
+    @blueprint.post("/api/images/<image_id>/folder-import")
+    def put_folder(image_id):
+        uploads = request.files.getlist("files")
+        try:
+            target_paths = json.loads(request.form.get("targetPaths", "[]"))
+            metadata = json.loads(request.form.get("metadata", "[]"))
+        except json.JSONDecodeError as exc:
+            raise DiskError("The folder import plan is invalid.") from exc
+        if not uploads or len(uploads) != len(target_paths):
+            raise DiskError("The selected files no longer match the folder import plan.")
+        if not isinstance(target_paths, list) or not all(isinstance(path, str) for path in target_paths):
+            raise DiskError("The folder import paths are invalid.")
+        if not metadata:
+            metadata = [{} for _upload in uploads]
+        if len(metadata) != len(uploads) or not all(isinstance(item, dict) for item in metadata):
+            raise DiskError("The folder import metadata is invalid.")
+        session = service.get(image_id)
+        slot = optional_int(request.form.get("slot"))
+        temp_paths: list[Path] = []
+        try:
+            items = []
+            for upload, target_path, file_metadata in zip(uploads, target_paths, metadata, strict=True):
+                with tempfile.NamedTemporaryFile(dir=work_dir, prefix="folder-import-", delete=False) as temp:
+                    upload.save(temp)
+                    temp_path = Path(temp.name)
+                temp_paths.append(temp_path)
+                items.append({
+                    "targetPath": target_path,
+                    "hostPath": temp_path,
+                    "metadata": file_metadata,
+                })
+            result = service.put_host_tree(
+                session,
+                slot,
+                request.form.get("destination", "$"),
+                items,
+                preserve_directories=request.form.get("mode") == "preserve",
+                replace=request.form.get("replace") == "true",
+                side=optional_int(request.form.get("side")),
+            )
+        finally:
+            for temp_path in temp_paths:
+                temp_path.unlink(missing_ok=True)
+        return jsonify(image=service.summary(session), **result)
+
     @blueprint.post("/api/transfer")
     def transfer():
         data = payload()
@@ -762,14 +809,53 @@ def create_files_blueprint(
             optional_int(request.args.get("side")),
         )
         name = inner.rsplit(".", 1)[-1] or "file"
+        bundle = request.args.get("bundle") == "metadata"
+        download_path = path
+        download_name = name
+        mimetype = "application/octet-stream"
+        cleanup = [path]
+        if bundle:
+            try:
+                metadata = service.file_metadata(
+                    session,
+                    optional_int(request.args.get("slot")),
+                    inner,
+                    optional_int(request.args.get("side")),
+                )
+                with tempfile.NamedTemporaryFile(
+                    dir=work_dir,
+                    prefix="file-export-",
+                    suffix=".zip",
+                    delete=False,
+                ) as archive_temp:
+                    archive_path = Path(archive_temp.name)
+                cleanup.append(archive_path)
+                inf = (
+                    f"$.{name} {metadata['load']:08X} {metadata['execute']:08X} "
+                    f"{metadata['length']:08X}{' Locked' if metadata['access'] & 8 else ''}\n"
+                )
+                with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                    archive.write(path, name)
+                    archive.writestr(f"{name}.inf", inf)
+                download_path = archive_path
+                download_name = f"{name}-with-metadata.zip"
+                mimetype = "application/zip"
+            except Exception:
+                for item in cleanup:
+                    item.unlink(missing_ok=True)
+                raise
         response = send_file(
-            path,
+            download_path,
             as_attachment=True,
-            download_name=name,
-            mimetype="application/octet-stream",
+            download_name=download_name,
+            mimetype=mimetype,
             conditional=True,
         )
-        response.call_on_close(lambda: path.unlink(missing_ok=True))
+        def remove_exports() -> None:
+            for item in cleanup:
+                item.unlink(missing_ok=True)
+
+        response.call_on_close(remove_exports)
         return response
 
     return blueprint
