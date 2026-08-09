@@ -83,6 +83,22 @@ function normalisePage(value) {
   return cleaned.replace(/^0+(?=[0-9A-F])/, "") || "0";
 }
 
+function keepFocusInside(container, event) {
+  if (event.key !== "Tab") return;
+  const controls = [...container.querySelectorAll('a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])')]
+    .filter(control => !control.hidden && control.getClientRects().length);
+  if (!controls.length) return event.preventDefault();
+  const first = controls[0];
+  const last = controls[controls.length - 1];
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
 function confirmPageOverride(defaultPage, chosenPage, subjects = []) {
   if (Array.isArray(defaultPage)) {
     const overrides = defaultPage.filter(item => item?.defaultPage && item?.chosenPage);
@@ -90,7 +106,7 @@ function confirmPageOverride(defaultPage, chosenPage, subjects = []) {
     return new Promise(resolve => {
       const overlay = document.createElement("div");
       overlay.className = "page-warning-overlay";
-      overlay.setAttribute("role", "dialog");
+      overlay.setAttribute("role", "alertdialog");
       overlay.setAttribute("aria-modal", "true");
       overlay.setAttribute("aria-labelledby", "page-warning-title");
       overlay.innerHTML = `<div class="page-warning-card">
@@ -103,10 +119,11 @@ function confirmPageOverride(defaultPage, chosenPage, subjects = []) {
         <div class="help-warning"><strong>Risk:</strong> the wrong PAGE can overwrite filing-system workspace or loader data, corrupt BASIC, hang, or crash on real hardware.</div>
         <div class="modal-actions"><button type="button" class="button ghost" data-page-cancel>Cancel</button><button type="button" class="button primary" data-page-confirm>Yes, use changed values</button></div>
       </div>`;
-      const finish = result => { overlay.remove(); resolve(result); };
+      const previouslyFocused = document.activeElement;
+      const finish = result => { overlay.remove(); previouslyFocused?.focus(); resolve(result); };
       overlay.querySelector("[data-page-cancel]").onclick = () => finish(false);
       overlay.querySelector("[data-page-confirm]").onclick = () => finish(true);
-      overlay.onkeydown = event => { if (event.key === "Escape") finish(false); };
+      overlay.onkeydown = event => { if (event.key === "Escape") finish(false); else keepFocusInside(overlay, event); };
       document.body.append(overlay);
       overlay.querySelector("[data-page-cancel]").focus();
     });
@@ -118,7 +135,7 @@ function confirmPageOverride(defaultPage, chosenPage, subjects = []) {
   return new Promise(resolve => {
     const overlay = document.createElement("div");
     overlay.className = "page-warning-overlay";
-    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("role", "alertdialog");
     overlay.setAttribute("aria-modal", "true");
     overlay.setAttribute("aria-labelledby", "page-warning-title");
     overlay.innerHTML = `<div class="page-warning-card">
@@ -129,14 +146,17 @@ function confirmPageOverride(defaultPage, chosenPage, subjects = []) {
       <div class="help-warning"><strong>Risk:</strong> the wrong PAGE can overwrite filing-system workspace or loader data, corrupt BASIC, hang, or crash on real hardware.</div>
       <div class="modal-actions"><button type="button" class="button ghost" data-page-cancel>Cancel</button><button type="button" class="button primary" data-page-confirm>Yes, use &amp;${esc(normalisePage(chosenPage))}</button></div>
     </div>`;
+    const previouslyFocused = document.activeElement;
     const finish = result => {
       overlay.remove();
+      previouslyFocused?.focus();
       resolve(result);
     };
     overlay.querySelector("[data-page-cancel]").onclick = () => finish(false);
     overlay.querySelector("[data-page-confirm]").onclick = () => finish(true);
     overlay.onkeydown = event => {
       if (event.key === "Escape") finish(false);
+      else keepFocusInside(overlay, event);
     };
     document.body.append(overlay);
     overlay.querySelector("[data-page-cancel]").focus();
@@ -350,7 +370,7 @@ function refreshOpenDiskImportMenu(targetIndex, menu) {
 }
 
 function paneDragHandle(index) {
-  return `<button class="pane-drag-handle" type="button" draggable="true" title="Drag to swap this pane" aria-label="Drag pane ${index + 1} to another position"><b>⠿</b><small>${index + 1}</small></button>`;
+  return `<button class="pane-drag-handle" type="button" draggable="true" title="Drag to swap, or press Alt+Left / Alt+Right" aria-label="Reorder pane ${index + 1}. Drag it, or press Alt plus Left or Right"><b>⠿</b><small>${index + 1}</small></button>`;
 }
 
 function wirePaneDragHandle(host, index) {
@@ -369,6 +389,15 @@ function wirePaneDragHandle(host, index) {
     document.querySelectorAll(".pane").forEach(pane =>
       pane.classList.remove("pane-moving", "pane-swap-target")
     );
+  };
+  handle.onkeydown = event => {
+    if (!event.altKey || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+    const targetIndex = index + (event.key === "ArrowLeft" ? -1 : 1);
+    if (targetIndex < 0 || targetIndex >= panes.length) return;
+    event.preventDefault();
+    swapPanes(index, targetIndex);
+    document.querySelector(`.pane[data-pane="${targetIndex}"] .pane-drag-handle`)?.focus();
+    toast(`Pane moved to position ${targetIndex + 1}`);
   };
 }
 
@@ -522,6 +551,27 @@ async function guardedPaneAction(index, action) {
       renderPane(index);
     }
   }
+}
+
+async function openHexEditor(index) {
+  const pane = panes[index];
+  const host = document.querySelector(`.pane[data-pane="${index}"]`);
+  if (!pane?.image || !host || !window.AcornHexEditor) {
+    return toast("The hex editor could not be opened.", true);
+  }
+  await window.AcornHexEditor.open({
+    host,
+    image: { ...pane.image },
+    request: api,
+    notify: toast,
+    onSaved: updatedImage => {
+      if (panes[index] === pane) {
+        pane.image = updatedImage;
+        rememberOpenPanes();
+      }
+    },
+  });
+  if (panes[index] === pane) await refreshCurrentView(index);
 }
 
 function paneFormat(image) {
@@ -895,17 +945,18 @@ function renderPane(index, preserveScroll = false) {
       <button class="menu-command export-manifest"><b>⇩</b><span>Export collection manifest</span></button>
     </div>
   </details>`;
+  const utilityTools = `<details class="tool-menu">
+    <summary class="tool"><b>⋯</b><span>Tools</span></summary>
+    <div class="tool-menu-panel tool-menu-panel-right">
+      <button class="menu-command open-hex-editor"><b>0x</b><span>Hex editor…</span></button>
+      ${isSlots ? "" : '<button class="menu-command validate-image"><b>✓</b><span>Check filesystem</span></button>'}
+      ${isSlots || isTape ? (isTape ? '<button class="menu-command convert-tape"><b>⇥</b><span>Convert tape to disk</span></button>' : "") : pane.image.readOnly ? "" : '<button class="menu-command compact-image"><b>≋</b><span>Compact filesystem</span></button>'}
+    </div>
+  </details>`;
   const toolbarMarkup = `${fileTools}${clipboardTools}${viewTools}${libraryTools}
       ${pane.image.readOnly ? "" : menuTools}
       ${analysisTools}
-      ${isSlots ? "" : `
-      <details class="tool-menu">
-        <summary class="tool"><b>⋯</b><span>Tools</span></summary>
-        <div class="tool-menu-panel tool-menu-panel-right">
-          <button class="menu-command validate-image"><b>✓</b><span>Check filesystem</span></button>
-          ${isTape ? '<button class="menu-command convert-tape"><b>⇥</b><span>Convert tape to disk</span></button>' : pane.image.readOnly ? "" : '<button class="menu-command compact-image"><b>≋</b><span>Compact filesystem</span></button>'}
-        </div>
-      </details>`}
+      ${utilityTools}
       ${isSlots ? '<span class="toolbar-hint">Drag selected disks to cut and paste slots</span>' : ""}
       <span class="tool-spacer"></span>`;
 
@@ -930,7 +981,7 @@ function renderPane(index, preserveScroll = false) {
     <div class="breadcrumbs">${isSlots ? '<span class="crumb current">All disks</span>' : pane.slot !== null ? `<button class="crumb mmb-home">All disks</button><span>›</span>${crumbs(pane.path, isDfs)}` : crumbs(pane.path, isDfs)}</div>
     <div class="list-wrap">
       ${loadingMarkup(pane)}
-      ${(parentRow || rows) ? `<table class="file-list${isSlots ? " mmb-slot-list" : ""}"><thead><tr>${isSlots ? "<th>Slot</th><th>Name</th><th>Kind</th><th>Access</th>" : "<th>Name</th><th>Kind</th><th>Size</th><th>Access</th>"}</tr></thead><tbody>${parentRow}${rows}</tbody></table>` : '<div class="empty-list">Nothing here yet.<br>Drop a host file into this pane to add it.</div>'}
+      ${(parentRow || rows) ? `<table class="file-list${isSlots ? " mmb-slot-list" : ""}" role="grid" aria-label="${isSlots ? "MMB disk slots" : "Files in " + esc(location)}"><thead><tr>${isSlots ? "<th>Slot</th><th>Name</th><th>Kind</th><th>Access</th>" : "<th>Name</th><th>Kind</th><th>Size</th><th>Access</th>"}</tr></thead><tbody>${parentRow}${rows}</tbody></table>` : '<div class="empty-list">Nothing here yet.<br>Drop a host file into this pane to add it.</div>'}
     </div>
     <footer class="pane-foot"><span>${pane.image.readOnly ? "Read-only safe view · " : ""}${selectedKeys.size ? `${selectedKeys.size} selected · ` : ""}${pane.entries.length} ${isSlots ? "formatted or named slots" : "objects"} · ${esc(pane.description || "")}</span>${capacityMarkup(pane.capacity)}</footer>`;
 
@@ -973,6 +1024,7 @@ function renderPane(index, preserveScroll = false) {
   host.querySelector(".menu-entry")?.addEventListener("click", () => guardedPaneAction(index, () => scanMenuEntry(index)));
   host.querySelector(".setup-menu")?.addEventListener("click", () => guardedPaneAction(index, () => setupMmbMenu(index)));
   host.querySelector(".validate-image")?.addEventListener("click", () => guardedPaneAction(index, () => validateImage(index)));
+  host.querySelector(".open-hex-editor")?.addEventListener("click", () => guardedPaneAction(index, () => openHexEditor(index)));
   host.querySelector(".convert-tape")?.addEventListener("click", () => guardedPaneAction(index, () => convertTape(index)));
   host.querySelector(".preview-menu")?.addEventListener("click", () => guardedPaneAction(index, () => showMenuPreview(index)));
   host.querySelector(".audit-menu-pages")?.addEventListener("click", () => guardedPaneAction(index, () => auditMmbMenuPages(index)));
@@ -1610,7 +1662,7 @@ function copyMmbSlotsToAdfs(index, sources, afterCopy = null) {
             <span>${items.length} rows</span>
           </header>
           <div class="bulk-disk-table-wrap">
-            <table class="bulk-disk-table">
+            <table class="bulk-disk-table" aria-label="MMB disks planned for ADFS import">
               <thead><tr><th>Slot</th><th>MMB title</th>${grouped ? "<th>Group</th>" : ""}<th>ADFS directory</th></tr></thead>
               <tbody>
                 ${items.map(item => `<tr data-collision="${collisionOffsets.has(item.offset) ? "1" : "0"}">
@@ -4703,7 +4755,7 @@ async function showOnlineLibrary(index) {
       const ariaSort = active ? (resultSort.direction === "asc" ? "ascending" : "descending") : "none";
       return `<th aria-sort="${ariaSort}"><button class="online-sort" type="button" data-sort="${key}">${label}<span aria-hidden="true">${arrow}</span></button></th>`;
     };
-    resultHost.innerHTML = items.length ? `<table class="online-result-table"><thead><tr><th></th>${heading("Title", "title")}${heading("Publisher", "publisher")}${heading("Year", "year")}${heading("Source", "sourceName")}<th></th></tr></thead><tbody>${items.map(item => `<tr class="${item.installed ? "already-installed" : ""}"><td><input type="checkbox" name="catalogItem" value="${esc(item.id)}" aria-label="Select ${esc(item.title)}" ${selected.has(item.id) ? "checked" : ""}></td><td><strong>${esc(item.title)}</strong>${item.version ? `<small>Version ${esc(item.version)}</small>` : ""}${item.description ? `<small>${esc(item.description)}</small>` : ""}</td><td>${esc(item.publisher || "Unknown")}</td><td>${esc(item.year || "-")}</td><td><span class="pill">${esc(item.sourceName)}</span>${item.installed ? '<small class="installed-label">Already present</small>' : ""}</td><td><a class="button tiny" href="${esc(item.pageUrl)}" target="_blank" rel="noopener">Details</a></td></tr>`).join("")}</tbody></table>` : '<div class="empty-list">No matching downloadable items were found. Try All results, another machine, or a broader search.</div>';
+    resultHost.innerHTML = items.length ? `<table class="online-result-table" aria-label="Downloadable Acorn software"><thead><tr><th></th>${heading("Title", "title")}${heading("Publisher", "publisher")}${heading("Year", "year")}${heading("Source", "sourceName")}<th></th></tr></thead><tbody>${items.map(item => `<tr class="${item.installed ? "already-installed" : ""}"><td><input type="checkbox" name="catalogItem" value="${esc(item.id)}" aria-label="Select ${esc(item.title)}" ${selected.has(item.id) ? "checked" : ""}></td><td><strong>${esc(item.title)}</strong>${item.version ? `<small>Version ${esc(item.version)}</small>` : ""}${item.description ? `<small>${esc(item.description)}</small>` : ""}</td><td>${esc(item.publisher || "Unknown")}</td><td>${esc(item.year || "-")}</td><td><span class="pill">${esc(item.sourceName)}</span>${item.installed ? '<small class="installed-label">Already present</small>' : ""}</td><td><a class="button tiny" href="${esc(item.pageUrl)}" target="_blank" rel="noopener">Details</a></td></tr>`).join("")}</tbody></table>` : '<div class="empty-list">No matching downloadable items were found. Try All results, another machine, or a broader search.</div>';
     if (resultFailures.length) resultHost.insertAdjacentHTML("beforeend", `<details class="online-failures"><summary>Unavailable sources</summary>${resultFailures.map(item => `<p><b>${esc(item.source)}</b>: ${esc(item.error)}</p>`).join("")}</details>`);
     resultHost.querySelectorAll("[data-sort]").forEach(button => button.onclick = () => {
       const key = button.dataset.sort;
@@ -5115,7 +5167,7 @@ async function showMmbBulkMenuEditor(index, menu, installedEntries) {
           <button class="button ghost add-menu-row" type="button">Add row</button>
         </div>
         <div class="bulk-menu-table-wrap">
-          <table class="bulk-menu-table">
+          <table class="bulk-menu-table" aria-label="Editable menu records">
             <thead><tr><th aria-label="Order">#</th><th>Name</th><th>Publisher</th><th>MMB disk</th>${spiMenu ? "" : "<th>Launch file</th><th>Action</th><th>PAGE</th>"}<th aria-label="Row actions"></th></tr></thead>
             <tbody></tbody>
           </table>
@@ -6242,9 +6294,11 @@ function showHelp() {
           <a href="#help-mmb-menu">Create an MMB menu</a>
           <a href="#help-adfs-menu">Create an ADFS menu</a>
           <a href="#help-maintenance">Check and compact</a>
+          <a href="#help-hex-editor">Raw image hex editor</a>
           <a href="#help-analysis">Workbench and analysis</a>
           <a href="#help-saving">Save, close and recover</a>
           <a href="#help-shortcuts">Keyboard shortcuts</a>
+          <a href="#help-accessibility">Accessibility and appearance</a>
           <a href="#help-limits">Limits and troubleshooting</a>
           <a href="#help-project">Project and support</a>
         </nav>
@@ -6283,7 +6337,7 @@ function showHelp() {
             </div>
             <div class="help-note"><strong>Pane heading actions:</strong> after the orange changed indicator, the buttons create a New Blank Image, Load New Image, Save Image, Refresh View, and Close Pane. The × close button offers Save and close, Close without saving, or Cancel whenever the image has changes.</div>
             <h4>Which new format should I choose?</h4>
-            <div class="help-table-wrap"><table class="help-table">
+            <div class="help-table-wrap"><table class="help-table"><caption class="visually-hidden">Supported image formats and their main limits</caption>
               <thead><tr><th>Format</th><th>Best used for</th><th>Important limit</th></tr></thead>
               <tbody>
                 <tr><td>SSD</td><td>One BBC DFS disk side</td><td>200 KiB, 31 catalogue files</td></tr>
@@ -6302,7 +6356,7 @@ function showHelp() {
             <h4>Add, arrange and close panes</h4>
             <ol>
               <li>Select <strong>Add Pane</strong> in the header to add an empty pane. It disables at three panes and re-enables when one is closed.</li>
-              <li>Use the numbered grip at the left of a pane heading and drag it onto another pane to swap their positions.</li>
+              <li>Use the numbered grip at the left of a pane heading and drag it onto another pane to swap their positions. With the grip focused, Alt+Left and Alt+Right provide the same operation without dragging.</li>
               <li>The complete pane moves with its image, current directory or MMB slot, selection and scroll position.</li>
               <li>An empty pane is a convenient scratch area for creating an SSD, DSD, MMB, ADFS floppy, BeebSCSI DAT/DSC pair or other supported image.</li>
               <li>Select × at the top-right to close that whole pane. Save changed images from the prompt, deliberately close without saving a download, or cancel. The server working copy remains available through Recovery.</li>
@@ -6691,7 +6745,7 @@ function showHelp() {
               </ol>
             </div>
             <h4>Transfer behaviour at a glance</h4>
-            <div class="help-table-wrap"><table class="help-table">
+            <div class="help-table-wrap"><table class="help-table"><caption class="visually-hidden">Results of transferring supported source types between image formats</caption>
               <thead><tr><th>Source</th><th>Destination</th><th>Result</th></tr></thead>
               <tbody>
                 <tr><td>File</td><td>DFS or ADFS</td><td>Copied with compatible metadata</td></tr>
@@ -6827,6 +6881,33 @@ function showHelp() {
               <li>Do not close the browser or container during a write. A normal page refresh keeps active server sessions, but the pane should be refreshed before retrying an interrupted action.</li>
             </ul>
           </section>
+          <section id="help-hex-editor">
+            <h3>Raw image hex editor</h3>
+            <p class="help-lead">Use the raw editor for deliberate low-level repairs and experiments. It works over the current pane without loading a complete HDD image into the browser.</p>
+            <figure><img src="/help/hex-editor.png" alt="Raw image hex editor showing offset, byte, ASCII and value views"><figcaption>The editor overlays only its source pane. Other panes remain visible for reference, while the selected image is protected from other pane actions until the editor closes.</figcaption></figure>
+            <div class="help-warning"><strong>Important:</strong> raw edits bypass DFS, ADFS, MMB, UEF and container rules. A plausible-looking byte change can destroy a catalogue, free-space map, checksum or disk geometry. Create a named checkpoint first when the current state matters.</div>
+            <div class="help-task"><h4>Inspect and navigate raw bytes</h4><ol>
+              <li>Open <strong>Tools → Hex editor</strong> in the relevant pane. It is available at the MMB All disks level as well as inside normal filesystem views.</li>
+              <li>For a paired BeebSCSI image, choose the DAT or DSC from <strong>Component</strong>. The DSC option edits only the 22-byte geometry descriptor.</li>
+              <li>Use first, previous, next and last page, or enter a hexadecimal offset in <strong>Go to offset</strong>. Append <code>d</code> to enter a decimal address.</li>
+              <li>Choose a 128, 256, 512 or 1,024-byte page. Only that range is fetched, even for a multi-gigabyte image.</li>
+              <li>Select a hex or ASCII cell. The inspector shows unsigned 8, 16 and 32-bit values in little and big-endian order.</li>
+            </ol></div>
+            <div class="help-task"><h4>Search, select and edit</h4><ol>
+              <li>Search for hexadecimal byte pairs such as <code>44 69 73 63</code>, or switch the search to Latin-1 text. Find previous and Find next can wrap around the image.</li>
+              <li>Click a byte, Shift-click another byte, or hold Shift while using the arrow keys to select a range.</li>
+              <li>Choose HEX or ASCII mode, then type to replace bytes. You can also paste, fill the selection with one byte, copy as hex or text, or revert selected edits.</li>
+              <li>Undo and redo affect staged editor changes only. The staged-change list shows the original and replacement value at every changed offset and can jump back to it.</li>
+              <li>Use Ctrl/Cmd-S to write, Ctrl/Cmd-Z or Ctrl/Cmd-Y for undo or redo, Ctrl/Cmd-F to search, Ctrl/Cmd-G to go to an offset, and Escape to close.</li>
+            </ol></div>
+            <div class="help-task"><h4>Write or close safely</h4><ol>
+              <li>Select <strong>Write changes</strong>. Read the <strong>This is dangerous. Are you sure?</strong> warning and confirm only if the listed byte count is expected.</li>
+              <li>The server rejects the write if another action changed the image after the editor loaded it. It also rejects overlaps, out-of-range writes, resizing and an unconfirmed request.</li>
+              <li>An automatic undo checkpoint is created before the fixed-size byte ranges are flushed. Cached slot, menu, tape and export data is cleared so later views cannot reuse stale content.</li>
+              <li>Closing with staged bytes offers Keep editing, Discard changes, or Review and write. A protected advanced HFE can be inspected but not written.</li>
+              <li>Refresh the pane and run <strong>Analyse → Image health dashboard</strong> after every raw write. Use Edit → Undo last change if the result is not sound.</li>
+            </ol></div>
+          </section>
           <section id="help-analysis">
             <h3>Workbench, analysis and repeatable workflows</h3>
             <p class="help-lead">The Analyse menu in each pane checks the image in context. Workbench in the page header stores reusable settings and portable workspace descriptions.</p>
@@ -6935,9 +7016,22 @@ function showHelp() {
               <dt>Delete</dt><dd>Delete the selected object after confirmation.</dd>
               <dt>Drag selected files</dt><dd>Copy them to a compatible destination.</dd>
               <dt>Drag MMB slots</dt><dd>Cut and paste as one block within an MMB, or copy to another image.</dd>
+              <dt>Alt+Left / Alt+Right on pane grip</dt><dd>Move a pane without dragging it.</dd>
               <dt>Breadcrumb</dt><dd>Jump directly to an ancestor directory.</dd>
               <dt>Refresh ↻</dt><dd>Reread the current view while preserving useful selection state.</dd>
             </dl>
+          </section>
+          <section id="help-accessibility">
+            <h3>Accessibility and appearance</h3>
+            <p class="help-lead">The interface targets WCAG 2.2 AA in both its BBC Model B light theme and complementary dark theme.</p>
+            <ul>
+              <li>Use the first keyboard link, <strong>Skip to workspace</strong>, to bypass the header. All buttons, menus, rows, form controls and dialogs have visible keyboard focus.</li>
+              <li>Press Tab and Shift-Tab to move through controls. Enter opens the focused directory or MMB slot. Native modal dialogs and safety warnings retain keyboard focus until they close.</li>
+              <li>The <strong>Light / Dark</strong> button follows the operating-system preference on first use and remembers your choice. Both palettes meet AA text contrast, and control boundaries and focus indicators meet non-text contrast requirements.</li>
+              <li>Selection, access, warnings, errors and progress use words, shapes or symbols as well as colour. Status and error regions are announced to screen readers.</li>
+              <li>Browser zoom and narrower windows are supported. With reduced motion enabled in the operating system, non-essential transitions and animations are suppressed.</li>
+            </ul>
+            <div class="help-note"><strong>Theme maintenance:</strong> the palette is isolated in <code>theme.css</code>. Layout and component geometry remain in <code>styles.css</code>, so a replacement palette can be reviewed for contrast without changing the application structure.</div>
           </section>
           <section id="help-limits">
             <h3>Compatibility, limits and troubleshooting</h3>
@@ -7559,6 +7653,7 @@ function updateThemeButton() {
   const dark = document.documentElement.dataset.theme === "dark";
   themeToggle.querySelector("b").textContent = dark ? "Light" : "Dark";
   themeToggle.setAttribute("aria-label", `Switch to ${dark ? "light" : "dark"} mode`);
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", dark ? "#0b0e0c" : "#c9ba9b");
 }
 themeToggle.onclick = () => {
   const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
