@@ -1,0 +1,221 @@
+/*
+ * Acorn File Forge theme
+ *
+ * This file owns the complete application palette. Component layout, spacing
+ * and typography live in styles.css. To create another visual theme, change
+ * these semantic tokens and the two small theme-specific sections below.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* BBC Model B inspired case, keyboard and function-key colours */
+  --ink: #241f19;
+  --muted: #6d6458;
+  --paper: #f5eedc;
+  --cream: #d8c9aa;
+  --surface: #e8ddc5;
+  --yellow: #d6a83b;
+  --orange: #ad402f;
+  --teal: #356d50;
+  --blue: #3c6576;
+  --line: #93846e;
+  --shadow: 0 18px 50px rgba(44, 35, 24, .2);
+
+  --body-background:
+    radial-gradient(circle at 82% 4%, rgba(173, 64, 47, .15), transparent 28rem),
+    linear-gradient(180deg, #c9ba9b 0, #e5dac3 28%, #f1ead9 100%);
+  --html-background: #c9ba9b;
+  --pane-background: rgba(245, 238, 220, .94);
+  --toolbar-background: #eee5d2;
+  --header-background: #d8c9aa;
+  --footer-background: #e9dfca;
+  --button-background: #f8f2e5;
+  --input-background: #fffaf0;
+  --input-border: #827461;
+  --topbar-border: rgba(36, 31, 25, .28);
+  --brand-shadow: rgba(36, 31, 25, .28);
+  --menu-shadow: rgba(36, 29, 20, .26);
+  --modal-shadow: rgba(27, 22, 17, .38);
+  --modal-backdrop: rgba(35, 29, 22, .56);
+  --overlay-backdrop: rgba(20, 17, 14, .76);
+  --loading-background: rgba(245, 238, 220, .82);
+  --inset-shadow: rgba(0, 0, 0, .14);
+
+  --danger: #9d3025;
+  --danger-border: #b94b38;
+  --danger-soft: #e5b8a7;
+  --danger-surface: #f1d7ca;
+  --warning: #82560b;
+  --warning-border: #b98522;
+  --success: #356d50;
+  --capacity-good: #447a4f;
+  --capacity-warning: #c17c1b;
+  --capacity-critical: #a9362c;
+  --on-accent: #fffaf0;
+  --on-warning: #fffaf0;
+  --on-yellow: #241f19;
+  --focus-ring: #285f49;
+
+  --row-border: #d5c8b1;
+  --row-hover: #eee3cb;
+  --row-selected: #e4c66a;
+  --table-heading: #e5dac4;
+  --table-heading-text: #6d6458;
+  --empty-text: #867b6c;
+  --empty-icon: #d9cfbc;
+  --empty-icon-text: #817768;
+  --pill-border: #b8aa92;
+  --progress-track: #c7baa3;
+
+  --file-icon-background: #cadcc7;
+  --file-icon-text: #356d50;
+  --folder-icon-background: #e5c86b;
+  --folder-icon-text: #654a08;
+  --disk-icon-background: #d8aaa0;
+  --disk-icon-text: #7e2d24;
+  --adfs-format: #6f9d79;
+  --tape-format: #75678f;
+  --format-icon-text: #241f19;
+  --mmb-format-text: #fffaf0;
+  --adfs-format-text: #241f19;
+  --tape-format-text: #fffaf0;
+  --format-icon-border: #4b4236;
+  --format-icon-shadow: #4b4236;
+
+  /* Authentic preview colours are content tokens, kept here with the UI palette. */
+  --preview-bezel: #20252a;
+  --preview-case: #121517;
+  --preview-rim: #08090a;
+  --preview-shadow: rgba(0, 0, 0, .22);
+  --preview-screen: #000000;
+  --preview-cyan: #00ffff;
+  --preview-green: #00ff00;
+  --preview-controls: #e8edf1;
+  --preview-glow: rgba(35, 100, 255, .08);
+
+  /* The hex grid deliberately resembles a BBC monitor rather than paper. */
+  --hex-background: #151813;
+  --hex-panel: #24281f;
+  --hex-border: #4d5144;
+  --hex-text: #e8dfc8;
+  --hex-muted: #a99c83;
+  --hex-address: #72b98b;
+  --hex-hover: #343b2f;
+  --hex-selected: #3c6576;
+  --hex-changed: #e5bd52;
+  --hex-active: #356d50;
+  --hex-active-changed: #8b6419;
+  --hex-scrollbar: #5d6656;
+  --hex-loading: rgba(21, 24, 19, .82);
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: #eee6d2;
+  --muted: #b3a994;
+  --paper: #171a16;
+  --cream: #272a22;
+  --surface: #20241d;
+  --yellow: #d8ad43;
+  --orange: #db6951;
+  --teal: #67b88b;
+  --blue: #76a7b9;
+  --line: #666b5e;
+  --shadow: 0 18px 50px rgba(0, 0, 0, .44);
+
+  --body-background:
+    radial-gradient(circle at 82% 2%, rgba(173, 64, 47, .14), transparent 30rem),
+    linear-gradient(180deg, #11140f, #0b0e0c);
+  --html-background: #0b0e0c;
+  --pane-background: rgba(23, 26, 22, .97);
+  --toolbar-background: #1d211b;
+  --header-background: #292c24;
+  --footer-background: #1d211b;
+  --button-background: #292d25;
+  --input-background: #22261f;
+  --input-border: #737869;
+  --topbar-border: rgba(238, 230, 210, .16);
+  --brand-shadow: rgba(0, 0, 0, .55);
+  --menu-shadow: rgba(0, 0, 0, .5);
+  --modal-shadow: rgba(0, 0, 0, .58);
+  --modal-backdrop: rgba(0, 0, 0, .74);
+  --overlay-backdrop: rgba(0, 0, 0, .8);
+  --loading-background: rgba(15, 18, 14, .82);
+  --inset-shadow: rgba(0, 0, 0, .28);
+
+  --danger: #ff8d76;
+  --danger-border: #c85c47;
+  --danger-soft: #7d3a2f;
+  --danger-surface: #40251f;
+  --warning: #e0b555;
+  --warning-border: #b8872c;
+  --success: #67b88b;
+  --capacity-good: #67b88b;
+  --capacity-warning: #d69a3b;
+  --capacity-critical: #db6951;
+  --on-accent: #141710;
+  --on-warning: #141710;
+  --on-yellow: #141710;
+  --focus-ring: #8dd7a8;
+
+  --row-border: #353a31;
+  --row-hover: #2d332a;
+  --row-selected: #504824;
+  --table-heading: #22261f;
+  --table-heading-text: #b3a994;
+  --empty-text: #938a78;
+  --empty-icon: #30352c;
+  --empty-icon-text: #8f8776;
+  --pill-border: #555a4d;
+  --progress-track: #3b4037;
+
+  --file-icon-background: #294333;
+  --file-icon-text: #8bd0a4;
+  --folder-icon-background: #594a22;
+  --folder-icon-text: #f0cd67;
+  --disk-icon-background: #543129;
+  --disk-icon-text: #ff9b82;
+  --adfs-format: #5c8d68;
+  --tape-format: #73678e;
+  --format-icon-text: #141710;
+  --mmb-format-text: #141710;
+  --adfs-format-text: #141710;
+  --tape-format-text: #fffaf0;
+  --format-icon-border: #5d6256;
+  --format-icon-shadow: #080a08;
+
+  --hex-background: #0e120e;
+  --hex-panel: #1a2019;
+  --hex-border: #455044;
+  --hex-text: #e8dfc8;
+  --hex-muted: #a99c83;
+  --hex-address: #7dca98;
+  --hex-hover: #283329;
+  --hex-selected: #355c6c;
+  --hex-changed: #f0c75a;
+  --hex-active: #39775a;
+  --hex-active-changed: #8f681d;
+  --hex-scrollbar: #586553;
+  --hex-loading: rgba(9, 12, 9, .86);
+}
+
+html { background: var(--html-background); }
+body { background: var(--body-background); }
+.topbar { border-color: var(--topbar-border); }
+.brand-mark { filter: drop-shadow(2px 2px 0 var(--brand-shadow)); }
+.pane { background: var(--pane-background); }
+.pane-head { background: var(--header-background); }
+.toolbar, .breadcrumbs, .file-list th, .pane-foot { background: var(--toolbar-background); }
+.pane-foot { background: var(--footer-background); }
+.button, dialog, dialog form, .field input, .field select { background: var(--button-background); color: var(--ink); }
+.field input, .field select { background: var(--input-background); }
+dialog::backdrop { background: var(--modal-backdrop); }
+.sample { background: var(--footer-background); }
+.loading { background: var(--loading-background); }
+.online-results, .online-search-bar input, .online-search-bar select,
+.online-install-options input, .online-source-row input, .online-source-row textarea,
+.online-new-source input, .online-new-source select, .online-new-source textarea {
+  background: var(--paper);
+  color: var(--ink);
+}

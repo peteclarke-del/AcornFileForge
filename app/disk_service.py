@@ -1275,6 +1275,7 @@ class DiskService:
             "size": session.path.stat().st_size,
             "dirty": session.dirty,
             "hasDescriptor": bool(session.descriptor_path),
+            "descriptorName": session.descriptor_name,
             "doubleSided": session.path.name.lower().endswith(".dsd"),
             "containerFormat": "hfe" if session.hfe_original_path else None,
             "readOnly": session.hfe_read_only,
