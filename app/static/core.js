@@ -14,6 +14,7 @@ window.AcornUI = (() => {
   const modalErrorBack = document.querySelector("#modalErrorBack");
   const modalErrorClose = document.querySelector("#modalErrorClose");
   let modalAbortHandler = null;
+  let modalReturnFocus = null;
 
   const esc = value => String(value ?? "").replace(/[&<>"']/g, character => ({
     "&": "&amp;",
@@ -257,6 +258,23 @@ window.AcornUI = (() => {
     modalErrorBack.disabled = false;
     modalErrorClose.disabled = false;
     setModalAbort(null);
+    modalReturnFocus?.focus();
+    modalReturnFocus = null;
+  });
+  modal.addEventListener("keydown", event => {
+    if (event.key !== "Tab") return;
+    const controls = [...modal.querySelectorAll('a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex]:not([tabindex="-1"])')]
+      .filter(control => !control.hidden && control.getClientRects().length);
+    if (!controls.length) return event.preventDefault();
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   });
 
   function showModal(html, onSubmit, { replace = false } = {}) {
@@ -268,6 +286,7 @@ window.AcornUI = (() => {
           modal.addEventListener("close", () => resolve(true), { once: true });
         });
     setModalAbort(null);
+    if (!replacing) modalReturnFocus = document.activeElement;
     modalContent.innerHTML = html;
     const form = modal.querySelector("form");
     form.querySelectorAll('button[value="cancel"]').forEach(button => {
@@ -309,7 +328,11 @@ window.AcornUI = (() => {
       });
     };
     if (!replacing) modal.showModal();
-    setTimeout(() => modalContent.querySelector("input,select,button")?.focus(), 40);
+    setTimeout(() => {
+      const preferred = modalContent.querySelector('[autofocus], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), button:not(:disabled), a[href], summary, [tabindex]:not([tabindex="-1"])')
+        || modal.querySelector(".modal-close");
+      preferred?.focus();
+    }, 40);
     return closed;
   }
 

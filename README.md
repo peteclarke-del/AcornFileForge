@@ -12,9 +12,29 @@ format-aware imports are built in rather than left to separate utilities.
 
 ![Acorn File Forge in light mode](docs/images/acorn-file-forge-light.png)
 
-Dark mode is included too.
+The light palette takes its cues from a BBC Model B: warm case beige, charcoal
+key legends, muted green, ochre and function-key red. Dark mode keeps those
+relationships with a complementary, phosphor-friendly palette.
 
 ![Acorn File Forge in dark mode](docs/images/acorn-file-forge-dark.png)
+
+## Accessibility and themes
+
+The frontend targets WCAG 2.2 AA in light and dark mode. It provides a skip
+link, clear keyboard focus, labelled controls and image tables, focus-contained
+dialogs, screen-reader status announcements, non-colour state cues and reduced
+motion support. The layout remains usable with browser zoom and at narrow
+viewport widths. Drag operations have keyboard alternatives: Cut, Copy and
+Paste handle files and MMB slots, while Alt+Left and Alt+Right on a pane grip
+reorders panes.
+
+The operating-system colour preference is used on first visit. The Light / Dark
+button in the header stores the chosen mode in this browser. Theme colours live
+in `app/static/theme.css` as semantic custom properties. Layout, typography and
+component geometry live separately in `app/static/styles.css`, so another
+palette can be introduced without rewriting the interface. Any new palette
+should keep normal text at 4.5:1 or better, large text and meaningful graphics
+at 3:1 or better, and a clearly visible keyboard focus indicator.
 
 ## Quick start
 
@@ -376,6 +396,50 @@ launcher and reports missing or root-relative paths. Complete disk extraction
 already copies every catalogue file, so local companion programs travel with
 the launcher. The report explains when installing below ADFS root is unsafe or
 needs the existing guarded root-reference rewrite.
+
+### Raw image hex editor
+
+Choose **Tools → Hex editor** to open a raw editor over the relevant pane. It
+works in small ranged pages, so opening a large HDF or BeebSCSI DAT does not
+copy the complete image into browser memory. A paired BeebSCSI DSC can be
+selected from the Component list when its geometry needs inspection.
+
+![Raw image hex editor showing byte, ASCII and value views](app/static/help/hex-editor.png)
+
+The editor provides:
+
+- 16-byte rows with hexadecimal and ASCII cells;
+- first, previous, next and last-page navigation, plus direct offset entry;
+- 128, 256, 512 and 1,024-byte page sizes;
+- hexadecimal and Latin-1 text search, forward or backward, with optional
+  wrapping;
+- byte and range selection using click, Shift-click or Shift plus the arrow
+  keys;
+- hexadecimal or ASCII typing modes;
+- copy as hex or text, paste, fill, revert selection and revert all;
+- editor-local undo and redo before anything reaches the image;
+- unsigned 8, 16 and 32-bit value views in little and big-endian order;
+- a staged-change list with direct navigation to every changed offset.
+
+Raw edits always overwrite existing bytes. The editor cannot insert, delete or
+resize an image because changing container geometry that way would silently
+invalidate most Acorn filesystems. Before a write, the app displays **This is
+dangerous. Are you sure?** and explains that raw edits bypass filesystem rules.
+The backend checks that the image has not changed since the editor loaded it,
+creates an automatic undo checkpoint, writes only the reviewed ranges, flushes
+them to storage and invalidates cached catalogue and menu data. Closing with
+staged changes offers Keep editing, Discard changes, or Review and write.
+
+After a raw edit, refresh the pane and run **Analyse → Image health dashboard**.
+The image remains marked as changed until its timestamped ZIP is saved. An HFE
+whose advanced track data is protected can be inspected in the hex editor, but
+its Write changes control remains disabled.
+
+Useful shortcuts while the editor has focus are Ctrl/Cmd-S to review and write,
+Ctrl/Cmd-Z and Ctrl/Cmd-Y for editor undo and redo, Ctrl/Cmd-F to search,
+Ctrl/Cmd-G to enter an offset, Ctrl/Cmd-C and Ctrl/Cmd-V for byte selections,
+the arrow keys to move, Shift plus the arrow keys to extend a selection, and
+Escape to close safely.
 
 ### Menu test runner
 
@@ -1461,6 +1525,12 @@ Backend routes are split by responsibility:
 Frontend format declarations live in `app/static/formats.js`, and backend
 extension declarations live in `app/formats.py`. This keeps accepted
 Archimedes and raw-image names in one place on each side of the API.
+
+The frontend palette lives entirely in `app/static/theme.css`. Its light and
+dark sections define semantic tokens for surfaces, text, state, media icons,
+dialogs, progress and the hex editor. `app/static/styles.css` consumes those
+tokens and contains no palette-specific colour literals. This boundary keeps
+visual redesigns small and makes contrast review repeatable.
 
 ## Development checks
 

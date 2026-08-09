@@ -3,12 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#fff8df">
+  <meta name="theme-color" content="#c9ba9b">
   <title>Acorn File Forge</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css?v=20260808.9">
+  <link rel="stylesheet" href="/styles.css?v=20260809.2">
+  <link rel="stylesheet" href="/theme.css?v=20260809.2">
 </head>
 <body>
+  <a class="skip-link" href="#workspace">Skip to workspace</a>
   <header class="topbar">
     <a class="brand" href="/" aria-label="Acorn File Forge home">
       <img class="brand-mark" src="/favicon.svg" alt="">
@@ -23,7 +25,7 @@
     </div>
   </header>
 
-  <main>
+  <main id="workspace" tabindex="-1">
     <section class="workspace" aria-label="Disk image workspace">
       <div class="panes">
         <article class="pane" data-pane="0"></article>
@@ -33,7 +35,7 @@
 
   <div class="toast-region" id="toasts" aria-live="polite"></div>
 
-  <dialog id="modal">
+  <dialog id="modal" aria-label="Acorn File Forge dialog">
     <form method="dialog">
       <button class="modal-close" value="cancel" aria-label="Close">×</button>
       <div id="modalContent"></div>
@@ -75,7 +77,8 @@
   </template>
 
   <script src="/formats.js?v=20260731.19"></script>
-  <script src="/core.js?v=20260802.1"></script>
-  <script src="/app.js?v=20260808.9"></script>
+  <script src="/core.js?v=20260809.2"></script>
+  <script src="/hex-editor.js?v=20260809.2"></script>
+  <script src="/app.js?v=20260809.2"></script>
 </body>
 </html>
