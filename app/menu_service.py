@@ -685,10 +685,8 @@ def scan_adfs_menu_directories(
     root: str,
 ) -> tuple[list[dict], list[str]]:
     """Scan grouped ADFS software through one mount instead of many CLI processes."""
-    from oaknut.disc.mount import resolve_mount
-
-    with session.lock, resolve_mount(f"{session.path}:$") as resolved:
-        view = _MountedAdfsView(resolved.mount)
+    with service.adfs_mount(session) as mount:
+        view = _MountedAdfsView(mount)
         paths, holders = discover_adfs_menu_paths(view, session, root)
         metadata = [
             analyse_adfs_directory(view, session, path)
@@ -1202,23 +1200,30 @@ def _write_databases(
             )
         return
 
-    disk_path = service.resolve(session, slot)
-    with session.lock, resolve_mount(f"{disk_path}:$", writable=True) as resolved:
+    def write_to_mount(mount) -> None:
         if launcher_update is not None:
-            resolved.mount.write_bytes(launcher_path, launcher_update)
+            mount.write_bytes(launcher_path, launcher_update)
         for name, content in databases:
             destination = f"$.{name}" if slot is not None else f"{root}.{name}"
-            resolved.mount.write_bytes(destination, content)
+            mount.write_bytes(destination, content)
         if system == "H":
-            resolved.mount.write_bytes(
+            mount.write_bytes(
                 _adfs_child(root, "!BOOT"),
                 _adfs_boot_content(root),
             )
-        if session.kind == "mmb":
-            assert slot is not None
-            service._sync_slot(session, slot)
-        else:
-            session.dirty = True
+
+    disk_path = service.resolve(session, slot)
+    if session.kind == "adfs" and slot is None:
+        with service.adfs_mount(session) as mount:
+            write_to_mount(mount)
+    else:
+        with session.lock, resolve_mount(f"{disk_path}:$", writable=True) as resolved:
+            write_to_mount(resolved.mount)
+    if session.kind == "mmb":
+        assert slot is not None
+        service._sync_slot(session, slot)
+    else:
+        session.dirty = True
 
 
 def _database_contents(
@@ -1359,42 +1364,40 @@ def create_adfs_menu(
         raise DiskError("The Oaknut menu-copy API is unavailable.") from exc
 
     support_files = ("UNIMENU", "SHOW", "TXT2SCN", "UNIREAD")
-    with (
-        resolve_mount(f"{template}:$") as source_resolved,
-        resolve_mount(f"{session.path}:$", writable=True) as target_resolved,
-    ):
-        for name in support_files:
-            source_path = f"$.{name}"
-            destination = f"{root}.{name}"
-            if target_resolved.mount.exists(destination):
-                target_resolved.mount.remove(destination, force=True)
-            item = _file_item(
-                source_resolved.mount,
-                source_path,
-                destination,
-            )
+    with resolve_mount(f"{template}:$") as source_resolved:
+        with service.adfs_mount(session) as target_mount:
+            for name in support_files:
+                source_path = f"$.{name}"
+                destination = f"{root}.{name}"
+                if target_mount.exists(destination):
+                    target_mount.remove(destination, force=True)
+                item = _file_item(
+                    source_resolved.mount,
+                    source_path,
+                    destination,
+                )
+                service._write_adfs_copy_item(
+                    target_mount,
+                    destination,
+                    item,
+                    _write_copy_item,
+                )
+            boot_path = f"{root}.!BOOT"
+            if target_mount.exists(boot_path):
+                target_mount.remove(boot_path, force=True)
             service._write_adfs_copy_item(
-                target_resolved.mount,
-                destination,
-                item,
+                target_mount,
+                boot_path,
+                {
+                    "data": _adfs_boot_content(root),
+                    "load": 0,
+                    "exec": 0,
+                    "access": 3,
+                    "filetype": None,
+                    "datestamp": None,
+                },
                 _write_copy_item,
             )
-        boot_path = f"{root}.!BOOT"
-        if target_resolved.mount.exists(boot_path):
-            target_resolved.mount.remove(boot_path, force=True)
-        service._write_adfs_copy_item(
-            target_resolved.mount,
-            boot_path,
-            {
-                "data": _adfs_boot_content(root),
-                "load": 0,
-                "exec": 0,
-                "access": 3,
-                "filetype": None,
-                "datestamp": None,
-            },
-            _write_copy_item,
-        )
     session.dirty = True
     records = [_normalise_record(item, "H") for item in entries]
     _write_databases(service, session, records, "H", root=root)
@@ -1455,19 +1458,17 @@ def _scan_adfs_menu_roots(mount) -> list[str]:
 
 def installed_adfs_menus(service: DiskService, session: ImageSession) -> list[dict]:
     """Return every installed ADFS menu and its parsed records in one mount."""
-    from oaknut.disc.mount import resolve_mount
-
     if session.kind != "adfs":
         return []
-    with session.lock, resolve_mount(f"{session.path}:$") as resolved:
-        roots = _scan_adfs_menu_roots(resolved.mount)
+    with service.adfs_mount(session) as mount:
+        roots = _scan_adfs_menu_roots(mount)
         session.adfs_menu_roots = roots
         return [
             {
                 "root": root,
                 "type": "adfs-universal",
                 "entries": parse_menu_data(
-                    resolved.mount.read_bytes(_adfs_child(root, "GAMDATA"))
+                    mount.read_bytes(_adfs_child(root, "GAMDATA"))
                 ),
             }
             for root in roots
@@ -1481,21 +1482,19 @@ def test_installed_adfs_menu_entries(
     progress=None,
 ) -> tuple[list[str], list[dict]]:
     """Test every ADFS menu launcher through one reusable read-only mount."""
-    from oaknut.disc.mount import resolve_mount
-
     if session.kind != "adfs":
         return [], []
     tests: list[dict] = []
-    with session.lock, resolve_mount(f"{session.path}:$") as resolved:
-        view = _MountedAdfsView(resolved.mount)
+    with service.adfs_mount(session) as mount:
+        view = _MountedAdfsView(mount)
         if root is None:
-            roots = _scan_adfs_menu_roots(resolved.mount)
+            roots = _scan_adfs_menu_roots(mount)
             session.adfs_menu_roots = roots
         else:
             candidate = str(root or "$")
             names = {
                 str(entry.name).upper()
-                for entry in resolved.mount.iter_entries(candidate)
+                for entry in mount.iter_entries(candidate)
             }
             roots = [candidate] if MENU_FILES.issubset(names) else []
         for root in roots:
@@ -1617,11 +1616,6 @@ def move_adfs_items(
     if not items:
         raise DiskError("Choose at least one file or directory to move.")
     service.require_writable_geometry(session)
-    try:
-        from oaknut.disc.mount import resolve_mount
-    except ImportError as exc:
-        raise DiskError("The Oaknut ADFS move API is unavailable.") from exc
-
     def normalise(value: object) -> str:
         path = str(value or "").strip().rstrip(".")
         if path != "$" and not path.startswith("$."):
@@ -1630,8 +1624,7 @@ def move_adfs_items(
             raise DiskError("The ADFS root directory cannot be moved.")
         return path
 
-    with session.lock, resolve_mount(f"{session.path}:$", writable=True) as resolved:
-        mount = resolved.mount
+    with service.adfs_mount(session) as mount:
         moves: list[dict] = []
         destinations: set[str] = set()
         for raw in items:
@@ -1726,12 +1719,10 @@ def delete_adfs_items(
         raise DiskError("Choose ADFS files or directories below $.")
     try:
         from oaknut.disc.cli import _walk_post_order_mount
-        from oaknut.disc.mount import resolve_mount
     except ImportError as exc:
         raise DiskError("The Oaknut ADFS delete API is unavailable.") from exc
 
-    with session.lock, resolve_mount(f"{session.path}:$", writable=True) as resolved:
-        mount = resolved.mount
+    with service.adfs_mount(session) as mount:
         deleted_items = []
         for source in sources:
             if not mount.exists(source):

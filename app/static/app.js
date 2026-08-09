@@ -2655,17 +2655,14 @@ async function loadDirectory(index, preserveSelection = false) {
     const query = new URLSearchParams({ path: pane.path });
     if (pane.slot !== null) query.set("slot", pane.slot);
     if (pane.side !== null) query.set("side", pane.side);
-    const [data, capacity] = await Promise.all([
-      api(`/api/images/${pane.image.id}/tree?${query}`),
-      fetchCapacity(pane.image.id, pane.slot),
-    ]);
+    const data = await api(`/api/images/${pane.image.id}/tree?${query}`);
     if (
       panes[index] !== pane || pane.requestToken !== requestToken ||
       pane.image.id !== requested.image || pane.slot !== requested.slot ||
       pane.side !== requested.side || pane.path !== requested.path
     ) return;
     pane.entries = data.entries;
-    pane.capacity = capacity;
+    pane.capacity = data.capacity || pane.capacity;
     pane.description = data.description;
     if (preserveSelection) setSelection(pane, selected, selectionAnchor);
   } catch (error) {
@@ -6592,7 +6589,7 @@ function showHelp() {
               <li>Select <strong>Save Image</strong> in the pane heading. The same foreground progress dialog used by every format reports validation, checksums, catalogue generation and construction of the complete ZIP. For DAT it also names geometry, directory and map checks. The ready dialog appears only after the hardware-ready ZIP containing <code>BeebSCSI0/scsi0.dat</code> and <code>BeebSCSI0/scsi0.dsc</code> is complete on disk. If the automatic download does not begin, use the direct <strong>Download ZIP</strong> link.</li>
               <li>Extract the ZIP into the root of the BeebSCSI SD card. Keep the <code>BeebSCSI0</code> directory itself. The firmware does not look for DAT/DSC files directly in the SD-card root.</li>
             </ol>
-            <div class="help-note"><strong>Large-image performance:</strong> zero-filled free DAT capacity is kept sparse in the working image and undo checkpoints. Sparse DAT downloads use fast ZIP compression and sparse-aware checksumming, so unused hundreds of megabytes are not repeatedly written or transferred. The extracted DAT retains its complete logical size and exact bytes.</div>
+            <div class="help-note"><strong>Large-image performance:</strong> once an ADFS image has been identified, directory changes use a direct memory-mapped view and return the catalogue and free-space value together. The app does not copy or re-identify the complete DAT for every click. Imports keep one destination mount open for the batch. Zero-filled free DAT capacity is also kept sparse in the working image and undo checkpoints, while downloads use fast ZIP compression and sparse-aware checksumming. The extracted DAT retains its complete logical size and exact bytes.</div>
             <div class="help-note"><strong>Why the target matters:</strong> official 8-bit ADFS requires matching <code>Hugo</code> directory headers, footers and parent sequence copies. An edited old-map volume must also receive a new two-byte disc ID, otherwise ADFS can retain state belonging to the original volume and report <em>Broken directory</em> or <em>Disc changed</em>. The BeebSCSI target performs those checks, advances the disc ID and rebuilds its map checksum before download.</div>
             <div class="help-warning"><strong>Do not substitute a descriptor:</strong> DSC geometry belongs to its particular DAT. A DAT without valid matching geometry may be browsed when identifiable, but writing is deliberately blocked to prevent corruption. The DAT ends at the old-format ADFS map boundary, as in the official BeebSCSI Quickstart image; the DSC may describe a slightly larger device. Newly created pairs are checked against that map extent and BeebSCSI's 256-byte sector, 33-sector track, 16-head and ADFS 21-bit size limits before download.</div>
           </section>

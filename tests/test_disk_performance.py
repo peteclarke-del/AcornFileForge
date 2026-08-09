@@ -119,31 +119,46 @@ class DiskPerformanceTests(unittest.TestCase):
             self.assertEqual(image.stat().st_mtime_ns, timestamp)
             self.assertEqual(image.read_bytes()[:4], b"ADFS")
 
-    def test_directory_tree_copy_uses_one_engine_invocation(self):
+    def test_directory_tree_copy_avoids_the_cli_for_an_adfs_target(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             service = DiskService(root / "work")
-            source_path = root / "source.ssd"
-            target_path = root / "target.hdf"
-            source_path.touch()
-            target_path.touch()
-            source = ImageSession("1", "source.ssd", "dfs", source_path)
-            target = ImageSession("2", "target.hdf", "adfs", target_path)
-            calls: list[list[str]] = []
-            service._run = lambda args, binary=False: calls.append(args) or ""
+            source = service.create_blank("ssd", "SOURCE")
+            target = service.create_blank("adfs-s", "TARGET")
+            for name in ("ONE", "TWO"):
+                host = root / name.lower()
+                host.write_bytes(name.encode("ascii"))
+                service.put(source, None, f"$.{name}", host, "0x1900", "0x1900", None)
+            rows = service.list_dfs_catalogue_files(source, None)
 
-            service._copy_rows_to_adfs(
-                source,
-                None,
-                None,
-                [{"name": "ONE", "type": "file"}, {"name": "TWO", "type": "file"}],
-                target,
-                "$.SOFTWARE",
+            with patch.object(service, "_run", wraps=service._run) as run:
+                service._copy_rows_to_adfs(
+                    source, None, None, rows, target, "$.SOFTWARE"
+                )
+
+            self.assertEqual(run.call_count, 0)
+            self.assertEqual(
+                {
+                    row["name"]
+                    for row in service.list_directory(target, "$.SOFTWARE", None)["entries"]
+                },
+                {"ONE", "TWO"},
             )
 
-            self.assertEqual(len(calls), 1)
-            self.assertEqual(calls[0][:2], ["cp", "--recursive"])
-            self.assertIn("source.ssd:*", calls[0][2])
+    def test_adfs_browse_returns_capacity_without_the_cli(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            service = DiskService(root / "work")
+            session = service.create_blank("adfs-s", "BROWSE")
+            service.make_directory(session, "$.Games")
+
+            with patch.object(service, "_run", wraps=service._run) as run:
+                listing = service.browse_directory(session, "$", None)
+
+            self.assertEqual(run.call_count, 0)
+            self.assertEqual([row["name"] for row in listing["entries"]], ["Games"])
+            self.assertTrue(listing["capacity"]["available"])
+            self.assertGreater(listing["capacity"]["free"], 0)
 
     def test_multiple_mmb_access_flags_are_updated_in_one_open_image(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -318,6 +333,12 @@ class DiskPerformanceTests(unittest.TestCase):
             def resolve_mount(_spec, writable=False):
                 yield types.SimpleNamespace(mount=FakeMount(), path="$")
 
+            @contextmanager
+            def adfs_mount(_session):
+                yield FakeMount()
+
+            service.adfs_mount = adfs_mount
+
             cli = types.ModuleType("oaknut.disc.cli")
             cli._collect_copy_items = lambda *_args, **_kwargs: []
             cli._ensure_dir_chain = lambda *_args, **_kwargs: None
@@ -385,6 +406,12 @@ class DiskPerformanceTests(unittest.TestCase):
             @contextmanager
             def resolve_mount(_spec, writable=False):
                 yield types.SimpleNamespace(mount=FakeMount(), path="$")
+
+            @contextmanager
+            def adfs_mount(_session):
+                yield FakeMount()
+
+            service.adfs_mount = adfs_mount
 
             cli = types.ModuleType("oaknut.disc.cli")
             cli._collect_copy_items = lambda *_args, **_kwargs: []

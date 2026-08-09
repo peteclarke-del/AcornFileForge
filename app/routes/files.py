@@ -218,7 +218,7 @@ def create_files_blueprint(
     @blueprint.get("/api/images/<image_id>/tree")
     def tree(image_id):
         return jsonify(
-            service.list_directory(
+            service.browse_directory(
                 service.get(image_id),
                 request.args.get("path", "$"),
                 optional_int(request.args.get("slot")),
@@ -366,12 +366,7 @@ def create_files_blueprint(
         if not path.startswith("$.") or path.endswith("."):
             raise DiskError("Choose a valid ADFS parent directory and folder name.")
         service.validate_leaf_name(session, path.rsplit(".", 1)[-1])
-        service.mutate(
-            session,
-            optional_int(data.get("slot")),
-            ["mkdir", "-p", "{image}:" + path],
-            optional_int(data.get("side")),
-        )
+        service.make_directory(session, path)
         return jsonify(image=service.summary(session))
 
     @blueprint.post("/api/images/<image_id>/lock")

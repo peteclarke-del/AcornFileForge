@@ -1357,6 +1357,15 @@ in the [project repository](https://github.com/peteclarke-del/AcornFileForge).
 - Individual files use disk-backed responses. Complete image ZIPs are built
   with bounded memory while the foreground progress bar tracks checksum and
   archive bytes. Only then is the known-length archive handed to the browser.
+- Open ADFS working images use a trusted, direct memory-mapped mount after the
+  upload has been identified. Changing directory therefore reads only the
+  requested catalogue and returns its free-space figure in the same request.
+  It does not copy or re-identify a complete DAT, HDF or RAW file on every
+  click.
+- SSD, DSD, ADFS and MMB transfers into ADFS keep one destination mount open
+  for the complete batch. Files, metadata and loader checks are applied before
+  that mount is released instead of reopening a large hard-drive image for
+  every file or phase.
 - Mutations to the same image are locked and run in sequence.
 - The `disc` subprocess timeout is 240 seconds. Gunicorn allows requests for
   up to 300 seconds.
