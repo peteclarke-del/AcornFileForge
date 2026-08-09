@@ -100,8 +100,13 @@ class MenuServiceTests(unittest.TestCase):
         )
         service = Mock()
 
+        @contextmanager
+        def adfs_mount(_session):
+            yield mount
+
+        service.adfs_mount = adfs_mount
+
         with (
-            patch("oaknut.disc.mount.resolve_mount", resolved_mount),
             patch("app.menu_service._installed_adfs_menus", return_value=[{
                 "root": "$.Games",
                 "entries": records,
