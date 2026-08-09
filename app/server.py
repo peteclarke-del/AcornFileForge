@@ -10,6 +10,7 @@ from flask import Flask, g, jsonify, request
 from .disk_service import SESSION_OWNER, DiskError, DiskService
 from .operations import OperationRegistry
 from .routes.files import create_files_blueprint
+from .routes.hex_editor import create_hex_editor_blueprint
 from .routes.catalog import create_catalog_blueprint
 from .routes.images import create_images_blueprint
 from .routes.menus import create_menus_blueprint
@@ -64,6 +65,7 @@ IMAGE_MUTATIONS = {
     "tools.apply_manifest": "applying reviewed menu metadata",
     "tools.save_inspected_text": "editing a text file",
     "tools.repair_health": "applying a safe image-health repair",
+    "hex_editor.write_hex": "editing raw image bytes",
     "catalog.install": "installing software from the Online Library",
 }
 
@@ -125,6 +127,7 @@ def create_app() -> Flask:
     application.register_blueprint(create_files_blueprint(service, WORK_DIR, operations))
     application.register_blueprint(create_catalog_blueprint(service, WORK_DIR))
     application.register_blueprint(create_mmb_blueprint(service))
+    application.register_blueprint(create_hex_editor_blueprint(service))
     application.register_blueprint(create_tools_blueprint(service, WORK_DIR, operations))
     application.register_blueprint(
         create_menus_blueprint(service, MENU_TEMPLATE_DIR)
