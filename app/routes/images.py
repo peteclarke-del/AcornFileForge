@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 
-from flask import Blueprint, Response, jsonify, request, send_from_directory
+from flask import Blueprint, jsonify, request, send_file, send_from_directory
 
 from ..archive_utils import open_disk_image_upload
+from ..download_archive import build_download_archive, prepared_download
 from ..disk_service import DiskError, DiskService
 from ..formats import (
     ADFS_EXTENSIONS,
@@ -16,8 +16,6 @@ from ..formats import (
 )
 from ..menu_service import best_distribution_filename
 from ..operations import OperationCancelled, OperationRegistry
-from ..readme_service import timestamped_archive_name, write_download_readme
-from ..streaming_zip import stream_stored_zip
 from .common import optional_int, payload
 
 
@@ -184,24 +182,13 @@ def create_images_blueprint(
     @blueprint.get("/api/images/<image_id>/download")
     def download_image(image_id):
         session = service.get(image_id)
-        download_path = service.prepare_download(session)
-        generated = datetime.now().astimezone()
-        readme_path = write_download_readme(service, session, download_path, generated)
-        service.mark_saved(session)
-        is_beebscsi = bool(session.descriptor_path and session.path.suffix.lower() == ".dat")
-        archive_root = "BeebSCSI0/" if is_beebscsi else ""
-        files = [(readme_path, "README.md"), (download_path, f"{archive_root}{session.name}")]
-        if session.descriptor_path:
-            files.append((session.descriptor_path, f"{archive_root}{session.descriptor_name}"))
-        return Response(
-            stream_stored_zip(tuple(files)),
+        archive_path, archive_name = prepared_download(session)
+        return send_file(
+            archive_path,
             mimetype="application/zip",
-            headers={
-                "Content-Disposition": (
-                    f'attachment; filename="{timestamped_archive_name(session.name, generated)}"'
-                ),
-                "X-Accel-Buffering": "no",
-            },
+            as_attachment=True,
+            download_name=archive_name,
+            conditional=True,
         )
 
     @blueprint.post("/api/images/<image_id>/download/prepare")
@@ -212,14 +199,16 @@ def create_images_blueprint(
         if operation_id:
             operations.start(operation_id, "Preparing image download")
         try:
-            service.prepare_download(
-                session,
-                lambda message, current=None, total=None: operations.update(
-                    operation_id, message, current, total
-                ),
-            )
-            service.mark_saved(session)
-            operations.finish(operation_id, "Image download is ready")
+            with session.lock:
+                build_download_archive(
+                    service,
+                    session,
+                    lambda message, current=None, total=None: operations.update(
+                        operation_id, message, current, total
+                    ),
+                )
+                service.mark_saved(session)
+            operations.finish(operation_id, "The complete ZIP is ready to download")
             return jsonify(image=service.summary(session), ready=True)
         except OperationCancelled as exc:
             operations.cancelled(operation_id, str(exc))

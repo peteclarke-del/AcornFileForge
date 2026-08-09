@@ -147,6 +147,9 @@ def build_download_readme(
     session: ImageSession,
     image_path: Path,
     generated: datetime | None = None,
+    *,
+    image_checksum: str | None = None,
+    descriptor_checksum: str | None = None,
 ) -> str:
     moment = generated or datetime.now().astimezone()
     container = "HFE" if session.hfe_original_path else session.kind.upper()
@@ -163,14 +166,14 @@ def build_download_readme(
         f"- Target hardware profile: {session.target_hardware}",
         f"- Image filename: `{session.name}`",
         f"- Image size: {image_path.stat().st_size:,} bytes",
-        f"- Image SHA-256: `{sha256_path(image_path)}`",
+        f"- Image SHA-256: `{image_checksum or sha256_path(image_path)}`",
     ]
     if session.descriptor_path:
         lines.extend(
             (
                 f"- Descriptor filename: `{session.descriptor_name}`",
                 f"- Descriptor size: {session.descriptor_path.stat().st_size:,} bytes",
-                f"- Descriptor SHA-256: `{sha256_path(session.descriptor_path)}`",
+                f"- Descriptor SHA-256: `{descriptor_checksum or sha256_path(session.descriptor_path)}`",
             )
         )
     if session.hfe_original_path:
@@ -233,6 +236,7 @@ def build_download_readme(
             "## Technical notes",
             "",
             "Acorn filenames, load addresses and execution addresses are significant. Renaming a loader or moving software between DFS and ADFS can break relative file references even when every file copied successfully.",
+            "Complete disk images keep file metadata inside their own catalogues, so they do not need an image-level .inf sidecar. Loose files exported from Acorn File Forge are packaged with a matching .inf file instead.",
             "DFS and MMB cannot preserve flux timing, weak sectors or every copy-protection feature. HFE can contain track-level information that is not representable after filesystem editing.",
             "ADFS directory and free-space metadata must match the selected hardware profile. BeebSCSI DAT images also require their matching DSC geometry.",
             "For current documentation, releases and issue reporting, visit https://github.com/peteclarke-del/AcornFileForge.",
@@ -247,7 +251,20 @@ def write_download_readme(
     session: ImageSession,
     image_path: Path,
     generated: datetime | None = None,
+    *,
+    image_checksum: str | None = None,
+    descriptor_checksum: str | None = None,
 ) -> Path:
     target = session.path.parent / "download-README.md"
-    target.write_text(build_download_readme(service, session, image_path, generated), encoding="utf-8")
+    target.write_text(
+        build_download_readme(
+            service,
+            session,
+            image_path,
+            generated,
+            image_checksum=image_checksum,
+            descriptor_checksum=descriptor_checksum,
+        ),
+        encoding="utf-8",
+    )
     return target

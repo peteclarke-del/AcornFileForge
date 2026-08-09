@@ -129,6 +129,55 @@ class DiskService:
                 stack.enter_context(lock)
             yield
 
+    @contextmanager
+    def adfs_mount(self, session: ImageSession):
+        """Open a trusted working ADFS image without probing or copying it.
+
+        Oaknut's general-purpose resolver identifies an image from scratch on
+        every command.  Its ADFS probe deliberately copies the whole image and
+        walks the complete directory tree.  That is useful for an unknown host
+        file, but wasteful for a session which was already identified when it
+        was opened.  A BeebSCSI DAT can be hundreds of megabytes, so use one
+        live mmap for the duration of an application operation instead.
+        """
+        if session.kind != "adfs":
+            raise DiskError("This operation requires an ADFS image.")
+        try:
+            from oaknut.filesystem import create_filesystem, geometry_from_dsc, reader_for
+        except ImportError as exc:
+            raise DiskError("The Oaknut ADFS filesystem API is unavailable.") from exc
+
+        with session.lock:
+            reader = reader_for(session.path, writable=True)
+            mount = None
+            try:
+                geometry = None
+                if session.descriptor_path and session.descriptor_path.is_file():
+                    geometry = geometry_from_dsc(session.descriptor_path.read_bytes())
+                mount = create_filesystem("adfs").open(reader, geometry)
+                yield mount
+            except DiskError:
+                raise
+            except Exception as exc:
+                raise DiskError(self._friendly_engine_error(str(exc))) from exc
+            finally:
+                # _ADFSMount does not currently expose close(), but its
+                # DiscImage owns the memoryview borrowed from ImageReader.
+                # Release that view before closing the mmap.
+                if mount is not None:
+                    adfs = getattr(mount, "_adfs", None)
+                    unified = getattr(adfs, "_d", None)
+                    disc_image = getattr(unified, "_disc_image", None)
+                    try:
+                        close_adfs = getattr(adfs, "close", None)
+                        if callable(close_adfs):
+                            close_adfs()
+                    finally:
+                        close_disc = getattr(disc_image, "close", None)
+                        if callable(close_disc):
+                            close_disc()
+                reader.close()
+
     @staticmethod
     def _append_warning(session: ImageSession, warning: str) -> None:
         if warning not in session.warnings:
@@ -247,6 +296,8 @@ class DiskService:
             if session.kind == "tape":
                 session.tape = parse_uef(path.read_bytes())
             self._normalise_beebscsi_dat_size(session)
+            if session.descriptor_path and session.path.suffix.lower() == ".dat":
+                self._optimise_sparse_file(session.path)
         except (OSError, KeyError, ValueError, json.JSONDecodeError, UEFError) as exc:
             raise DiskError("That image session no longer exists.") from exc
         with self._lock:
@@ -405,6 +456,8 @@ class DiskService:
             if detected_kind != kind:
                 session.kind = detected_kind
         self._normalise_beebscsi_dat_size(session)
+        if session.descriptor_path and session.path.suffix.lower() == ".dat":
+            self._optimise_sparse_file(session.path)
         self._apply_target_hardware(session)
         with self._lock:
             self.sessions[image_id] = session
@@ -687,6 +740,27 @@ class DiskService:
             )
 
     @staticmethod
+    def _optimise_sparse_file(path: Path) -> None:
+        """Turn allocated zero ranges into holes without changing file bytes."""
+        try:
+            original = path.stat()
+            subprocess.run(
+                ["fallocate", "--dig-holes", str(path)],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            os.utime(
+                path,
+                ns=(original.st_atime_ns, original.st_mtime_ns),
+                follow_symlinks=False,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            # Sparse optimisation is an optional performance improvement. The
+            # image remains valid on filesystems or platforms without it.
+            return
+
+    @staticmethod
     def _finalise_beebscsi_directories(session: ImageSession) -> int:
         """Synchronise old ADFS directory sequence numbers for BBC hardware.
 
@@ -834,9 +908,21 @@ class DiskService:
         is_beebscsi = bool(
             session.descriptor_path and session.path.suffix.lower() == ".dat"
         )
+        if is_beebscsi:
+            self._optimise_sparse_file(session.path)
+        if (
+            is_beebscsi
+            and not session.dirty
+            and session.finalised_mtime_ns == session.path.stat().st_mtime_ns
+        ):
+            report("The previously validated hardware-ready pair is prepared", 1, 1)
+            return session.path
         total = 5 if is_beebscsi else 2
         report("Applying the selected hardware profile", 0, total)
-        self._apply_target_hardware(session)
+        # A paired DAT receives the same directory validation immediately
+        # below. Avoid traversing a large directory tree twice during save.
+        if not is_beebscsi:
+            self._apply_target_hardware(session)
         if is_beebscsi:
             report("Checking DAT size against the DSC geometry", 1, total)
             self._normalise_beebscsi_dat_size(session)
@@ -857,6 +943,7 @@ class DiskService:
                 )
             report("Validating the final DAT and DSC pair", 4, total)
             self._validate_created_beebscsi_pair(session)
+            self._optimise_sparse_file(session.path)
             report("The hardware-ready pair is prepared", total, total)
         if session.hfe_original_path:
             report("Encoding and verifying the HFE image", 1, total)
@@ -930,7 +1017,7 @@ class DiskService:
 
     @staticmethod
     def _copy_local_file(source: Path, target: Path) -> None:
-        """Clone a local image when possible, otherwise use the kernel copy path."""
+        """Clone or sparsely copy a local image without allocating zero ranges."""
         try:
             import fcntl
 
@@ -938,6 +1025,23 @@ class DiskService:
                 fcntl.ioctl(target_file.fileno(), FICLONE, source_file.fileno())
             return
         except OSError:
+            target.unlink(missing_ok=True)
+        try:
+            subprocess.run(
+                [
+                    "cp",
+                    "--reflink=auto",
+                    "--sparse=always",
+                    "--",
+                    str(source),
+                    str(target),
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return
+        except (OSError, subprocess.CalledProcessError):
             target.unlink(missing_ok=True)
         shutil.copyfile(source, target)
 
@@ -1105,6 +1209,10 @@ class DiskService:
                     pass
             else:
                 self.checkpoints.prune_automatic(session)
+            # Every API mutation passes through this finaliser. Persist the
+            # resulting dirty/export state here so recovery cannot resurrect
+            # an edited image as though it were still saved.
+            self._persist_session(session)
 
     def rollback_automatic_checkpoint(self, session: ImageSession, token: dict) -> None:
         """Restore a failed mutation and remove its now-redundant undo point."""
@@ -1463,6 +1571,8 @@ class DiskService:
                     self._canonicalise_created_beebscsi_root(session, title[:12])
                     self._validate_created_beebscsi_pair(session)
                 self._apply_target_hardware(session)
+                if native_format == "beebscsi":
+                    self._optimise_sparse_file(session.path)
                 if format_name in hfe_formats:
                     original = folder / f"{self.safe_filename(title) or 'blank'}.hfe"
                     hfe_layout = {
@@ -1745,6 +1855,133 @@ class DiskService:
         self._persist_session(session)
         session.dirty = True
 
+    def paste_mmb_slots(
+        self,
+        source: ImageSession,
+        target: ImageSession,
+        source_slots: list[int],
+        target_start: int,
+        *,
+        cut: bool = False,
+        replace: bool = False,
+    ) -> dict:
+        """Copy an MMB slot selection while preserving gaps and safe overlap.
+
+        Source bytes are snapshotted before anything is written.  That makes an
+        overlapping cut within one MMB behave like a block move, rather than a
+        sequence of swaps which can destroy a later source slot.
+        """
+        if source.kind != "mmb" or target.kind != "mmb":
+            raise DiskError("MMB slot paste requires an MMB source and destination.")
+        checked = sorted({self._check_slot(source, int(slot)) for slot in source_slots})
+        source_index = self.list_slots(source)
+        checked = [slot for slot in checked if source_index[slot]["formatted"]]
+        if not checked:
+            raise DiskError("Copy or cut at least one formatted MMB slot first.")
+        target_start = self._check_slot(target, int(target_start))
+        first = checked[0]
+        mapping = [(slot, target_start + slot - first) for slot in checked]
+        target_count = len(self.list_slots(target))
+        if any(destination >= target_count for _slot, destination in mapping):
+            raise DiskError(
+                "The pasted slot range would extend beyond the end of the MMB image."
+            )
+        same_image = source.id == target.id
+        if same_image and all(slot == destination for slot, destination in mapping):
+            return {
+                "pasted": False,
+                "noChange": True,
+                "sourceSlots": checked,
+                "targetSlots": [destination for _slot, destination in mapping],
+                "conflicts": [],
+            }
+
+        target_index = self.list_slots(target)
+        available_cut_slots = set(checked) if cut and same_image else set()
+        conflicts = [
+            {
+                "slot": destination,
+                "name": target_index[destination]["name"],
+            }
+            for _slot, destination in mapping
+            if target_index[destination]["formatted"]
+            and destination not in available_cut_slots
+        ]
+        if conflicts and not replace:
+            return {
+                "pasted": False,
+                "sourceSlots": checked,
+                "targetSlots": [destination for _slot, destination in mapping],
+                "conflicts": conflicts,
+            }
+
+        snapshots: dict[int, tuple[bytes, bytes, str | None]] = {}
+        with self._locked_sessions(source, target):
+            with source.path.open("rb") as image:
+                for slot in checked:
+                    image.seek(16 + slot * MMB_ENTRY_SIZE)
+                    entry = image.read(MMB_ENTRY_SIZE)
+                    image.seek(MMB_HEADER_SIZE + slot * MMB_SLOT_SIZE)
+                    disk = image.read(MMB_SLOT_SIZE)
+                    if len(entry) != MMB_ENTRY_SIZE or len(disk) != MMB_SLOT_SIZE:
+                        raise DiskError(f"MMB slot {slot} could not be read completely.")
+                    snapshots[slot] = (
+                        entry,
+                        disk,
+                        source.slot_source_names.get(slot),
+                    )
+
+            if cut:
+                with source.path.open("r+b") as image:
+                    for slot in checked:
+                        image.seek(16 + slot * MMB_ENTRY_SIZE)
+                        image.write(b"\0" * 15 + b"\xf0")
+                        image.seek(MMB_HEADER_SIZE + slot * MMB_SLOT_SIZE)
+                        image.write(b"\0" * MMB_SLOT_SIZE)
+
+            with target.path.open("r+b") as image:
+                for slot, destination in mapping:
+                    entry, disk, _source_name = snapshots[slot]
+                    image.seek(16 + destination * MMB_ENTRY_SIZE)
+                    image.write(entry)
+                    image.seek(MMB_HEADER_SIZE + destination * MMB_SLOT_SIZE)
+                    image.write(disk)
+
+        destinations = {destination for _slot, destination in mapping}
+        if cut:
+            for slot in checked:
+                source.slot_cache.pop(slot, None)
+                source.slot_source_names.pop(slot, None)
+        for slot, destination in mapping:
+            target.slot_cache.pop(destination, None)
+            target.slot_source_names.pop(destination, None)
+            source_name = snapshots[slot][2]
+            if source_name is not None:
+                target.slot_source_names[destination] = source_name
+
+        if cut and same_image and source.menu_slot in checked:
+            source.menu_slot = dict(mapping)[source.menu_slot]
+        elif target.menu_slot in destinations and target.menu_slot not in {
+            destination for slot, destination in mapping if slot == source.menu_slot
+        }:
+            target.menu_slot = None
+            target.menu_type = None
+            target.menu_scanned = False
+            target.menu_entries = None
+
+        source.dirty = source.dirty or cut
+        target.dirty = True
+        if cut and not same_image:
+            self._persist_session(source)
+        self._persist_session(target)
+        return {
+            "pasted": True,
+            "sourceSlots": checked,
+            "targetSlots": [destination for _slot, destination in mapping],
+            "conflicts": conflicts,
+            "cut": cut,
+        }
+
     def set_mmb_drive_mapping(
         self,
         session: ImageSession,
@@ -1839,6 +2076,109 @@ class DiskService:
     def compound(path: Path, inner: str | None = None) -> str:
         return f"{path}:{inner}" if inner is not None else str(path)
 
+    @staticmethod
+    def _capacity_from_mount(mount) -> dict:
+        try:
+            total = max(0, int(mount.size_bytes()))
+            free = min(total, max(0, int(mount.free_bytes())))
+        except (AttributeError, TypeError, ValueError):
+            return {
+                "available": False,
+                "reason": "This filesystem does not report free-space capacity.",
+            }
+        return {
+            "available": total > 0,
+            "unit": "bytes",
+            "total": total,
+            "used": total - free,
+            "free": free,
+        }
+
+    @staticmethod
+    def _list_adfs_mount(mount, inner: str, session_name: str) -> dict:
+        """Return the same stable row schema as ``disc ls --as json``."""
+        try:
+            from oaknut.disc.cli import _natural_name_key
+            from oaknut.file import format_access_text
+            from oaknut.filesystem import AcornMetadata, Datestamped, Filetyped
+        except ImportError as exc:
+            raise DiskError("The Oaknut ADFS listing API is unavailable.") from exc
+
+        target = inner or "$"
+        if not mount.exists(target):
+            raise DiskError(f"Path not found: {target}")
+        if not mount.stat(target).is_dir:
+            raise DiskError(f"{target} is not a directory.")
+
+        rows: list[dict] = []
+        for child in sorted(mount.iter_entries(target), key=lambda entry: _natural_name_key(entry.name)):
+            if child.is_dir:
+                rows.append({
+                    "name": child.name,
+                    "type": "dir",
+                    "load": "",
+                    "exec": "",
+                    "filetype": "",
+                    "datestamp": "",
+                    "length": sum(1 for _entry in mount.iter_entries(child.path)),
+                    "attr": "",
+                })
+                continue
+
+            load = execute = 0
+            attr = ""
+            filetype: int | str = ""
+            datestamp = ""
+            if isinstance(mount, AcornMetadata):
+                metadata = mount.acorn_meta(child.path)
+                load = int(metadata.load_address or 0)
+                execute = int(metadata.exec_address or 0)
+                if metadata.access is not None:
+                    attr = format_access_text(metadata.access)
+            if isinstance(mount, Filetyped):
+                value = mount.filetype(child.path)
+                if value is not None:
+                    filetype = int(value)
+            if isinstance(mount, Datestamped):
+                value = mount.datestamp(child.path)
+                if value is not None:
+                    datestamp = value.isoformat(sep="T", timespec="milliseconds")
+            rows.append({
+                "name": child.name,
+                "type": "file",
+                "load": load,
+                "exec": execute,
+                "filetype": filetype,
+                "datestamp": datestamp,
+                "length": int(child.length),
+                "attr": attr,
+            })
+
+        capacity = DiskService._capacity_from_mount(mount)
+        free = capacity.get("free")
+        return {
+            "entries": rows,
+            "title": str(getattr(mount, "title", "") or session_name),
+            "description": f"Free: {free:,} bytes" if isinstance(free, int) else "",
+            "path": target,
+            "capacity": capacity,
+        }
+
+    def browse_directory(
+        self,
+        session: ImageSession,
+        inner: str,
+        slot: int | None,
+        side: int | None = None,
+    ) -> dict:
+        """List one directory and return its capacity without a second mount."""
+        if session.kind == "adfs" and slot is None:
+            with self.adfs_mount(session) as mount:
+                return self._list_adfs_mount(mount, inner or "$", session.name)
+        listing = self.list_directory(session, inner, slot, side)
+        listing["capacity"] = self.capacity(session, slot)
+        return listing
+
     def list_directory(self, session: ImageSession, inner: str, slot: int | None, side: int | None = None) -> dict:
         if session.kind == "tape":
             tape = self._tape(session)
@@ -1864,6 +2204,9 @@ class DiskService:
                 "description": f"UEF {tape.version} · {len(tape.files)} tape files",
                 "path": "$",
             }
+        if session.kind == "adfs" and slot is None:
+            with self.adfs_mount(session) as mount:
+                return self._list_adfs_mount(mount, inner or "$", session.name)
         disk_path = self.resolve(session, slot)
         requested_inner = "$" if inner is None else inner
         resolved_inner = self.inner_for(session, requested_inner, side)
@@ -1984,18 +2327,71 @@ class DiskService:
         slot: int | None,
         side: int | None = None,
     ) -> list[dict]:
-        """Return every file from the populated DFS prefix groups."""
+        """Return every file from the populated DFS prefix groups.
+
+        A DFS catalogue is flat even though its one-character prefixes are
+        presented as folders in the workbench.  Asking ``disc ls`` to list
+        the root and then starting it again for every prefix was particularly
+        noticeable while importing a floppy into a large ADFS image.  Mount
+        the already-identified floppy once and walk that small catalogue in
+        process instead.
+        """
         if session.kind not in {"dfs", "mmb"} or (session.kind == "mmb" and slot is None):
             raise DiskError("Select a DFS disk before listing catalogue groups.")
+        try:
+            from oaknut.disc.mount import resolve_mount
+            from oaknut.file import format_access_text
+            from oaknut.filesystem import AcornMetadata
+        except ImportError as exc:
+            raise DiskError("The Oaknut DFS catalogue API is unavailable.") from exc
+
+        disk_path = self.resolve(session, slot)
+        root = self.inner_for(session, "$", side)
         files: list[dict] = []
-        for group in self.list_directory(session, "", slot, side)["entries"]:
-            prefix = self.validate_dfs_prefix(str(group.get("name") or ""))
-            for row in self.list_directory(session, prefix, slot, side)["entries"]:
-                files.append({
-                    **row,
-                    "prefix": prefix,
-                    "path": f"{prefix}.{row['name']}",
-                })
+        try:
+            with session.lock, resolve_mount(self.compound(disk_path, root)) as resolved:
+                mount = resolved.mount
+                pending = [resolved.path]
+                while pending:
+                    directory = pending.pop()
+                    for entry in mount.iter_entries(directory):
+                        if entry.is_dir:
+                            pending.append(str(entry.path))
+                            continue
+                        path = str(entry.path)
+                        prefix = path.rsplit(".", 1)[0] if "." in path else "$"
+                        load = execute = 0
+                        attr = ""
+                        if isinstance(mount, AcornMetadata):
+                            metadata = mount.acorn_meta(path)
+                            load = int(metadata.load_address or 0)
+                            execute = int(metadata.exec_address or 0)
+                            if metadata.access is not None:
+                                attr = format_access_text(metadata.access)
+                        files.append({
+                            "name": entry.name,
+                            "type": "file",
+                            "load": load,
+                            "exec": execute,
+                            "filetype": "",
+                            "datestamp": "",
+                            "length": int(entry.length),
+                            "attr": attr,
+                            "prefix": prefix,
+                            "path": path,
+                        })
+        except Exception:
+            # Retain the command-backed path for unusual third-party DFS
+            # variants and for a useful engine error on damaged images.
+            files.clear()
+            for group in self.list_directory(session, "", slot, side)["entries"]:
+                prefix = self.validate_dfs_prefix(str(group.get("name") or ""))
+                for row in self.list_directory(session, prefix, slot, side)["entries"]:
+                    files.append({
+                        **row,
+                        "prefix": prefix,
+                        "path": f"{prefix}.{row['name']}",
+                    })
         return files
 
     @staticmethod
@@ -2059,6 +2455,9 @@ class DiskService:
                 "used": used,
                 "free": total - used,
             }
+        if session.kind == "adfs" and slot is None:
+            with self.adfs_mount(session) as mount:
+                return self._capacity_from_mount(mount)
 
         reports = self.stat(session, slot).get("reports", {})
         rows = [
@@ -2109,6 +2508,13 @@ class DiskService:
             self._run(expanded)
             self._mark_mutated(session, slot)
 
+    def make_directory(self, session: ImageSession, path: str) -> None:
+        """Create one ADFS directory without re-identifying the whole image."""
+        self.require_writable_geometry(session)
+        with self.adfs_mount(session) as mount:
+            mount.make_directory(path, parents=True, exist_ok=False)
+        self._mark_mutated(session, None)
+
     def set_access(
         self,
         session: ImageSession,
@@ -2134,8 +2540,13 @@ class DiskService:
         with session.lock:
             disk_path = self.resolve(session, slot)
             root = self.compound(disk_path, self.inner_for(session, "$", side))
-            with resolve_mount(root, writable=True) as resolved:
-                mount = resolved.mount
+            mount_context = (
+                self.adfs_mount(session)
+                if session.kind == "adfs" and slot is None
+                else resolve_mount(root, writable=True)
+            )
+            with mount_context as opened:
+                mount = opened if session.kind == "adfs" and slot is None else opened.mount
                 if not isinstance(mount, AcornMetadata):
                     raise DiskError("This filesystem does not carry Acorn access bits.")
                 resolved_targets = [self.inner_for(session, path, side) for path in targets]
@@ -2176,6 +2587,29 @@ class DiskService:
                 raise DiskError("Choose a DFS catalogue group before adding a file.")
             self.validate_dfs_prefix(destination.split(".", 1)[0])
         self.validate_leaf_name(session, destination.rsplit(".", 1)[-1], slot)
+        if session.kind == "adfs" and slot is None:
+            try:
+                from oaknut.file import AcornMeta, parse_address
+                from oaknut.file.filetypes import parse_filetype
+            except ImportError as exc:
+                raise DiskError("The Oaknut ADFS import API is unavailable.") from exc
+            if filetype and (load or execute):
+                raise DiskError("A RISC OS filetype cannot be combined with load or execute addresses.")
+            with self.adfs_mount(session) as mount:
+                mount.write_bytes(destination, host_path.read_bytes())
+                current = mount.acorn_meta(destination)
+                mount.set_acorn_meta(
+                    destination,
+                    AcornMeta(
+                        load_address=parse_address(load) if load else 0,
+                        exec_address=parse_address(execute) if execute else 0,
+                        access=current.access,
+                    ),
+                )
+                if filetype:
+                    mount.set_filetype(destination, parse_filetype(filetype))
+            self._mark_mutated(session, None)
+            return
         args = ["put"]
         if load:
             args += ["--load", load]
@@ -2187,6 +2621,114 @@ class DiskService:
         with session.lock:
             self._run(args)
             self._mark_mutated(session, slot)
+
+    def put_host_tree(
+        self,
+        session: ImageSession,
+        slot: int | None,
+        destination_dir: str,
+        items: list[dict],
+        *,
+        preserve_directories: bool,
+        replace: bool = False,
+        side: int | None = None,
+    ) -> dict:
+        """Import a reviewed host folder in one writable filesystem mount.
+
+        Each item contains a validated target path relative to
+        ``destination_dir`` and a local temporary ``hostPath``.  Keeping the
+        complete batch in one mount avoids reopening and checkpointing a large
+        ADFS image for every small file.
+        """
+        if session.kind == "tape" or (session.kind == "mmb" and slot is None):
+            raise DiskError("Open a writable disk before importing a host folder.")
+        self.require_writable_geometry(session)
+        is_dfs = session.kind == "dfs" or (session.kind == "mmb" and slot is not None)
+        if preserve_directories and is_dfs:
+            raise DiskError("DFS cannot preserve host folders; import their files into one catalogue group instead.")
+        if is_dfs:
+            destination_dir = self.validate_dfs_prefix(destination_dir)
+        elif not destination_dir.startswith("$"):
+            raise DiskError("Choose a valid ADFS destination directory.")
+        if not items:
+            raise DiskError("No relevant files were selected for import.")
+
+        plans: list[dict] = []
+        seen: set[str] = set()
+        for item in items:
+            relative = str(item.get("targetPath") or "").replace("\\", "/").strip("/")
+            parts = [part for part in relative.split("/") if part]
+            if not parts or any(part in {".", ".."} for part in parts):
+                raise DiskError("A selected folder contains an invalid relative path.")
+            if is_dfs and len(parts) != 1:
+                raise DiskError("DFS folder imports must use flat target filenames.")
+            for part in parts:
+                self.validate_leaf_name(session, part, slot)
+            destination = ".".join([destination_dir.rstrip("."), *parts])
+            key = destination.casefold()
+            if key in seen:
+                raise DiskError(f"More than one selected file maps to {destination}.")
+            seen.add(key)
+            plans.append({**item, "parts": parts, "destination": destination})
+
+        try:
+            from oaknut.disc.mount import resolve_mount
+            from oaknut.file import AcornMeta
+        except ImportError as exc:
+            raise DiskError("The Oaknut folder import API is unavailable.") from exc
+
+        with session.lock:
+            disk_path = self.resolve(session, slot)
+            root = self.compound(disk_path, self.inner_for(session, "$", side))
+            mount_context = (
+                self.adfs_mount(session)
+                if session.kind == "adfs" and slot is None
+                else resolve_mount(root, writable=True)
+            )
+            with mount_context as opened:
+                mount = opened if session.kind == "adfs" and slot is None else opened.mount
+                conflicts: list[str] = []
+                directories: set[str] = set()
+                if preserve_directories:
+                    for plan in plans:
+                        for depth in range(1, len(plan["parts"])):
+                            directories.add(".".join([destination_dir.rstrip("."), *plan["parts"][:depth]]))
+                for directory in sorted(directories, key=lambda value: (value.count("."), value.casefold())):
+                    if mount.exists(directory) and not mount.stat(directory).is_dir:
+                        raise DiskError(f"{directory} is an ordinary file, so a folder cannot be created there.")
+                for plan in plans:
+                    destination = plan["destination"]
+                    if mount.exists(destination):
+                        if mount.stat(destination).is_dir:
+                            raise DiskError(f"{destination} is a directory, so a file cannot replace it.")
+                        conflicts.append(destination)
+                if conflicts and not replace:
+                    return {"imported": [], "conflicts": conflicts}
+                for directory in sorted(directories, key=lambda value: (value.count("."), value.casefold())):
+                    mount.make_directory(directory, parents=True, exist_ok=True)
+                imported: list[str] = []
+
+                def parse_address(value, fallback):
+                    return int(str(value), 0) if value else fallback
+
+                for plan in plans:
+                    mount.write_bytes(plan["destination"], Path(plan["hostPath"]).read_bytes())
+                    metadata = plan.get("metadata") or {}
+                    if metadata.get("load") or metadata.get("execute"):
+                        current = mount.acorn_meta(plan["destination"])
+                        mount.set_acorn_meta(
+                            plan["destination"],
+                            AcornMeta(
+                                load_address=parse_address(metadata.get("load"), current.load_address),
+                                exec_address=parse_address(metadata.get("execute"), current.exec_address),
+                                access=current.access,
+                            ),
+                        )
+                    if metadata.get("filetype") and hasattr(mount, "set_filetype"):
+                        mount.set_filetype(plan["destination"], metadata["filetype"])
+                    imported.append(plan["destination"])
+            self._mark_mutated(session, slot)
+        return {"imported": imported, "conflicts": []}
 
     def copy(
         self,
@@ -2228,6 +2770,56 @@ class DiskService:
             return
         source_path = self.resolve(source, source_slot)
         target_path = self.resolve(target, target_slot)
+        if target.kind == "adfs" and target_slot is None:
+            try:
+                from oaknut.disc.cli import (
+                    _collect_copy_items,
+                    _ensure_dir_chain,
+                    _in_global_storage_order,
+                    _write_copy_item,
+                )
+                from oaknut.disc.mount import resolve_mount
+            except ImportError as exc:
+                raise DiskError("The Oaknut direct-copy API is unavailable.") from exc
+
+            def copy_between_mounts(source_mount, target_mount) -> None:
+                items = _collect_copy_items(
+                    source_mount,
+                    source_inner,
+                    dst_mount=target_mount,
+                    dst_bare=target_inner,
+                    dst_slash=False,
+                    recursive=recursive,
+                    wildcards=False,
+                )
+                for item in _in_global_storage_order(source_mount, items):
+                    if item["kind"] == "mkdir":
+                        _ensure_dir_chain(target_mount, item["dst"])
+                    else:
+                        self._write_adfs_copy_item(
+                            target_mount,
+                            str(item["dst"]),
+                            item,
+                            _write_copy_item,
+                        )
+
+            with self._locked_sessions(source, target):
+                if source.kind == "adfs" and source_slot is None:
+                    if source.id == target.id:
+                        with self.adfs_mount(target) as mount:
+                            copy_between_mounts(mount, mount)
+                    else:
+                        with self.adfs_mount(source) as source_mount:
+                            with self.adfs_mount(target) as target_mount:
+                                copy_between_mounts(source_mount, target_mount)
+                else:
+                    source_root = self.inner_for(source, "$", source_side)
+                    with resolve_mount(self.compound(source_path, source_root)) as source_resolved:
+                        with self.adfs_mount(target) as target_mount:
+                            copy_between_mounts(source_resolved.mount, target_mount)
+            target.dirty = True
+            target.hfe_export_path = None
+            return
         args = ["cp", "--no-wildcards"]
         if recursive:
             args.append("--recursive")
@@ -2380,8 +2972,7 @@ class DiskService:
             raise DiskError("The Oaknut bulk-copy API is unavailable.") from exc
 
         with self._locked_sessions(source, target):
-            with resolve_mount(f"{target.path}:$", writable=True) as target_resolved:
-                target_mount = target_resolved.mount
+            with self.adfs_mount(target) as target_mount:
                 for offset, item in enumerate(items):
                     slot = int(item["sourceSlot"])
                     source_name = source_names.get(
@@ -2929,12 +3520,10 @@ class DiskService:
         """Repair an already copied SSD/DSD tree in one writable ADFS mount."""
         try:
             from oaknut.disc.cli import _file_item, _write_copy_item
-            from oaknut.disc.mount import resolve_mount
         except ImportError as exc:
             raise DiskError("The Oaknut loader-repair API is unavailable.") from exc
 
-        with resolve_mount(f"{target.path}:$", writable=True) as resolved:
-            mount = resolved.mount
+        with self.adfs_mount(target) as mount:
             pending = [directory]
             items: list[dict] = []
             while pending:
@@ -3072,14 +3661,15 @@ class DiskService:
             # rejects stale browser paths without modifying the image.
             self.list_directory(target, target_parent, None)
             target_directory = target_parent
+        dfs_rows: dict[int | None, list[dict]] = {}
         if source.kind == "dfs":
             if source.path.name.lower().endswith(".dsd"):
-                source_has_files = bool(
-                    self.list_dfs_catalogue_files(source, None, 0)
-                    or self.list_dfs_catalogue_files(source, None, 2)
-                )
+                dfs_rows[0] = self.list_dfs_catalogue_files(source, None, 0)
+                dfs_rows[2] = self.list_dfs_catalogue_files(source, None, 2)
+                source_has_files = bool(dfs_rows[0] or dfs_rows[2])
             else:
-                source_has_files = bool(self.list_dfs_catalogue_files(source, None))
+                dfs_rows[None] = self.list_dfs_catalogue_files(source, None)
+                source_has_files = bool(dfs_rows[None])
             if not source_has_files:
                 raise DiskError(
                     "The DFS disk image is empty. Nothing was extracted."
@@ -3089,24 +3679,24 @@ class DiskService:
                 "The ADFS disk image is empty. Nothing was extracted."
             )
         if create_directory:
-            parent = self.list_directory(target, target_parent, None)
-            if any(
-                str(row.get("name", "")).casefold() == directory_name.casefold()
-                for row in parent["entries"]
-            ):
-                raise DiskError(
-                    f"“{directory_name}” already exists in the destination directory."
-                )
+            # Check and create through one trusted mount.  This avoids two
+            # complete ADFS opens before an import can begin.
+            with self.adfs_mount(target) as target_mount:
+                if not target_mount.exists(target_parent):
+                    raise DiskError(f"Path not found: {target_parent}")
+                if target_mount.exists(target_directory):
+                    raise DiskError(
+                        f"“{directory_name}” already exists in the destination directory."
+                    )
+                report(f"Creating destination directory {target_directory}", 0, None)
+                target_mount.make_directory(target_directory, parents=True, exist_ok=False)
+            self._mark_mutated(target, None)
 
         rollback_path: Path | None = None
         dirty_before = target.dirty
         warnings_before = list(target.warnings)
         hfe_export_before = target.hfe_export_path
-        if create_directory:
-            report(f"Creating destination directory {target_directory}", 0, None)
-            self._run(["mkdir", "-p", self.compound(target.path, target_directory)])
-            target.dirty = True
-        else:
+        if not create_directory:
             report(f"Preparing safe extraction into {target_directory}", 0, None)
             rollback_path = target.path.parent / f".import-rollback-{uuid.uuid4().hex}"
             self._copy_local_file(target.path, rollback_path)
@@ -3198,13 +3788,13 @@ class DiskService:
                     report,
                 )
             elif source.kind == "dfs" and source.path.name.lower().endswith(".dsd"):
-                side_zero = self.list_dfs_catalogue_files(source, None, 0)
-                side_two = self.list_dfs_catalogue_files(source, None, 2)
+                side_zero = dfs_rows[0]
+                side_two = dfs_rows[2]
                 if side_zero and side_two:
                     for side, rows in ((0, side_zero), (2, side_two)):
                         report(f"Extracting DFS side {side}", side // 2, 2)
                         side_directory = f"{target_directory}.SIDE{side}"
-                        self._run(["mkdir", "-p", self.compound(target.path, side_directory)])
+                        self.make_directory(target, side_directory)
                         self._copy_rows_to_adfs(source, None, side, rows, target, side_directory, report)
                         report(f"Extracted DFS side {side}", side // 2 + 1, 2)
                 else:
@@ -3213,7 +3803,20 @@ class DiskService:
                         source, None, side, side_zero or side_two, target, target_directory, report
                     )
             else:
-                self._copy_image_listing_to_adfs(source, None, None, target, target_directory, report)
+                if source.kind == "dfs":
+                    self._copy_image_listing_to_adfs(
+                        source,
+                        None,
+                        None,
+                        target,
+                        target_directory,
+                        report,
+                        rows=dfs_rows[None],
+                    )
+                else:
+                    self._copy_image_listing_to_adfs(
+                        source, None, None, target, target_directory, report
+                    )
             if source.kind in {"dfs", "tape", "adfs"}:
                 report("Checking copied loaders for ADFS command conflicts", None, None)
                 loader_repairs, loader_warnings = self._repair_copied_adfs_loaders(
@@ -3265,12 +3868,15 @@ class DiskService:
         target: ImageSession,
         target_directory: str,
         progress: Callable[[str, int | None, int | None], None] | None = None,
+        *,
+        rows: list[dict] | None = None,
     ) -> None:
-        rows = (
-            self.list_dfs_catalogue_files(source, source_slot, source_side)
-            if source.kind in {"dfs", "mmb"}
-            else self.list_directory(source, "$", source_slot, source_side)["entries"]
-        )
+        if rows is None:
+            rows = (
+                self.list_dfs_catalogue_files(source, source_slot, source_side)
+                if source.kind in {"dfs", "mmb"}
+                else self.list_directory(source, "$", source_slot, source_side)["entries"]
+            )
         self._copy_rows_to_adfs(
             source, source_slot, source_side, rows, target, target_directory, progress
         )
@@ -3290,7 +3896,87 @@ class DiskService:
             return
         source_path = self.resolve(source, source_slot)
         report(f"Copying the complete disk catalogue in one batch", 0, len(rows))
-        source_pattern = "*" if source.kind == "dfs" else "$.*"
+        if target.kind == "adfs" and source.kind in {"dfs", "mmb"}:
+            try:
+                from oaknut.disc.cli import (
+                    _ensure_dir_chain,
+                    _file_item,
+                    _in_global_storage_order,
+                    _write_copy_item,
+                )
+                from oaknut.disc.mount import resolve_mount
+            except ImportError as exc:
+                raise DiskError("The Oaknut direct-copy API is unavailable.") from exc
+            source_root = self.inner_for(source, "$", source_side)
+            with self._locked_sessions(source, target):
+                with resolve_mount(self.compound(source_path, source_root)) as source_resolved:
+                    copy_items = self._collect_dfs_catalogue_items(
+                        source_resolved.mount,
+                        target_directory,
+                        _file_item,
+                    )
+                    copy_items = _in_global_storage_order(source_resolved.mount, copy_items)
+                with self.adfs_mount(target) as target_mount:
+                    for item in copy_items:
+                        if item["kind"] == "mkdir":
+                            _ensure_dir_chain(target_mount, item["dst"])
+                        else:
+                            self._write_adfs_copy_item(
+                                target_mount,
+                                str(item["dst"]),
+                                item,
+                                _write_copy_item,
+                            )
+            target.dirty = True
+            target.hfe_export_path = None
+            report("Copied the complete disk catalogue", len(rows), len(rows))
+            return
+        if target.kind == "adfs" and source.kind == "adfs":
+            try:
+                from oaknut.disc.cli import (
+                    _collect_copy_items,
+                    _ensure_dir_chain,
+                    _in_global_storage_order,
+                    _write_copy_item,
+                )
+            except ImportError as exc:
+                raise DiskError("The Oaknut direct-copy API is unavailable.") from exc
+
+            def copy_between_mounts(source_mount, target_mount) -> None:
+                copy_items = _collect_copy_items(
+                    source_mount,
+                    "$",
+                    dst_mount=target_mount,
+                    dst_bare=target_directory,
+                    dst_slash=True,
+                    recursive=True,
+                    wildcards=False,
+                )
+                copy_items = _in_global_storage_order(source_mount, copy_items)
+                for item in copy_items:
+                    if item["kind"] == "mkdir":
+                        _ensure_dir_chain(target_mount, item["dst"])
+                    else:
+                        self._write_adfs_copy_item(
+                            target_mount,
+                            str(item["dst"]),
+                            item,
+                            _write_copy_item,
+                        )
+
+            with self._locked_sessions(source, target):
+                if source.id == target.id:
+                    with self.adfs_mount(target) as mount:
+                        copy_between_mounts(mount, mount)
+                else:
+                    with self.adfs_mount(source) as source_mount:
+                        with self.adfs_mount(target) as target_mount:
+                            copy_between_mounts(source_mount, target_mount)
+            target.dirty = True
+            target.hfe_export_path = None
+            report("Copied the complete disk catalogue", len(rows), len(rows))
+            return
+        source_pattern = "*" if source.kind in {"dfs", "mmb"} else "$.*"
         self._run(
             [
                 "cp",
@@ -3307,8 +3993,54 @@ class DiskService:
     def read_file(self, session: ImageSession, slot: int | None, inner: str, side: int | None = None) -> bytes:
         if session.kind == "tape":
             return self._tape_file(session, inner).data
+        if session.kind == "adfs" and slot is None:
+            with self.adfs_mount(session) as mount:
+                return mount.read_bytes(inner)
         disk_path = self.resolve(session, slot)
         return self._run(["get", "--meta-format", "none", self.compound(disk_path, self.inner_for(session, inner, side)), "-"], binary=True)
+
+    def file_metadata(
+        self,
+        session: ImageSession,
+        slot: int | None,
+        inner: str,
+        side: int | None = None,
+    ) -> dict:
+        """Return portable Acorn metadata for one exported loose file."""
+        if session.kind == "tape":
+            item = self._tape_file(session, inner)
+            return {
+                "load": item.load,
+                "execute": item.execute,
+                "access": 0,
+                "length": len(item.data),
+            }
+        try:
+            from oaknut.disc.mount import resolve_mount
+        except ImportError as exc:
+            raise DiskError("The Oaknut metadata API is unavailable.") from exc
+        if session.kind == "adfs" and slot is None:
+            with self.adfs_mount(session) as mount:
+                stat = mount.stat(inner)
+                metadata = mount.acorn_meta(inner)
+                return {
+                    "load": int(metadata.load_address or 0),
+                    "execute": int(metadata.exec_address or 0),
+                    "access": int(metadata.access or 0),
+                    "length": int(stat.length or 0),
+                }
+        disk_path = self.resolve(session, slot)
+        root = self.compound(disk_path, self.inner_for(session, "$", side))
+        with session.lock, resolve_mount(root) as resolved:
+            target = self.inner_for(session, inner, side)
+            stat = resolved.mount.stat(target)
+            metadata = resolved.mount.acorn_meta(target)
+            return {
+                "load": int(metadata.load_address or 0),
+                "execute": int(metadata.exec_address or 0),
+                "access": int(metadata.access or 0),
+                "length": int(stat.length or 0),
+            }
 
     def export_file(
         self,
@@ -3321,6 +4053,10 @@ class DiskService:
         target = self.work_dir / f"download-{uuid.uuid4().hex}"
         if session.kind == "tape":
             target.write_bytes(self._tape_file(session, inner).data)
+            return target
+        if session.kind == "adfs" and slot is None:
+            with self.adfs_mount(session) as mount:
+                target.write_bytes(mount.read_bytes(inner))
             return target
         disk_path = self.resolve(session, slot)
         try:

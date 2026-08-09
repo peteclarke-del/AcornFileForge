@@ -80,7 +80,7 @@ Bug reports and proposed improvements can be raised in the
 3. Double-click directories or MMB slots to browse them. Use the `..` row to
    return to the parent, or select a breadcrumb to jump straight there.
 4. Drag files, directories, disk images, or MMB slots to their destination.
-5. Use **History** to undo the latest operation or create a named checkpoint
+5. Use **Edit** to undo the latest operation or create a named checkpoint
    before a larger experiment.
 6. Use **Tools → Check filesystem** after substantial edits.
 7. Use **Save Image** in the pane heading to download the finished image.
@@ -102,9 +102,9 @@ flowchart LR
 
 ![Online Library search and multi-selection](app/static/help/online-library.png)
 
-Every writable media pane has an Online Library action. At the root of an MMB
-it is labelled **Find Discs**; inside DFS, ADFS and RISC OS filesystems it is
-labelled **Online Library**. It searches enabled catalogues on the server so a
+Every writable media pane has a **Library** menu. At the root of an MMB it
+offers **Find disks online**; inside DFS, ADFS and RISC OS filesystems it offers
+**Find software online**. It searches enabled catalogues on the server so a
 browser does not need to negotiate cross-site download rules.
 
 The initial machine filter comes from the Workbench hardware profile applied
@@ -156,7 +156,7 @@ volume contains local changes made through **Sources…**.
 ### Add online disks to an MMB
 
 1. Open the MMB at **All disks** and optionally select several empty slots.
-2. Choose **Find Discs**, select a machine and search by title, publisher or
+2. Choose **Library → Find disks online**, select a machine and search by title, publisher or
    keyword. A blank search browses the catalogue's current page.
 3. Select the Title, Publisher, Year or Source heading to sort the results.
    The active heading shows ↑ for ascending or ↓ for descending order; select
@@ -243,10 +243,17 @@ Once the download has been prepared, the orange changed indicator clears in
 every pane showing that image. It returns after the next edit.
 If a browser suppresses the automatic handoff after a long DAT/DSC validation,
 use that link without returning to the work pane or risking the current session.
-Large saves show a foreground progress dialog while hardware checks, geometry,
-directory copies, the free-space map, and the final DAT/DSC pair are prepared.
-Once ZIP streaming begins, transfer progress moves to the browser's download
-panel so the application does not buffer a large image in memory.
+Every save uses the same foreground progress dialog. It covers validation,
+checksums, the technical catalogue and construction of the complete ZIP. Small
+floppy images move through those stages quickly; large DAT, HDF, RAW and MMB
+images show real progress for as long as they need. The ready dialog appears
+only after the timestamped ZIP is complete on disk. Starting the download then
+hands an ordinary file with a known size to the browser immediately.
+BeebSCSI DAT files usually contain large zero-filled free areas. Acorn File
+Forge stores those areas as sparse ranges in the private working copy and its
+checkpoints, calculates checksums without physically rereading sparse holes,
+and uses fast ZIP compression for sparse DAT downloads. Extracting the ZIP
+still produces the complete byte-for-byte DAT size required by the hardware.
 
 Click the image filename in any pane heading to rename the working image.
 Press Enter or click elsewhere to keep the new name, or press Escape to cancel.
@@ -274,12 +281,12 @@ do not have fixed filesystem free space.
 Every request that can change an existing image begins by taking an automatic
 checkpoint. If the request makes no change, that speculative checkpoint is
 removed. If it succeeds, partially completes, or stops after some items in a
-bulk operation, the previous state remains available through **History → Undo
+bulk operation, the previous state remains available through **Edit → Undo
 last change**. Undo consumes the latest automatic point, so it can be repeated
 to step backwards through the most recent operations. The newest 20 automatic
 points are retained per working image.
 
-Use **History → Checkpoints** to create a permanent named point before a large
+Use **Edit → Checkpoints** to create a permanent named point before a large
 import, compaction, menu rebuild, or directory reorganisation. The same dialog
 lists named checkpoints and recent automatic points. Any listed point can be
 restored, and named points can be deleted when no longer required. Restoring a
@@ -294,9 +301,10 @@ bytes.
 
 On filesystems that support reflinks, snapshots use copy-on-write cloning. A
 large HDD checkpoint is therefore normally quick and initially consumes space
-only for blocks that later differ. The app falls back to a complete safe copy
-when reflinks are unavailable, so the first checkpoint of a large image can
-take longer on some Docker storage drivers.
+only for blocks that later differ. When reflinks are unavailable, the fallback
+copy preserves sparse zero ranges instead of writing hundreds of megabytes of
+unused DAT capacity. The logical checkpoint remains a complete byte-for-byte
+image and restores normally.
 
 Checkpoints live inside the private, browser-owned working session. They
 survive normal refreshes and container restarts with the Docker work volume,
@@ -440,9 +448,9 @@ validation target. Custom profiles are stored in the browser and the applied
 profile is also persisted with the private image session. The health dashboard
 highlights conflicts such as using the Tube with Electron or low-PAGE MMFS
 software. The active Workbench profile is remembered and supplies the workspace
-default used by Find Discs and Online Library on panes without their own
-profile. On first use this is Electron Plus 3, and selecting, saving, or applying
-a different profile changes that default.
+default used by **Library → Find disks online** and **Find software online** on
+panes without their own profile. On first use this is Electron Plus 3. Selecting,
+saving, or applying a different profile changes that default.
 
 Online Library search results carry short-lived server-side download tokens.
 They are retained for one hour in the private application work area, so a safe
@@ -478,7 +486,7 @@ still stops only at a safe filesystem boundary.
 | Media | Common names | What Acorn File Forge can do |
 |---|---|---|
 | Acorn DFS | SSD, DSD | Browse catalogue prefixes, add, export, rename, delete, lock, compact, validate, and copy files |
-| MMB | MMB | Browse all slots, create or insert disks, set read-only/read-write access, edit embedded DFS disks, drag to move or swap, and maintain Universal or SPI game menus |
+| MMB | MMB | Browse all slots, create or insert disks, set read-only/read-write access, edit embedded DFS disks, drag to cut and paste slot blocks, and maintain Universal or SPI game menus |
 | ADFS floppy | ADS, ADM, ADL, ADF, DSK | Traverse directories and perform normal file and directory operations when the FileCore layout is supported |
 | Acorn hard drive | DAT with matching DSC, HDF, HDD | Browse and edit hierarchical ADFS volumes, including virtual hard-drive images |
 | Raw drive dump | IMG, RAW, BIN, extensionless images | Identify the filesystem from its contents, then open it as DFS or ADFS |
@@ -543,15 +551,76 @@ permissive parsing used by modern desktop tools.
 Drag and drop is format-aware. The application will only offer an operation
 that makes sense for the target filing system.
 
+The same format-aware transfer rules are available from a conventional pane
+menu bar. **File** and **Edit** are always first, followed by **View**,
+**Library**, the format-specific **Menu** when applicable, **Analyse**, and
+**Tools**. File contains image open/save plus add/create actions. Edit contains
+clipboard commands, Undo and Checkpoints. View contains refresh, MMB return and
+DSD-side commands. The pane-heading icons remain quick shortcuts.
+
+Open **File** to add a file or create the directory/catalogue object supported
+by the current filesystem. Open **Edit** for **Cut**, **Copy** and **Paste**.
+The clipboard is intentionally single-use: browsing and selecting a destination
+keeps it, while a successful paste, cancelling paste, pressing Escape, or
+starting another image-changing operation clears it. Use Ctrl/Cmd-X,
+Ctrl/Cmd-C and Ctrl/Cmd-V when a pane has focus.
+
+MMB selections preserve their relative slot offsets. A cut may overlap its own
+source range because those source slots are treated as available during the
+atomic move. Copying onto occupied slots lists the exact slots and titles before
+replacement. Pasting loose files at the MMB index does not pretend that slots
+are directories. Instead, the app asks whether to build SSD or DSD media,
+previews the required consecutive slots, applies DFS seven-character names and
+one-character catalogue groups, and splits the files across more disks or sides
+when the 31-entry or 200 KiB side limit requires it.
+
+**File → Add folder** provides a batch host-folder import. On ADFS floppy and
+hard-drive images, review the preflight and choose either to recreate the
+selected folder tree beneath the current directory or flatten every file into
+the current directory. DFS cannot store nested folders, so it offers the flat
+import only and applies the normal seven-character name rules. At the MMB disk
+index, **Insert folder of disk images** searches the complete selected tree for
+SSD, DSD, DFS-formatted HFE and ZIP distributions, ignores unrelated files, and
+inserts the matches from the chosen or next empty slot. The folder picker
+selects one tree; drag several folders onto a pane when the browser supports
+multi-folder drops. A single preflight lists the operation and ignored files
+before the image changes, and ADFS/DFS folder batches use one filesystem mount
+and one undo checkpoint rather than one request per file.
+
+When several loose files or disk images are selected, the first review dialog
+offers **Apply to all remaining**. That accepts each later item's own detected
+defaults, legal filename and source metadata rather than stamping the first
+file's load or execute address onto the complete batch. The same shortcut is
+available for repeated ADFS and MMB menu-metadata reviews. Image-to-image copies
+read load, execute, access and filetype metadata from the source catalogue.
+Loose host files do not normally contain those values, so Acorn File Forge also
+recognises companion `.inf` sidecars and common `name,load-exec` filenames. It
+uses neutral metadata only when no reliable source exists.
+
+Double-clicking an ordinary file exports a small ZIP containing the loose file
+and its matching `.inf` sidecar. The sidecar records the catalogue filename,
+load address, execute address, length and lock state, so moving the file through
+a modern host filesystem does not discard its Acorn identity. Complete SSD,
+DSD, ADFS, HFE and MMB image saves do not receive a bogus image-level `.inf`:
+those formats already carry the metadata internally and their download ZIP
+includes the technical README and catalogue instead. DAT saves continue to
+include the required matching DSC geometry file.
+
 ### Files and directories
 
-- Select **+ Folder** in a writable ADFS floppy or hard-drive pane to create a
+- Choose **File → Add folder** or drop a host folder to import a complete batch.
+  ADFS defaults to preserving its hierarchy and also offers a flat import. DFS
+  imports the regular files into the open catalogue group because its directory
+  letters are prefixes rather than real folders. Name shortening is shown in
+  the preview. Existing ordinary files are replaced only when the explicit
+  replacement option is selected.
+- Select **File → New folder** in a writable ADFS floppy or hard-drive pane to create a
   directory at the current location. The name is checked against the target
   format before the image is changed.
-- DFS media use **+ Catalogue** instead. The pane root shows `$` and every
-  populated A–Z prefix as virtual catalogue groups. Open one to browse, add,
+- DFS media use **File → New catalogue group** instead. The pane root shows `$` and every
+  populated A-Z prefix as virtual catalogue groups. Open one to browse, add,
   rename, delete or protect its files. Because DFS cannot store an empty group,
-  **+ Catalogue** asks for the first file that will use a new prefix.
+  **New catalogue group** asks for the first file that will use a new prefix.
 - Double-click `..` to move to the parent directory. Inside an MMB disk, the
   root-level `..` row returns to **All disks** at the same slot.
 - Drag one or several DFS files onto a catalogue row to move them between
@@ -586,13 +655,19 @@ that makes sense for the target filing system.
   counts as one image. Unrelated text and artwork files are ignored.
 - Drop an SSD, DSD, HFE, or ZIP containing them onto an empty MMB slot to
   insert it. The HFE must contain a DFS disk.
-- Select an empty MMB slot and use **Add disk** to insert host or open
+- Select an empty MMB slot and use **File** to insert host or open
   media, or create a formatted blank SSD/DSD directly. This is useful for save
   disks and user-writable data.
+- Use **File → Insert folder of disk images** to scan a host folder recursively.
+  The app flattens supported disk images into MMB slots in discovery order and
+  reports unrelated files that will be ignored before insertion begins.
 - Drag an open DFS disk onto an empty MMB slot in another pane.
-- Drag one MMB slot onto another slot to move or swap it.
+- Drag one or several selected MMB slots onto a destination slot to perform the same atomic operation as Cut and Paste. Relative gaps are retained, overlapping moves are safe, and unrelated occupied slots are replaced only after confirmation.
 - Drag an MMB slot onto ADFS to create a named directory containing the slot's
   DFS catalogue.
+- Copy and paste does the same extraction. A cut uses a copy-first transaction:
+  only slots whose ADFS directories completed successfully are ejected from the
+  source MMB, using the normal menu-aware ejection path.
 - DFS directory letters become ADFS subdirectories. Extraction starts at the
   DFS virtual root rather than only catalogue directory `$`, so compilation
   disks with launchers in `A`, `B`, `C`, `D`, and other directory letters keep
@@ -674,7 +749,7 @@ DSD insertion needs two adjacent empty MMB slots. The two sides become two
 200 KiB SSD slots, which is how MMB stores that content.
 
 When another pane has an SSD, DSD, DFS-formatted HFE, or an individual MMB
-disk open, select one empty destination slot and use **Add disk → Import from open
+disk open, select one empty destination slot and use **File → Import from open
 &lt;filename&gt;**. One command is shown for each other open image. Incompatible
 ADFS images and MMB panes that are still at **All disks** remain visible but
 disabled, with the reason shown beside them. This keeps the operation within
@@ -1171,14 +1246,18 @@ a completed save.
 - Every format is returned as a timestamped ZIP named
   `<image-name>-YYYYMMDD-HHMMSS.zip`, so repeated saves do not silently reuse
   the old `-edited` filename.
-- Every ZIP includes a comprehensive `README.md` with the format, target
+- Every ZIP includes a detailed `README.md` with the format, target
   hardware, byte size, SHA-256 checksum, warnings, usage notes and a filesystem
   catalogue. MMB reports list all 511 slots, including empty ones, access state
   and the files inside each formatted DFS disk.
 - A DAT image with a DSC descriptor keeps both files together below the
   `BeebSCSI0/` directory in the ZIP. The README remains at the archive root.
-- ZIPs are streamed as they are built, so even a multi-gigabyte image does not
-  need to be held in server memory before downloading starts.
+- Sparse BeebSCSI DAT archives use fast DEFLATE compression. Free zero-filled
+  capacity therefore does not need to cross the network verbatim; the extracted
+  DAT still has its original logical size and exact SHA-256 checksum.
+- ZIPs are built with bounded memory and real byte progress before the browser
+  handoff. The completed archive is served as an ordinary file with a known
+  length, so “ready” means no hidden checksum or ZIP-building work remains.
 - Opening or creating ADFS media offers a target-hardware profile. The 8-bit
   profiles validate matching old `Hugo` directory headers, footers, parent
   links and sequence copies. A saved BeebSCSI volume also receives a new
@@ -1275,9 +1354,18 @@ in the [project repository](https://github.com/peteclarke-del/AcornFileForge).
 - Local source-image benchmarks use clone or kernel-copy paths where available.
   In the 512 MiB DAT test this reduced open time from about 4.9 to 4.5
   seconds; storage speed remains the dominant cost.
-- Individual files are exported to disk-backed responses, and DAT/DSC bundles
-  stream with bounded memory. The 512 MiB test bundle produced its first byte
-  in about 0.01 seconds and validated as a complete ZIP.
+- Individual files use disk-backed responses. Complete image ZIPs are built
+  with bounded memory while the foreground progress bar tracks checksum and
+  archive bytes. Only then is the known-length archive handed to the browser.
+- Open ADFS working images use a trusted, direct memory-mapped mount after the
+  upload has been identified. Changing directory therefore reads only the
+  requested catalogue and returns its free-space figure in the same request.
+  It does not copy or re-identify a complete DAT, HDF or RAW file on every
+  click.
+- SSD, DSD, ADFS and MMB transfers into ADFS keep one destination mount open
+  for the complete batch. Files, metadata and loader checks are applied before
+  that mount is released instead of reopening a large hard-drive image for
+  every file or phase.
 - Mutations to the same image are locked and run in sequence.
 - The `disc` subprocess timeout is 240 seconds. Gunicorn allows requests for
   up to 300 seconds.
@@ -1362,9 +1450,11 @@ Backend routes are split by responsibility:
   short-lived install records.
 - `app/checkpoints.py` and `app/operations.py` own undo snapshots and persistent
   long-running job records.
+- `app/download_archive.py` finalises, checksums, documents and builds complete
+  timestamped ZIP downloads with progress reporting.
 - `app/analysis_service.py` builds health, manifest, duplicate, inspection, and
   loader-dependency reports.
-- `app/checksum.py` provides the shared streaming image checksum implementation.
+- `app/checksum.py` provides the shared sparse-aware image checksum implementation.
 - `app/uef.py` parses cassette blocks.
 - `app/hfe.py` validates HFE headers and classifies HFE versions safely.
 

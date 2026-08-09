@@ -51,7 +51,7 @@ class DiskErrorTests(unittest.TestCase):
             image = Path(folder) / "disk.dat"
             image.write_bytes(b"")
             service = DiskService(folder)
-            session = ImageSession("c" * 32, "disk.dat", "adfs", image)
+            session = ImageSession("c" * 32, "disk.img", "dfs", image)
             report = {"reports": {
                 "partition_1": {"rows": [{"size": 1_000_000, "free": 250_000}]},
                 "partition_2": {"rows": [{"size": 500_000, "free": 100_000}]},
@@ -220,6 +220,38 @@ class DiskErrorTests(unittest.TestCase):
             )
 
             self.assertEqual(service._prepare_hfe_download(session), exported)
+
+    def test_mmb_slot_to_adfs_batch_copy_includes_every_dfs_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            service = DiskService(folder)
+            source = service.create_blank("ssd", "SOURCE")
+            target = service.create_blank("adfs-s", "TARGET")
+            boot = Path(folder) / "boot"
+            data = Path(folder) / "data"
+            boot.write_bytes(b"BOOT")
+            data.write_bytes(b"DATA")
+            service.put(source, None, "$.BOOT", boot, "0x1900", "0x1900", None)
+            service.put(source, None, "D.DATA", data, "0x2000", "0x2000", None)
+
+            service._copy_rows_to_adfs(
+                source,
+                None,
+                None,
+                service.list_dfs_catalogue_files(source, None),
+                target,
+                "$.Games.Disk7",
+            )
+
+            root_names = {
+                row["name"]
+                for row in service.list_directory(target, "$.Games.Disk7", None)["entries"]
+            }
+            directory_names = {
+                row["name"]
+                for row in service.list_directory(target, "$.Games.Disk7.D", None)["entries"]
+            }
+            self.assertEqual(root_names, {"BOOT", "D"})
+            self.assertEqual(directory_names, {"DATA"})
 
     def test_image_rename_preserves_format_and_renames_descriptor_download(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
