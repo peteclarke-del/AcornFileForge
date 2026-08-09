@@ -88,11 +88,9 @@ class FileRouteTests(unittest.TestCase):
             self.session,
             "NewDir",
         )
-        self.service.mutate.assert_called_once_with(
+        self.service.make_directory.assert_called_once_with(
             self.session,
-            None,
-            ["mkdir", "-p", "{image}:$.Games.NewDir"],
-            2,
+            "$.Games.NewDir",
         )
 
     def test_folder_import_sends_the_complete_reviewed_batch_once(self):
