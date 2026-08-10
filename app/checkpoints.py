@@ -50,6 +50,12 @@ class CheckpointStore:
             "targetHardware": session.target_hardware,
             "hardwareProfile": dict(session.hardware_profile),
             "warnings": list(session.warnings),
+            "romBankSize": session.rom_bank_size,
+            "romEraseByte": session.rom_erase_byte,
+            "romPlatform": session.rom_platform,
+            "romLayout": session.rom_layout,
+            "romComponentNames": list(session.rom_component_names),
+            "romProject": dict(session.rom_project),
         }
 
     @classmethod
@@ -218,6 +224,14 @@ class CheckpointStore:
         session.target_hardware = str(state.get("targetHardware") or "auto")
         session.hardware_profile = dict(state.get("hardwareProfile") or {})
         session.warnings = [str(warning) for warning in state.get("warnings") or []]
+        session.rom_bank_size = int(state.get("romBankSize") or session.rom_bank_size)
+        session.rom_erase_byte = int(state.get("romEraseByte", session.rom_erase_byte)) & 0xFF
+        session.rom_platform = str(state.get("romPlatform") or session.rom_platform)
+        session.rom_layout = str(state.get("romLayout") or session.rom_layout)
+        session.rom_component_names = [
+            str(name) for name in state.get("romComponentNames") or []
+        ]
+        session.rom_project = dict(state.get("romProject") or session.rom_project)
         return self._public(metadata)
 
     def latest_automatic(self, session: ImageSession) -> dict | None:

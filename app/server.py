@@ -16,6 +16,7 @@ from .routes.images import create_images_blueprint
 from .routes.menus import create_menus_blueprint
 from .routes.mmb import create_mmb_blueprint
 from .routes.tools import create_tools_blueprint
+from .routes.rom_tools import create_rom_tools_blueprint
 
 
 ROOT = Path(__file__).resolve().parent
@@ -26,6 +27,7 @@ MENU_TEMPLATE_DIR = ROOT / "assets" / "menu_templates"
 IMAGE_MUTATIONS = {
     "images.rename_image": "renaming the image",
     "images.set_hardware_profile": "changing the hardware profile",
+    "images.configure_rom_layout": "changing the ROM layout",
     "images.prepare_image_download": "finalising the image for download",
     "images.compact": "compacting the filesystem",
     "files.rename": "renaming an item",
@@ -35,6 +37,8 @@ IMAGE_MUTATIONS = {
     "files.mkdir": "creating a folder",
     "files.lock": "changing file protection",
     "files.put_file": "adding a file",
+    "files.append_blank_rom_bank": "appending a blank ROM bank",
+    "files.move_rom_banks": "moving ROM banks",
     "files.put_folder": "importing a host folder",
     "files.extract_to_directory": "extracting an image",
     "mmb.insert_slot_upload": "inserting a disk",
@@ -66,6 +70,10 @@ IMAGE_MUTATIONS = {
     "tools.save_inspected_text": "editing a text file",
     "tools.repair_health": "applying a safe image-health repair",
     "hex_editor.write_hex": "editing raw image bytes",
+    "rom_tools.rom_project": "editing ROM project notes",
+    "rom_tools.rom_patch": "applying a ROM patch",
+    "rom_tools.rom_repair": "repairing ROM metadata",
+    "rom_tools.rom_build": "building a ROM image",
     "catalog.install": "installing software from the Online Library",
 }
 
@@ -129,6 +137,7 @@ def create_app() -> Flask:
     application.register_blueprint(create_mmb_blueprint(service))
     application.register_blueprint(create_hex_editor_blueprint(service))
     application.register_blueprint(create_tools_blueprint(service, WORK_DIR, operations))
+    application.register_blueprint(create_rom_tools_blueprint(service, ROOT))
     application.register_blueprint(
         create_menus_blueprint(service, MENU_TEMPLATE_DIR)
     )

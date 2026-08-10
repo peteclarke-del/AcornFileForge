@@ -1,6 +1,6 @@
 window.AcornFormats = (() => {
   const imageExtensions = [
-    "ssd", "dsd", "mmb", "uef", "hfe",
+    "ssd", "dsd", "mmb", "uef", "hfe", "rom", "rom0", "rom1", "rom2", "rom3", "rom4", "rom5", "rom6", "rom7",
     "ads", "adm", "adl", "adf",
     "dat", "hdf", "hdd", "img", "raw", "bin", "dsk"
   ];
@@ -17,6 +17,7 @@ window.AcornFormats = (() => {
     isImage: name => imagePattern.test(name),
     isImportableImage: name => imagePattern.test(name) || archivePattern.test(name),
     isPotentialAdfsImage: name => adfsPattern.test(name),
+    isRomImage: name => /\.rom[0-7]?$/i.test(name),
     stem: name => String(name).replace(/\.[^.]+$/, "")
   };
 })();

@@ -62,7 +62,7 @@ window.AcornHexEditor = (() => {
     });
   }
 
-  function editorMarkup(image) {
+  function editorMarkup(image, initialPageSize) {
     const descriptorOption = image.hasDescriptor
       ? `<option value="descriptor">${image.descriptorName || "DSC geometry descriptor"}</option>`
       : "";
@@ -84,7 +84,7 @@ window.AcornHexEditor = (() => {
         <button type="button" class="hex-nav hex-previous" title="Previous page" aria-label="Previous hex page">◀</button>
         <button type="button" class="hex-nav hex-next" title="Next page" aria-label="Next hex page">▶</button>
         <button type="button" class="hex-nav hex-last" title="Last page" aria-label="Last hex page">▶|</button>
-        <label>Page<select class="hex-page-size">${PAGE_SIZES.map(size => `<option value="${size}" ${size === 256 ? "selected" : ""}>${size} bytes</option>`).join("")}</select></label>
+        <label>Page<select class="hex-page-size">${PAGE_SIZES.map(size => `<option value="${size}" ${size === initialPageSize ? "selected" : ""}>${size} bytes</option>`).join("")}</select></label>
         <span class="hex-separator"></span>
         <button type="button" class="hex-nav hex-undo" disabled title="Undo byte edit (Ctrl/Cmd+Z)" aria-label="Undo byte edit">↶</button>
         <button type="button" class="hex-nav hex-redo" disabled title="Redo byte edit (Ctrl/Cmd+Y)" aria-label="Redo byte edit">↷</button>
@@ -115,23 +115,24 @@ window.AcornHexEditor = (() => {
     </section>`;
   }
 
-  async function open({ host, image, request, notify, onSaved }) {
+  async function open({ host, image, request, notify, onSaved, initialOffset = 0, initialPageSize = 256 }) {
+    const pageSize = PAGE_SIZES.includes(Number(initialPageSize)) ? Number(initialPageSize) : 256;
     const overlay = document.createElement("div");
     overlay.className = "hex-editor-overlay";
-    overlay.innerHTML = editorMarkup(image);
+    overlay.innerHTML = editorMarkup(image, pageSize);
     host.append(overlay);
     const editor = overlay.querySelector(".hex-editor");
     const state = {
       target: "image",
-      offset: 0,
-      pageSize: 256,
+      offset: Math.max(0, Number(initialOffset) || 0),
+      pageSize,
       size: image.size || 0,
       version: null,
       bytes: new Map(),
       originals: new Map(),
       changes: new Map(),
-      active: 0,
-      anchor: 0,
+      active: Math.max(0, Number(initialOffset) || 0),
+      anchor: Math.max(0, Number(initialOffset) || 0),
       mode: "hex",
       highNibble: null,
       history: [],
@@ -588,7 +589,7 @@ window.AcornHexEditor = (() => {
       button.onclick = () => { state.mode = button.dataset.mode; state.highNibble = null; render(); editor.focus(); };
     });
 
-    await loadPage(0, { resetVersion: true });
+    await loadPage(state.active, { resetVersion: true });
     editor.focus();
     return closed;
   }

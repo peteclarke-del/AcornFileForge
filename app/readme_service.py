@@ -90,6 +90,37 @@ def _row_line(path: str, row: dict) -> str:
 
 
 def _filesystem_catalogue(service: DiskService, session: ImageSession) -> list[str]:
+    if session.kind == "rom":
+        lines = [
+            "## ROM bank catalogue", "",
+            "| Bank | Title | Bytes | Kind | Header | SHA-256 | CRC-32 |",
+            "|---:|---|---:|---|---|---|---|",
+        ]
+        for row in service.list_rom_banks(session):
+            header = row.get("header") or {}
+            extension = row.get("extensionHeader") or {}
+            if header:
+                detail = (
+                    f"type &{header.get('typeHex')} · {header.get('processor')} · "
+                    f"version {header.get('version') or header.get('versionByte')}"
+                )
+            elif extension:
+                detail = (
+                    "ExtnROM0 · checksum "
+                    + ("valid" if extension.get("checksumValid") else "INVALID")
+                )
+            else:
+                detail = "not recognised"
+            lines.append("| " + " | ".join((
+                f"{row['bank']:03d}",
+                _safe_cell(row["name"]),
+                f"{row['length']:,}",
+                _safe_cell(row["filetype"]),
+                _safe_cell(detail),
+                f"`{row['diagnostics']['sha256']}`",
+                f"`{row['diagnostics']['crc32']}`",
+            )) + " |")
+        return [*lines, ""]
     lines = [
         "## Filesystem catalogue",
         "",
@@ -183,6 +214,18 @@ def build_download_readme(
                 f"- HFE write support: {'read-only' if session.hfe_read_only else 'editable and sector-verified'}",
             )
         )
+    if session.kind == "rom":
+        lines.extend((
+            f"- ROM target family: {session.rom_platform}",
+            f"- Logical bank size: {session.rom_bank_size:,} bytes",
+            f"- Erased byte: `&{session.rom_erase_byte:02X}`",
+            f"- Byte layout: {session.rom_layout}",
+            "- Original component order: "
+            + (", ".join(session.rom_component_names) or "single image or unspecified"),
+            f"- Project hardware notes: {session.rom_project.get('hardware') or 'not recorded'}",
+            f"- Saved project symbols: {len(session.rom_project.get('symbols', {}))}",
+            f"- Saved emulator test results: {len(session.rom_project.get('tests', []))}",
+        ))
     lines.extend(
         (
             "",
@@ -200,6 +243,22 @@ def build_download_readme(
                 "The DAT and DSC are a matched BeebSCSI pair. Keep both files together in the `BeebSCSI0` directory and do not substitute a descriptor from another image.",
             )
         )
+    if session.kind == "rom":
+        lines.extend((
+            "",
+            "## ROM interpretation and maintenance",
+            "",
+            "ROM images contain raw bytes rather than a filing system. The bank catalogue is a view over the saved byte image in ascending order.",
+            "BBC, Master and Electron sideways ROMs normally use 16 KiB banks, although 8 KiB devices and larger banked images exist. Test edited ROMs in an emulator or a spare programmable device before using valuable hardware.",
+            "A bank title, role, processor and entry vectors are decoded from proven header structures. Printable strings and plausible RISC OS modules remain evidence rather than invented files or a guarantee of compatibility.",
+            "The programmed-byte count means bytes that differ from the configured erased value. It is not filesystem free space. File offsets refer to the complete image; mapped addresses refer to the configured target CPU window.",
+            "`ROM-project.json` contains notes, symbols, analysed regions and test results. It is workbench metadata and is not programmed into the ROM device.",
+            "Use Tools > ROM Workbench to inspect the bank map and audit, disassemble 6502, ARM or 68000 code, follow reachable instructions and cross-references, compare revisions, build guarded patches and prepare physical chip files.",
+            "Workbench comparison patches verify the complete source SHA-256 before applying ranges and the complete target SHA-256 afterwards. A mismatch aborts the operation.",
+            "Programmer export does not rewrite the logical ROM. It applies padding or mirroring, optional adjacent-byte and 16-bit word swaps, address-line swaps, then one, two or four physical byte lanes to the programmer download.",
+            "A service-ROM scaffold contains inert handlers until a developer supplies code. AFFROMFS is a documented data archive for companion service code and is not mounted by an unmodified MOS.",
+            "Exact ROM identities are keyed by complete SHA-256. Different padding, a one-byte edit or a concatenated bank set is a different identity even when the visible title matches.",
+        ))
     if session.kind == "mmb":
         from .menu_service import installed_mmb_menus
 
