@@ -199,6 +199,26 @@ def _mmb_manifest(service, session) -> dict:
 def build_manifest(service, session) -> dict:
     if session.kind == "mmb":
         return _mmb_manifest(service, session)
+    if session.kind == "rom":
+        records = []
+        for row in service.list_rom_banks(session):
+            path = f"bank:{row['bank']}"
+            exported = service.export_file(session, None, path)
+            try:
+                digest = sha256_path(exported)
+            finally:
+                exported.unlink(missing_ok=True)
+            records.append({
+                "recordType": "rom-bank",
+                "path": path,
+                "bank": row["bank"],
+                "title": row["name"],
+                "size": row["length"],
+                "romType": row["filetype"],
+                "empty": row["empty"],
+                "sha256": digest,
+            })
+        return {"image": service.summary(session), "records": records, "menus": []}
     records = []
     sides = [0, 2] if session.kind == "dfs" and session.path.name.lower().endswith(".dsd") else [None]
     for side in sides:
@@ -486,6 +506,65 @@ def health_report(service, session, progress=None) -> dict:
                 "label": "Repair menu PAGE values",
                 "detail": f"{page_problems} menu record(s) have a provably different launcher PAGE",
             })
+    elif session.kind == "rom":
+        if progress:
+            progress("Inspecting ROM banks and headers", 0, None)
+        rows = service.list_rom_banks(session)
+        check("ROM byte structure", lambda: service.validate(session, None))
+        checks.append({
+            "name": "Recognised sideways-ROM headers",
+            "status": "pass" if any(row["header"] or row.get("extensionHeader") for row in rows) else "warn",
+            "detail": (
+                f"{sum(bool(row['header']) for row in rows)} of {len(rows)} bank(s) "
+                "carry a recognised BBC-family header; "
+                f"{sum(bool(row.get('extensionHeader')) for row in rows)} RISC OS extension trailer(s) found"
+            ),
+        })
+        bad_extension_checksums = [
+            row for row in rows
+            if row.get("extensionHeader") and not row["extensionHeader"]["checksumValid"]
+        ]
+        if bad_extension_checksums:
+            checks.append({
+                "name": "RISC OS extension ROM checksum",
+                "status": "fail",
+                "detail": "The ExtnROM0 trailer checksum does not match the image bytes.",
+            })
+        duplicate_groups = [
+            [row["bank"], *row.get("matchingBanks", [])]
+            for row in rows
+            if row.get("matchingBanks") and row["bank"] < min(row["matchingBanks"])
+        ]
+        checks.append({
+            "name": "Bank fingerprints",
+            "status": "warn" if duplicate_groups else "pass",
+            "detail": (
+                "; ".join("Identical banks " + ", ".join(map(str, group)) for group in duplicate_groups)
+                if duplicate_groups else "Every bank has a distinct SHA-256 fingerprint"
+            ),
+        })
+        header_warnings = [
+            f"Bank {row['bank']}: {warning}"
+            for row in rows for warning in row.get("warnings", [])
+        ]
+        checks.append({
+            "name": "Header flag consistency",
+            "status": "warn" if header_warnings else "pass",
+            "detail": (
+                f"{len(header_warnings)} header/vector disagreement(s)"
+                if header_warnings else "Recognised header flags agree with their entry vectors"
+            ),
+            "findings": header_warnings,
+        })
+        partial = session.path.stat().st_size % session.rom_bank_size
+        checks.append({
+            "name": "Bank boundaries",
+            "status": "warn" if partial else "pass",
+            "detail": (
+                f"Final bank contains {partial:,} bytes"
+                if partial else f"All banks are {session.rom_bank_size:,} bytes"
+            ),
+        })
     else:
         if progress:
             progress("Validating the filesystem structure", 0, None)

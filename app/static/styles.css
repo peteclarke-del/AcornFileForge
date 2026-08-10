@@ -73,6 +73,8 @@ main { width: 100%; padding: 16px 18px 18px; margin: auto; }
 
 /* Pane-scoped raw image editor */
 .hex-editor-overlay { position: absolute; inset: 0; z-index: 30; overflow: hidden; border-radius: inherit; background: var(--paper); }
+dialog.hex-editor-modal-host { position: relative; overflow: hidden; }
+dialog.hex-editor-modal-host > .hex-editor-overlay { border-radius: 15px; }
 .hex-editor { display: grid; grid-template-rows: auto auto auto minmax(0,1fr) auto; width: 100%; height: 100%; min-width: 0; outline: none; background: var(--paper); color: var(--ink); }
 .hex-editor-head { display: flex; align-items: center; justify-content: space-between; gap: 14px; min-width: 0; padding: 13px 15px; border-bottom: 1px solid var(--line); background: var(--cream); }
 .hex-editor-head > div:first-child { display: grid; min-width: 0; grid-template-columns: auto minmax(0,1fr); align-items: baseline; gap: 2px 10px; }
@@ -194,6 +196,92 @@ main { width: 100%; padding: 16px 18px 18px; margin: auto; }
 .format-icon.mmb { background: var(--orange); color: var(--mmb-format-text); }
 .format-icon.adfs { background: var(--adfs-format); color: var(--adfs-format-text); }
 .format-icon.tape { background: var(--tape-format); color: var(--tape-format-text); }
+.format-icon.rom { background: var(--blue); color: var(--rom-format-text); }
+.rom-decode-section { margin-top: 1rem; }
+.rom-decode-section h3 { margin-bottom: .55rem; }
+.rom-header-grid { display: grid; grid-template-columns: minmax(9rem,.45fr) 1fr; gap: .35rem .8rem; margin: 0; }
+.rom-header-grid dt { color: var(--muted); font: 700 9px DM Mono,monospace; letter-spacing: .05em; text-transform: uppercase; }
+.rom-header-grid dd { margin: 0; overflow-wrap: anywhere; }
+.rom-decode-table { max-height: 18rem; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
+.rom-decode-table table { width: 100%; border-collapse: collapse; }
+.rom-decode-table th, .rom-decode-table td { padding: 7px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.rom-decode-table tr:last-child td { border-bottom: 0; }
+.rom-decode-table td small { display: block; margin-top: 3px; color: var(--muted); }
+.rom-command-confidence { display: inline-block; padding: 2px 6px; border: 1px solid var(--line-strong); border-radius: 999px; color: var(--ink); font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.rom-command-name { display: inline-flex; align-items: center; gap: 6px; }
+.rom-command-help { display: inline-grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--paper); color: var(--ink); font: 800 12px/1 DM Sans,sans-serif; cursor: help; }
+.rom-command-help:hover, .rom-command-help:focus-visible, .rom-command-help[aria-expanded="true"] { color: var(--paper); background: var(--ink); outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.rom-command-tooltip { position: fixed; z-index: 10020; box-sizing: border-box; width: min(28rem, calc(100vw - 20px)); padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--ink); color: var(--paper); box-shadow: var(--shadow); pointer-events: none; }
+.rom-command-tooltip strong, .rom-command-tooltip small { display: block; overflow-wrap: anywhere; }
+.rom-command-tooltip strong { font: 700 13px/1.45 DM Mono,monospace; }
+.rom-command-tooltip small { margin-top: 5px; color: var(--cream); font-size: 11px; }
+.rom-command-actions { display: flex; gap: 5px; flex-wrap: wrap; }
+.rom-string-list { margin-top: 1rem; }
+.rom-string-list > summary { cursor: pointer; font-weight: 700; }
+.rom-string-list > p { color: var(--muted); }
+.button.compact { min-height: 30px; padding: 4px 8px; }
+dialog:has(.rom-decoder-heading) { width: min(1120px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); }
+dialog:has(.rom-decoder-heading) form { box-sizing: border-box; max-height: calc(100dvh - 24px); overflow: auto; }
+.rom-summary-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 28px; align-items: start; }
+.rom-summary-grid .help-note { align-self: stretch; margin-top: 1rem; }
+.rom-extension-section { grid-column: 1 / -1; }
+dialog:has(.rom-decoder-heading) .modal-actions { position: sticky; bottom: -28px; z-index: 2; margin-inline: -4px; padding: 12px 4px 0; background: var(--paper); }
+.rom-workbench { width: min(1120px, calc(100vw - 4rem)); max-height: min(820px, calc(100vh - 4rem)); display: flex; flex-direction: column; gap: .8rem; }
+dialog:has(.rom-workbench) { width: min(1160px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); }
+.rom-workbench-tabs { display: flex; gap: .25rem; overflow-x: auto; border-bottom: 1px solid var(--line); padding-bottom: .35rem; }
+.rom-workbench-tabs button { border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--muted); padding: .55rem .75rem; white-space: nowrap; }
+.rom-workbench-tabs button.active { background: var(--cream); border-color: var(--line); color: var(--ink); }
+.rom-workbench-panel { display: none; overflow: auto; min-height: 360px; max-height: calc(100vh - 18rem); padding: .2rem .25rem .8rem; }
+.rom-workbench-panel.active { display: block; }
+.rom-tool-controls { display: flex; flex-wrap: wrap; align-items: end; gap: .7rem; margin-bottom: .8rem; }
+.rom-tool-controls label { display: grid; gap: .25rem; color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
+.rom-map-table, .rom-disassembly-output { overflow: auto; max-height: 430px; border: 1px solid var(--line); border-radius: 8px; }
+.rom-map-table table, .rom-disassembly-output table { width: 100%; border-collapse: separate; border-spacing: 0; }
+.rom-map-table th, .rom-map-table td, .rom-disassembly-output th, .rom-disassembly-output td { padding: .42rem .55rem; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+.rom-map-table th, .rom-disassembly-output th { position: sticky; top: 0; z-index: 2; background: var(--panel); box-shadow: 0 1px 0 var(--line); }
+.rom-disassembly-output .operation-summary { position: relative; z-index: 3; margin: 0; padding: .55rem; background: var(--paper); border-bottom: 1px solid var(--line); }
+.rom-disassembly-output .operation-summary { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.rom-disassembly-output tr.unreached { opacity: .62; }
+.rom-audit-findings li { margin: .35rem 0; }
+.rom-audit-findings .error { color: var(--danger); }
+.rom-emulator-output { max-height: 420px; overflow: auto; white-space: pre-wrap; }
+.rom-identity-editor { margin-top: .8rem; padding: .7rem; border: 1px solid var(--line); border-radius: 8px; }
+.rom-identity-editor summary { cursor: pointer; font-weight: 700; }
+.rom-identity-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .65rem; margin: .7rem 0; }
+.rom-identity-grid label { display: grid; gap: .25rem; color: var(--muted); font-size: .78rem; }
+.rom-pane-guide { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 0 12px 8px; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--line); color: var(--muted); font: 9px/1.35 DM Mono, monospace; }
+.rom-pane-guide span { min-width: 0; padding: 7px 8px; background: var(--cream); }
+.rom-pane-guide b { color: var(--ink); }
+.rom-bank-list { table-layout: fixed; }
+.rom-bank-list th:nth-child(1) { width: 17%; }
+.rom-bank-list th:nth-child(2) { width: 29%; }
+.rom-bank-list th:nth-child(3) { width: 29%; }
+.rom-bank-list th:nth-child(4) { width: 25%; }
+.rom-bank-list td { min-width: 0; vertical-align: top; white-space: normal; overflow-wrap: anywhere; }
+.rom-bank-list td > strong, .rom-bank-list td > small { display: block; }
+.rom-bank-list td > small, .rom-bank-list .rom-identity-cell > small { margin-top: 3px; color: var(--muted); font: 9px/1.35 DM Mono, monospace; }
+.rom-bank-list .file-name-wrap { align-items: flex-start; }
+.rom-bank-list .rom-purpose-cell strong { text-transform: capitalize; }
+.rom-bank-list .rom-hash { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@container (max-width: 720px) {
+  .rom-pane-guide { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .rom-bank-list, .rom-bank-list tbody { display: block; width: 100%; }
+  .rom-bank-list thead { display: none; }
+  .rom-bank-list tbody tr { display: grid; height: auto; min-height: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .file-list.rom-bank-list tbody td { display: block; width: auto !important; min-width: 0; padding: 8px 10px; border-bottom: 0; }
+  .rom-bank-list tbody td::before { display: block; margin-bottom: 5px; color: var(--muted); content: attr(data-label); font: 8px/1.2 DM Mono, monospace; letter-spacing: .05em; text-transform: uppercase; }
+  .rom-bank-list tbody tr + tr { border-top: 1px solid var(--line); }
+}
+@container (max-width: 420px) {
+  .rom-pane-guide, .rom-bank-list tbody tr { grid-template-columns: 1fr; }
+}
+@media (max-width: 700px) { .rom-workbench { width: calc(100vw - 1.5rem); max-height: calc(100vh - 1.5rem); } .rom-workbench-panel { max-height: calc(100vh - 16rem); } .rom-disassembly-output .operation-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 720px) {
+  .rom-summary-grid { grid-template-columns: 1fr; }
+  .rom-extension-section { grid-column: 1; }
+  dialog:has(.rom-decoder-heading) form { padding: 22px 18px; }
+  dialog:has(.rom-decoder-heading) .modal-actions { bottom: -22px; }
+}
 .image-name { min-width: 0; flex: 1; }
 .image-name strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
 .image-title { cursor: text; border-radius: 4px; outline: none; }

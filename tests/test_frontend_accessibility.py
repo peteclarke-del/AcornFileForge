@@ -34,6 +34,7 @@ class FrontendAccessibilityTests(unittest.TestCase):
         cls.styles = (STATIC / "styles.css").read_text()
         cls.theme = (STATIC / "theme.css").read_text()
         cls.core = (STATIC / "core.js").read_text()
+        cls.app = (STATIC / "app.js").read_text()
         light, dark = cls.theme.split('html[data-theme="dark"]', 1)
         cls.palettes = {"light": _tokens(light), "dark": _tokens(dark)}
 
@@ -90,6 +91,12 @@ class FrontendAccessibilityTests(unittest.TestCase):
         self.assertIn("prefers-reduced-motion: reduce", self.styles)
         self.assertIn('event.key !== "Tab"', self.core)
         self.assertIn("modalReturnFocus", self.core)
+
+    def test_rom_decoder_initial_focus_does_not_select_a_command(self):
+        self.assertIn(
+            'class="modal-heading rom-decoder-heading" tabindex="-1" autofocus',
+            self.app,
+        )
 
 
 if __name__ == "__main__":

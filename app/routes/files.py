@@ -266,6 +266,9 @@ def create_files_blueprint(
         if session.kind == "mmb" and data.get("slotTitle") is not None:
             service.rename_slot(session, slot, data["slotTitle"])
             result = {}
+        elif session.kind == "rom":
+            service.rename_rom_bank(session, int(data["bank"]), data.get("title", ""))
+            result = {}
         elif session.kind == "adfs":
             result = move_adfs_items(
                 service,
@@ -324,7 +327,11 @@ def create_files_blueprint(
             }]
         if not isinstance(items, list) or not items:
             raise DiskError("Choose at least one item to delete.")
-        if session.kind == "adfs":
+        if session.kind == "rom":
+            banks = [int(item.get("bank")) for item in items]
+            service.clear_rom_banks(session, banks)
+            result = {"deletedItems": [{"bank": bank} for bank in banks]}
+        elif session.kind == "adfs":
             result = delete_adfs_items(
                 service,
                 session,
@@ -393,6 +400,11 @@ def create_files_blueprint(
         if not upload or not upload.filename:
             raise DiskError("Choose a host file to import.")
         session = service.get(image_id)
+        if session.kind == "rom":
+            data = upload.read()
+            requested = optional_int(request.form.get("bank"))
+            inserted = service.put_rom_bank(session, data, requested)
+            return jsonify(image=service.summary(session), bank=inserted)
         slot = optional_int(request.form.get("slot"))
         name = request.form.get("targetName") or DiskService.safe_filename(upload.filename)
         name = service.validate_leaf_name(session, name, slot)
@@ -417,6 +429,34 @@ def create_files_blueprint(
         finally:
             temp_path.unlink(missing_ok=True)
         return jsonify(image=service.summary(session))
+
+    @blueprint.post("/api/images/<image_id>/rom-banks/blank")
+    def append_blank_rom_bank(image_id):
+        session = service.get(image_id)
+        if session.kind != "rom":
+            raise DiskError("This image is not a ROM.")
+        bank = service.put_rom_bank(
+            session,
+            bytes((session.rom_erase_byte,)) * session.rom_bank_size,
+            len(service.list_rom_banks(session)),
+        )
+        return jsonify(image=service.summary(session), bank=bank)
+
+    @blueprint.get("/api/images/<image_id>/rom-banks/<int:bank>/inspect")
+    def inspect_rom_bank(image_id, bank):
+        session = service.get(image_id)
+        return jsonify(bank=service.inspect_rom_bank(session, bank))
+
+    @blueprint.post("/api/images/<image_id>/rom-banks/move")
+    def move_rom_banks(image_id):
+        data = payload()
+        session = service.get(image_id)
+        targets = service.move_rom_banks(
+            session,
+            [int(bank) for bank in data.get("banks", [])],
+            int(data.get("targetStart")),
+        )
+        return jsonify(image=service.summary(session), banks=targets)
 
     @blueprint.post("/api/images/<image_id>/folder-import")
     def put_folder(image_id):
