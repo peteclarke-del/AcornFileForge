@@ -264,7 +264,7 @@ window.AcornUI = (() => {
   modal.addEventListener("keydown", event => {
     if (event.key !== "Tab") return;
     const controls = [...modal.querySelectorAll('a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex]:not([tabindex="-1"])')]
-      .filter(control => !control.hidden && control.getClientRects().length);
+      .filter(control => !control.hidden && !control.closest("[inert]") && control.getClientRects().length);
     if (!controls.length) return event.preventDefault();
     const first = controls[0];
     const last = controls[controls.length - 1];

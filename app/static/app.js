@@ -553,9 +553,9 @@ async function guardedPaneAction(index, action) {
   }
 }
 
-async function openHexEditor(index) {
+async function openHexEditor(index, initialOffset = 0, { host: requestedHost = null, onClose = null, afterSave = null, pageSize = 256 } = {}) {
   const pane = panes[index];
-  const host = document.querySelector(`.pane[data-pane="${index}"]`);
+  const host = requestedHost || document.querySelector(`.pane[data-pane="${index}"]`);
   if (!pane?.image || !host || !window.AcornHexEditor) {
     return toast("The hex editor could not be opened.", true);
   }
@@ -564,13 +564,17 @@ async function openHexEditor(index) {
     image: { ...pane.image },
     request: api,
     notify: toast,
+    initialOffset,
+    initialPageSize: pageSize,
     onSaved: updatedImage => {
       if (panes[index] === pane) {
         pane.image = updatedImage;
         rememberOpenPanes();
       }
+      afterSave?.(updatedImage);
     },
   });
+  if (panes[index] === pane) await onClose?.();
   if (panes[index] === pane) await refreshCurrentView(index);
 }
 
@@ -578,6 +582,7 @@ function paneFormat(image) {
   if (image.containerFormat === "hfe") return "HFE";
   if (image.kind === "mmb") return "MMB";
   if (image.kind === "tape") return "UEF";
+  if (image.kind === "rom") return "ROM";
   if (image.kind === "dfs") return image.name.toLowerCase().endsWith(".dsd") ? "DSD" : "SSD";
   return "ADFS";
 }
@@ -589,8 +594,8 @@ function capacityMarkup(capacity) {
   }
   const usedPercent = Math.max(0, Math.min(100, capacity.used * 100 / capacity.total));
   const level = usedPercent >= 90 ? "critical" : usedPercent >= 70 ? "warning" : "healthy";
-  const details = capacity.unit === "slots"
-    ? `${capacity.free} free slot${capacity.free === 1 ? "" : "s"} of ${capacity.total} · ${capacity.used} used · ${usedPercent.toFixed(1)}% full`
+  const details = ["slots", "banks"].includes(capacity.unit)
+    ? `${capacity.free} empty ${capacity.unit.slice(0, -1)}${capacity.free === 1 ? "" : "s"} of ${capacity.total} · ${capacity.used} populated · ${usedPercent.toFixed(1)}% full`
     : `${humanSize(capacity.free)} free of ${humanSize(capacity.total)} · ${humanSize(capacity.used)} used · ${usedPercent.toFixed(1)}% full`;
   return `<span class="capacity ${level}" role="progressbar" aria-label="${esc(details)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${usedPercent.toFixed(1)}" title="${esc(details)}" style="--capacity-used:${usedPercent}%"><i></i></span>`;
 }
@@ -613,6 +618,7 @@ function fullPath(directory, name) {
 }
 
 function targetNameRule(pane, original) {
+  if (pane.image?.kind === "rom") return { valid: true, suggested: original, limit: 180, label: "ROM bank", adjusted: false, truncated: false };
   const isDfs = pane.image?.kind === "dfs" || (pane.image?.kind === "mmb" && pane.slot !== null);
   const limit = isDfs ? 7 : 10;
   const label = isDfs ? "DFS" : "ADFS";
@@ -687,6 +693,19 @@ function clipboardItemsForPane(index) {
         slot: Number(entry.slot),
         name: entry.name,
       }));
+  }
+  if (pane.image.kind === "rom") {
+    return selectedEntries(index).map(entry => ({
+      pane: index,
+      image: pane.image.id,
+      slot: null,
+      side: null,
+      path: `bank:${entry.bank}`,
+      name: `BANK${String(entry.bank).padStart(3, "0")}`,
+      length: Number(entry.length || 0),
+      recursive: false,
+      romBank: Number(entry.bank),
+    }));
   }
   return selectedEntries(index)
     .filter(entry => !entry.virtual && entry.type !== "disk")
@@ -789,18 +808,21 @@ function renderPane(index, preserveScroll = false) {
   const selectedKeys = new Set(selectionKeys(pane));
   const isSlots = pane.image.kind === "mmb" && pane.slot === null;
   const isTape = pane.image.kind === "tape";
+  const isRom = pane.image.kind === "rom";
   const isDfs = isDfsPane(pane);
   const isDfsRoot = isDfs && pane.path === "";
   const supportsFolders = pane.image.kind === "adfs" && !isSlots && !isTape;
   const canFolder = supportsFolders && !pane.image.readOnly;
   const canEdit = !isSlots && !isTape && !pane.image.readOnly;
-  const canEditFiles = canEdit && !isDfsRoot;
+  const canEditFiles = canEdit && (!isDfsRoot || isRom);
   const isDsd = pane.image.doubleSided;
   const kind = pane.image.kind === "mmb" && pane.slot !== null ? "dfs" : pane.image.kind;
   const location = isSlots
     ? "MMB disk index"
     : isTape
       ? "Cassette tape"
+      : isRom
+        ? `${pane.image.rom?.platform || "Acorn"} · ${pane.image.rom?.bankCount || 0} bank(s)`
       : pane.slot !== null
         ? `Slot ${pane.slot} · ${pane.slotName}${isDfsRoot ? " · DFS catalogues" : ` · ${pane.path}`}`
         : isDsd
@@ -808,7 +830,7 @@ function renderPane(index, preserveScroll = false) {
           : isDfs
             ? isDfsRoot ? "DFS catalogues" : `DFS catalogue ${pane.path}`
             : "Root filing system";
-  const hasParentEntry = !isSlots && !isTape && (
+  const hasParentEntry = !isSlots && !isTape && !isRom && (
     pane.slot !== null || (isDfs ? pane.path !== "" : pane.path !== "$")
   );
   const parentRow = hasParentEntry ? `<tr class="file-row parent-row" aria-label="Parent directory" tabindex="0" draggable="false" data-parent="1" data-key=".." data-name=".." data-type="dir" data-slot="" data-empty="0">
@@ -821,7 +843,7 @@ function renderPane(index, preserveScroll = false) {
     const entryType = entry.type === "directory" ? "dir" : entry.type;
     const isDir = entryType === "dir";
     const isVirtual = Boolean(entry.virtual);
-    const icon = entryType === "disk" ? "▣" : isDir ? "↳" : "F";
+    const icon = entryType === "disk" ? "▣" : entryType === "rom-bank" ? "▥" : isDir ? "↳" : "F";
     const size = entryType === "disk" ? `#${entry.slot}` : isVirtual ? "Catalogue group" : isDir ? `${entry.length || 0} items` : humanSize(entry.length);
     const detail = entryType === "disk"
       ? entry.formatted ? (entry.writable ? "Read/write" : "Protected") : "Unformatted"
@@ -834,20 +856,49 @@ function renderPane(index, preserveScroll = false) {
     const accessActionable = rowActionable;
     const multiSelection = selectedKeys.size > 1;
     const hideGroupAction = multiSelection && !selectedKeys.has(entryKey);
-    const actionName = isSlots ? `disk ${entry.slot} · ${entry.name}` : entry.name;
-    const rowActions = rowActionable ? `<span class="row-actions">
-      <button class="row-action row-rename" type="button" draggable="false" title="Rename ${esc(actionName)}" aria-label="Rename ${esc(actionName)}" ${multiSelection ? "hidden" : ""}>✎</button>
-      <button class="row-action delete row-delete" type="button" draggable="false" title="${isSlots ? "Eject" : "Delete"} ${esc(actionName)}" aria-label="${isSlots ? "Eject" : "Delete"} ${esc(actionName)}" ${hideGroupAction ? "hidden" : ""}>×</button>
+    const actionName = isSlots ? `disk ${entry.slot} · ${entry.name}` : isRom ? `bank ${entry.bank} · ${entry.name}` : entry.name;
+    const rowActions = rowActionable || isRom ? `<span class="row-actions">
+      ${isRom ? `<button class="row-action row-rom-inspect" type="button" draggable="false" title="Decode ${esc(actionName)}" aria-label="Decode ${esc(actionName)}">ⓘ</button>` : ""}
+      ${!isRom || entry.header ? `<button class="row-action row-rename" type="button" draggable="false" title="Rename ${esc(actionName)}" aria-label="Rename ${esc(actionName)}" ${multiSelection ? "hidden" : ""}>✎</button>` : ""}
+      ${rowActionable ? `<button class="row-action delete row-delete" type="button" draggable="false" title="${isSlots ? "Eject" : "Delete"} ${esc(actionName)}" aria-label="${isSlots ? "Eject" : "Delete"} ${esc(actionName)}" ${hideGroupAction ? "hidden" : ""}>×</button>` : ""}
     </span>` : "";
-    const accessCell = `<td class="access-cell"><span class="pill">${esc(attr || detail)}</span>${accessActionable ? `<span class="access-actions" ${hideGroupAction ? "hidden" : ""}>
+    const accessCell = `<td class="access-cell"><span class="pill">${esc(attr || detail)}</span>${accessActionable && !isRom ? `<span class="access-actions" ${hideGroupAction ? "hidden" : ""}>
       <button class="row-action row-read-write" type="button" draggable="false" title="Mark ${esc(actionName)} read / write" aria-label="Mark ${esc(actionName)} read / write">◇</button>
       <button class="row-action row-read-only" type="button" draggable="false" title="Mark ${esc(actionName)} read-only" aria-label="Mark ${esc(actionName)} read-only">◆</button>
     </span>` : ""}</td>`;
+    const romHeader = entry.header || null;
+    const romOffset = Number.isFinite(Number(entry.fileOffset)) ? Number(entry.fileOffset) : Number(entry.bank || 0) * Number(pane.image.rom?.bankSize || entry.length || 0);
+    const romMapped = pane.image.rom?.platform === "bbc-master-electron" && Number(entry.length) <= 16384
+      ? `Mapped &amp;8000-&amp;${(0x8000 + Math.max(0, Number(entry.length) - 1)).toString(16).toUpperCase().padStart(4, "0")}`
+      : "No fixed CPU mapping";
+    const romPurpose = entry.empty
+      ? "Available erased bank"
+      : romHeader
+        ? `${esc(romHeader.roles)} · ${esc(romHeader.processor)}`
+        : entry.extensionHeader
+          ? "RISC OS extension ROM"
+          : "Unrecognised header / raw bytes";
+    const romEntries = romHeader
+      ? [["Language", romHeader.languageEntry], ["Service", romHeader.serviceEntry]].filter(([_label, value]) => Number.isFinite(Number(value))).map(([label, value]) => `${label} &amp;${Number(value).toString(16).toUpperCase()}`).join(" · ")
+      : "";
+    const romIdentityDetail = entry.empty
+      ? "Filled with the configured erased byte"
+      : romHeader
+        ? [romHeader.version ? `Version ${esc(romHeader.version)}` : "", romHeader.copyright ? esc(romHeader.copyright) : ""].filter(Boolean).join(" · ")
+        : "Open Info to inspect strings, structures and possible modules";
+    const romUsage = entry.empty
+      ? `0 programmed · ${humanSize(entry.length)}`
+      : `${humanSize(Number(entry.programmedBytes ?? entry.length))} programmed · ${Number(entry.programmedPercent ?? 100).toLocaleString()}%`;
+    const romMatches = entry.matchingBanks?.length ? `Identical to bank${entry.matchingBanks.length === 1 ? "" : "s"} ${entry.matchingBanks.join(", ")}` : "Unique bank contents";
     const cells = isSlots
       ? `<td class="meta slot-number">${entry.slot}</td>
       <td class="file-name-cell"><div class="file-name-wrap"><span class="file-icon ${entryType}">${icon}</span><strong>${esc(entry.name)}</strong>${rowActions}</div></td>
       <td class="meta">${esc(entry.formatted ? "DFS disk" : "Empty")}</td>
       ${accessCell}`
+      : isRom ? `<td class="rom-bank-cell" data-label="Bank and address"><strong>Bank ${String(entry.bank).padStart(3, "0")}</strong><small>File &amp;${romOffset.toString(16).toUpperCase().padStart(6, "0")}</small><small>${romMapped}</small></td>
+        <td class="file-name-cell rom-identity-cell" data-label="Identity"><div class="file-name-wrap"><span class="file-icon ${entryType}">${icon}</span><strong>${esc(entry.name)}</strong>${rowActions}</div><small>${romIdentityDetail}</small></td>
+        <td class="rom-purpose-cell" data-label="Purpose and entry points"><strong>${romPurpose}</strong><small>${romEntries || esc(entry.filetype || "No decoded entry points")}</small></td>
+        <td class="rom-usage-cell" data-label="Contents"><strong>${romUsage}</strong><small>${romMatches}</small><small class="rom-hash" title="SHA-256 ${esc(entry.diagnostics?.sha256 || "Unavailable")}">${entry.diagnostics?.sha256 ? `SHA-256 ${esc(entry.diagnostics.sha256.slice(0, 12))}…` : ""}</small></td>`
       : `<td class="file-name-cell"><div class="file-name-wrap"><span class="file-icon ${entryType}">${icon}</span><strong>${esc(entry.name)}</strong>
         ${rowActions}
       </div></td>
@@ -856,7 +907,7 @@ function renderPane(index, preserveScroll = false) {
       ${accessCell}`;
     return `<tr class="file-row${selectedKeys.has(entryKey) ? " selected" : ""}${entry.empty ? " empty-slot" : ""}${isVirtual ? " virtual-catalogue-row" : ""}${rowIsPendingCut(pane, entry) ? " clipboard-cut" : ""}"
       aria-selected="${selectedKeys.has(entryKey)}"
-      tabindex="0" draggable="${!isVirtual && entry.formatted !== false}" data-key="${esc(entryKey)}" data-name="${esc(entry.name)}" data-type="${entryType}" data-slot="${entry.slot ?? ""}" data-empty="${entry.empty ? "1" : "0"}" data-virtual="${isVirtual ? "1" : "0"}">
+      tabindex="0" draggable="${!isVirtual && entry.formatted !== false}" data-key="${esc(entryKey)}" data-name="${esc(entry.name)}" data-type="${entryType}" data-slot="${entry.slot ?? ""}" data-bank="${entry.bank ?? ""}" data-empty="${entry.empty ? "1" : "0"}" data-virtual="${isVirtual ? "1" : "0"}">
       ${cells}
     </tr>`;
   }).join("");
@@ -885,9 +936,11 @@ function renderPane(index, preserveScroll = false) {
         <button class="menu-command import-folder" ${pane.entries.some(entry => entry.empty) ? "" : "disabled"}><b>▣</b><span>Insert folder of disk images…</span></button>
         <button class="menu-command create-blank-ssd" ${selectedEmptySlot ? "" : "disabled"}><b>○</b><span>Create blank SSD here</span></button>
         <button class="menu-command create-blank-dsd" ${selectedEmptySlot ? "" : "disabled"}><b>◎</b><span>Create blank DSD here</span></button>`
-        : !isTape && !pane.image.readOnly ? `<button class="menu-command import-file" ${canEditFiles ? "" : 'disabled title="Open $ or another DFS catalogue group before adding files."'}><b>＋</b><span>Add file…</span></button>
+        : !isTape && !pane.image.readOnly ? `<button class="menu-command import-file" ${canEditFiles ? "" : 'disabled title="Open $ or another DFS catalogue group before adding files."'}><b>＋</b><span>${isRom ? "Add ROM bank(s)…" : "Add file…"}</span></button>
           <button class="menu-command import-folder" ${canEditFiles ? "" : 'disabled title="Open $ or another DFS catalogue group before adding files."'}><b>▣</b><span>Add folder…</span></button>
-          ${isDfs
+          ${isRom
+            ? `<button class="menu-command append-rom-bank"><b>▥</b><span>Append empty bank</span></button>`
+            : isDfs
             ? `<button class="menu-command new-dfs-catalogue"><b>▢</b><span>New catalogue group…</span></button>`
             : `<button class="menu-command new-folder" ${canFolder ? "" : 'disabled title="This format cannot store directories."'}><b>▢</b><span>New folder…</span></button>`}` : ""}
       <span class="menu-separator" role="separator"></span>
@@ -902,7 +955,7 @@ function renderPane(index, preserveScroll = false) {
       ${isDsd ? `<button class="menu-command switch-side"><b>⇄</b><span>Switch to side ${pane.side === 2 ? "0" : "2"}</span></button>` : ""}
     </div>
   </details>`;
-  const libraryTools = isTape || pane.image.readOnly ? "" : `<details class="tool-menu library-tools">
+  const libraryTools = isTape || isRom || pane.image.readOnly ? "" : `<details class="tool-menu library-tools">
     <summary class="tool"><b>⌕</b><span>Library</span></summary>
     <div class="tool-menu-panel">
       <button class="menu-command online-library" ${!isSlots && isDfsRoot ? 'disabled title="Open a DFS catalogue group before installing files."' : ""}><b>⌕</b><span>${isSlots ? "Find disks online…" : "Find software online…"}</span></button>
@@ -934,8 +987,8 @@ function renderPane(index, preserveScroll = false) {
     <summary class="tool"><b>⌁</b><span>Analyse</span></summary>
     <div class="tool-menu-panel tool-menu-panel-right">
       <button class="menu-command health-dashboard"><b>♥</b><span>Image health dashboard</span></button>
-      <button class="menu-command preflight-selection"><b>◫</b><span>Dry-run selected items</span></button>
-      ${!isSlots && selected && selected.type !== "dir" && selected.type !== "directory" ? '<button class="menu-command inspect-file"><b>⌕</b><span>Inspect selected file</span></button><button class="menu-command inspect-dependencies"><b>⛓</b><span>Check loader dependencies</span></button>' : ""}
+      ${isRom ? "" : '<button class="menu-command preflight-selection"><b>◫</b><span>Dry-run selected items</span></button>'}
+      ${!isRom && !isSlots && selected && selected.type !== "dir" && selected.type !== "directory" ? '<button class="menu-command inspect-file"><b>⌕</b><span>Inspect selected file</span></button><button class="menu-command inspect-dependencies"><b>⛓</b><span>Check loader dependencies</span></button>' : ""}
       ${["mmb", "adfs"].includes(pane.image.kind) ? `<button class="menu-command test-menu-entries" ${(
         pane.image.kind === "mmb"
           ? pane.menuDetected && !pane.menuDetectionPending
@@ -949,8 +1002,8 @@ function renderPane(index, preserveScroll = false) {
     <summary class="tool"><b>⋯</b><span>Tools</span></summary>
     <div class="tool-menu-panel tool-menu-panel-right">
       <button class="menu-command open-hex-editor"><b>0x</b><span>Hex editor…</span></button>
-      ${isSlots ? "" : '<button class="menu-command validate-image"><b>✓</b><span>Check filesystem</span></button>'}
-      ${isSlots || isTape ? (isTape ? '<button class="menu-command convert-tape"><b>⇥</b><span>Convert tape to disk</span></button>' : "") : pane.image.readOnly ? "" : '<button class="menu-command compact-image"><b>≋</b><span>Compact filesystem</span></button>'}
+      ${isSlots ? "" : `<button class="menu-command validate-image"><b>✓</b><span>${isRom ? "Check ROM structure" : "Check filesystem"}</span></button>`}
+      ${isRom ? '<button class="menu-command rom-workbench"><b>⌬</b><span>ROM Workbench…</span></button><button class="menu-command configure-rom"><b>▥</b><span>ROM layout…</span></button>' : isSlots || isTape ? (isTape ? '<button class="menu-command convert-tape"><b>⇥</b><span>Convert tape to disk</span></button>' : "") : pane.image.readOnly ? "" : '<button class="menu-command compact-image"><b>≋</b><span>Compact filesystem</span></button>'}
     </div>
   </details>`;
   const toolbarMarkup = `${fileTools}${clipboardTools}${viewTools}${libraryTools}
@@ -978,12 +1031,13 @@ function renderPane(index, preserveScroll = false) {
     <nav class="toolbar" aria-label="Pane menus">
       ${toolbarMarkup}
     </nav>
-    <div class="breadcrumbs">${isSlots ? '<span class="crumb current">All disks</span>' : pane.slot !== null ? `<button class="crumb mmb-home">All disks</button><span>›</span>${crumbs(pane.path, isDfs)}` : crumbs(pane.path, isDfs)}</div>
+    <div class="breadcrumbs">${isSlots ? '<span class="crumb current">All disks</span>' : isRom ? '<span class="crumb current">ROM bank inventory</span>' : pane.slot !== null ? `<button class="crumb mmb-home">All disks</button><span>›</span>${crumbs(pane.path, isDfs)}` : crumbs(pane.path, isDfs)}</div>
+    ${isRom ? `<aside class="rom-pane-guide" aria-label="ROM pane guidance"><span><b>ⓘ Info</b> decodes headers, commands, strings and modules</span><span><b>Double-click</b> opens the bank in Hex</span><span><b>Tools → ROM Workbench</b> analyses code, revisions and hardware</span><span><b>ROM layout</b> changes bank interpretation without rewriting bytes</span></aside>` : ""}
     <div class="list-wrap">
       ${loadingMarkup(pane)}
-      ${(parentRow || rows) ? `<table class="file-list${isSlots ? " mmb-slot-list" : ""}" role="grid" aria-label="${isSlots ? "MMB disk slots" : "Files in " + esc(location)}"><thead><tr>${isSlots ? "<th>Slot</th><th>Name</th><th>Kind</th><th>Access</th>" : "<th>Name</th><th>Kind</th><th>Size</th><th>Access</th>"}</tr></thead><tbody>${parentRow}${rows}</tbody></table>` : '<div class="empty-list">Nothing here yet.<br>Drop a host file into this pane to add it.</div>'}
+      ${(parentRow || rows) ? `<table class="file-list${isSlots ? " mmb-slot-list" : ""}${isRom ? " rom-bank-list" : ""}" role="grid" aria-label="${isSlots ? "MMB disk slots" : isRom ? "ROM bank inventory" : "Files in " + esc(location)}"><thead><tr>${isSlots ? "<th>Slot</th><th>Name</th><th>Kind</th><th>Access</th>" : isRom ? "<th>Bank and address</th><th>Identity</th><th>Purpose and entry points</th><th>Contents</th>" : "<th>Name</th><th>Kind</th><th>Size</th><th>Access</th>"}</tr></thead><tbody>${parentRow}${rows}</tbody></table>` : '<div class="empty-list">Nothing here yet.<br>Drop a host file into this pane to add it.</div>'}
     </div>
-    <footer class="pane-foot"><span>${pane.image.readOnly ? "Read-only safe view · " : ""}${selectedKeys.size ? `${selectedKeys.size} selected · ` : ""}${pane.entries.length} ${isSlots ? "formatted or named slots" : "objects"} · ${esc(pane.description || "")}</span>${capacityMarkup(pane.capacity)}</footer>`;
+    <footer class="pane-foot"><span>${pane.image.readOnly ? "Read-only safe view · " : ""}${selectedKeys.size ? `${selectedKeys.size} selected · ` : ""}${pane.entries.length} ${isSlots ? "formatted or named slots" : isRom ? `bank${pane.entries.length === 1 ? "" : "s"}` : "objects"} · ${esc(pane.description || "")}</span>${capacityMarkup(pane.capacity)}</footer>`;
 
   if (pane.loading || pane.actionPending) {
     host.querySelectorAll("button").forEach(button => {
@@ -1015,6 +1069,9 @@ function renderPane(index, preserveScroll = false) {
   host.querySelector(".import-file")?.addEventListener("click", () => guardedPaneAction(index, () => chooseHostFile(index)));
   host.querySelector(".import-folder")?.addEventListener("click", () => guardedPaneAction(index, () => chooseHostFolder(index)));
   host.querySelector(".new-folder")?.addEventListener("click", () => guardedPaneAction(index, () => createFolder(index)));
+  host.querySelector(".append-rom-bank")?.addEventListener("click", () => guardedPaneAction(index, () => appendBlankRomBank(index)));
+  host.querySelector(".configure-rom")?.addEventListener("click", () => guardedPaneAction(index, () => configureRomLayout(index)));
+  host.querySelector(".rom-workbench")?.addEventListener("click", () => guardedPaneAction(index, () => showRomWorkbench(index)));
   host.querySelector(".new-dfs-catalogue")?.addEventListener("click", () => guardedPaneAction(index, () => createDfsCatalogue(index)));
   host.querySelector(".switch-side")?.addEventListener("click", () => switchDsdSide(index));
   host.querySelector(".insert-disk")?.addEventListener("click", () => guardedPaneAction(index, () => chooseSlotImage(index)));
@@ -1137,6 +1194,14 @@ function wireRow(row, index) {
     setSelection(panes[index], [row.dataset.key], row.dataset.key);
     refreshSelectionDisplay(index);
   };
+  row.querySelector(".row-rom-inspect")?.addEventListener("click", event => {
+    event.preventDefault();
+    event.stopPropagation();
+    selectForAction(false);
+    showRomStructure(index, Number(row.dataset.bank)).catch(error => {
+      toast(`Could not decode that ROM bank: ${error.message}`, true);
+    });
+  });
   row.querySelector(".row-rename")?.addEventListener("click", event => {
     event.preventDefault();
     event.stopPropagation();
@@ -1225,8 +1290,10 @@ function wireRow(row, index) {
         image: pane.image.id,
         slot: pane.slot,
         side: pane.side,
-        path: fullPath(pane.path, entry.name),
-        name: entry.name,
+        path: pane.image.kind === "rom" ? `bank:${entry.bank}` : fullPath(pane.path, entry.name),
+        name: pane.image.kind === "rom" ? `BANK${String(entry.bank).padStart(3, "0")}` : entry.name,
+        length: Number(entry.length || 0),
+        romBank: pane.image.kind === "rom" ? Number(entry.bank) : undefined,
         recursive: entry.type === "dir" || entry.type === "directory"
       }));
     document.querySelectorAll(`.pane[data-pane="${index}"] .file-row.selected`).forEach(item => {
@@ -1277,6 +1344,24 @@ function wireRow(row, index) {
       const files = dropped.map(item => item.file).filter(item => formats.isDfsImage(item.name));
       if (files.length) return insertFilesIntoSlots(index, Number(row.dataset.slot), files);
       toast("Drop an SSD, DSD, DFS-formatted HFE, or ZIP into an empty slot.", true);
+    };
+  } else if (panes[index].image.kind === "rom") {
+    row.ondragover = event => {
+      if (!event.dataTransfer.types.includes("application/x-acorn-files") && !event.dataTransfer.types.includes("Files")) return;
+      event.preventDefault();
+      event.stopPropagation();
+      row.classList.add("folder-drop-target");
+    };
+    row.ondragleave = () => row.classList.remove("folder-drop-target");
+    row.ondrop = async event => {
+      event.preventDefault();
+      event.stopPropagation();
+      row.classList.remove("folder-drop-target");
+      const encoded = event.dataTransfer.getData("application/x-acorn-files");
+      if (encoded) return transferFiles(index, JSON.parse(encoded), `bank:${row.dataset.bank}`);
+      const dropped = await collectDroppedHostFiles(event.dataTransfer);
+      const files = dropped.map(item => item.file);
+      if (files.length) return addRomHostFiles(index, files, Number(row.dataset.bank));
     };
   } else if (
     panes[index].image.kind === "adfs"
@@ -2191,6 +2276,8 @@ async function openEntry(index, row) {
   if (row.dataset.parent === "1") {
     if (pane.slot !== null && pane.path === "") await returnToMmb(index);
     else await navigate(index, isDfsPane(pane) && pane.path.length === 1 ? "" : parentPath(pane.path));
+  } else if (row.dataset.type === "rom-bank") {
+    await openHexEditor(index, Number(row.dataset.bank) * (pane.image.rom?.bankSize || 16384));
   } else if (row.dataset.type === "disk") {
     const entry = pane.entries.find(item => item.slot === Number(row.dataset.slot));
     if (!entry?.formatted) return toast("That MMB slot is not formatted.", true);
@@ -2436,8 +2523,8 @@ function chooseImage(index) {
   if (pane.loading) return;
   let selection = { files: [] };
   showModal(`
-    <h2>Open a disk image</h2>
-    <p>Choose one or more matching files, such as a DAT with its DSC descriptor. ZIP distributions are also supported.</p>
+    <h2>Open a media image</h2>
+    <p>Choose a disk, tape, ROM or matching image set, such as a DAT with its DSC descriptor. ZIP distributions are also supported.</p>
     <div class="field"><label>Image file</label>
       <input type="file" name="images" accept="${esc(formats.accept)}" multiple>
       <div class="file-selection-summary" data-selected-files aria-live="polite"></div>
@@ -2450,19 +2537,21 @@ function chooseImage(index) {
         <option value="bbc-master">BBC / Master · normal 8-bit ADFS</option>
         <option value="risc-os">Archimedes / RISC OS</option>
       </select>
-      <small>Used for ADFS validation and hardware-safe repairs. It is ignored for DFS, MMB and UEF images.</small>
+      <small>Used for ADFS validation and hardware-safe repairs. It is ignored for DFS, MMB, UEF, HFE and ROM images.</small>
     </div>
+    <div class="field"><label>Raw format override</label><select name="formatOverride"><option value="">Auto-detect</option><option value="rom">Open selected bytes as an Acorn ROM</option></select><small>Use this for headerless custom ROMs stored as BIN or another generic name. No filesystem probing will be attempted.</small></div>
     <div class="modal-actions">
       <button class="button ghost" value="cancel">Cancel</button>
       <button class="button primary" value="open" data-open-selection disabled>Open selected image</button>
     </div>`,
   form => {
     const files = selection.files;
-    if (!files.length) throw new Error("Choose a disk image to open.");
+    if (!files.length) throw new Error("Choose a media image to open.");
     // Let showModal finish closing this dialog before a DAT/DSC pairing
     // dialog is opened. Opening the replacement synchronously here lets the
     // first dialog's promise handler close the new one as well.
     const targetHardware = form.get("targetHardware") || "auto";
+    if (form.get("formatOverride") === "rom") files.forEach(file => { file.acornForceKind = "rom"; });
     setTimeout(() => openFiles(index, files, targetHardware), 0);
   });
   const selectionSummary = modalContent.querySelector("[data-selected-files]");
@@ -2582,6 +2671,53 @@ function promptBeebScsiPair(
 
 async function openFiles(index, files, targetHardware = null) {
   if (!files.length) return;
+  const romFiles = files.filter(file => formats.isRomImage(file.name) || file.acornForceKind === "rom");
+  if (romFiles.length > 1) {
+    const combinedSize = romFiles.reduce((total, file) => total + file.size, 0);
+    if (combinedSize > 64 * 1024 * 1024) {
+      toast("That ROM set is larger than the 64 MiB workbench safety limit.", true);
+      return;
+    }
+    const equalSize = romFiles.every(file => file.size === romFiles[0].size);
+    const canInterleave = equalSize && [2, 4].includes(romFiles.length);
+    return showModal(`
+      <h2>Open a ROM set</h2>
+      <p>${romFiles.length} ROM components were selected. Keep the order shown below; physical chip numbering matters.</p>
+      <div class="folder-import-preview">${romFiles.map((file, order) => `<code>${order + 1}. ${esc(file.name)} · ${humanSize(file.size)}</code>`).join("")}</div>
+      <div class="field"><label>How are these files arranged?</label><select name="romSetMode">
+        <option value="concatenate">Consecutive banks / concatenate in this order</option>
+        ${canInterleave ? `<option value="interleave">${romFiles.length} byte-wide chips / interleave into logical byte order</option>` : ""}
+        <option value="first">Open only the first selected file</option>
+      </select><small>${canInterleave ? "Archimedes ROM sets commonly use four byte-wide chip files." : "Byte interleaving requires two or four components of exactly equal size."}</small></div>
+      <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="open">Build working ROM</button></div>`,
+    async form => {
+      if (form.get("romSetMode") === "first") {
+        setTimeout(() => openFiles(index, [romFiles[0]], targetHardware), 0);
+        return;
+      }
+      const buffers = await Promise.all(romFiles.map(file => file.arrayBuffer()));
+      let bytes;
+      let layout = "linear";
+      if (form.get("romSetMode") === "interleave") {
+        const parts = buffers.map(buffer => new Uint8Array(buffer));
+        bytes = new Uint8Array(parts[0].length * parts.length);
+        for (let offset = 0; offset < parts[0].length; offset += 1) {
+          for (let chip = 0; chip < parts.length; chip += 1) bytes[offset * parts.length + chip] = parts[chip][offset];
+        }
+        layout = `byte-interleaved-${parts.length}`;
+      } else {
+        bytes = new Uint8Array(buffers.reduce((sum, buffer) => sum + buffer.byteLength, 0));
+        let offset = 0;
+        for (const buffer of buffers) { bytes.set(new Uint8Array(buffer), offset); offset += buffer.byteLength; }
+      }
+      const combined = new File([bytes], `${formats.stem(romFiles[0].name)}-set.rom`, { type: "application/octet-stream" });
+      combined.acornRomLayout = layout;
+      combined.acornForceKind = "rom";
+      combined.acornRomPlatform = layout === "linear" ? "bbc-master-electron" : "archimedes";
+      combined.acornRomComponents = romFiles.map(file => file.name);
+      setTimeout(() => openFiles(index, [combined], targetHardware), 0);
+    });
+  }
   let image = files.find(file => !formats.isDescriptor(file.name));
   const descriptor = files.find(file => formats.isDescriptor(file.name));
   if (!image) {
@@ -2617,6 +2753,12 @@ async function openFiles(index, files, targetHardware = null) {
   form.append("image", image);
   if (descriptor) form.append("descriptor", descriptor);
   form.append("targetHardware", targetHardware);
+  if (image.acornForceKind) form.append("forceKind", image.acornForceKind);
+  if (image.acornRomLayout) {
+    form.append("romLayout", image.acornRomLayout);
+    form.append("romPlatform", image.acornRomPlatform || "custom");
+    form.append("romComponentNames", JSON.stringify(image.acornRomComponents || []));
+  }
   setLoading(index, true, `Uploading and opening ${image.name}…`);
   try {
     const data = await uploadApi("/api/images", form, {
@@ -2633,6 +2775,20 @@ async function openFiles(index, files, targetHardware = null) {
       )
     });
     await acceptImage(index, data.image);
+    if (image.acornRomLayout) {
+      const configured = await api(`/api/images/${data.image.id}/rom-layout`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bankSize: data.image.rom?.bankSize || 16384,
+          eraseByte: data.image.rom?.eraseByte ?? 255,
+          platform: image.acornRomPlatform,
+          layout: image.acornRomLayout,
+        }),
+      });
+      panes[index].image = configured.image;
+      await loadDirectory(index);
+    }
     toast(`${data.image.name} opened`);
   } catch (error) {
     panes[index].loading = false;
@@ -2829,22 +2985,198 @@ function beginImageRename(index) {
   input.addEventListener("blur", commit);
 }
 
+async function showRomStructure(index, bankNumber, restoreState = null, { replace = false } = {}) {
+  const pane = panes[index];
+  const summary = pane.entries.find(item => Number(item.bank) === Number(bankNumber));
+  if (!summary) return toast("That ROM bank is no longer available.", true);
+  const data = await api(`/api/images/${pane.image.id}/rom-banks/${Number(bankNumber)}/inspect`);
+  const entry = data.bank;
+  const bankSize = Number(pane.image.rom?.bankSize || 16384);
+  const bankOffset = Number(entry.bank) * bankSize;
+  const hex = (value, width = 4) => Number(value).toString(16).toUpperCase().padStart(width, "0");
+  const header = entry.header;
+  const extension = entry.extensionHeader;
+  const structures = entry.structures || [];
+  const strings = entry.strings || [];
+  const diagnostics = entry.diagnostics || {};
+  const modules = entry.modules || [];
+  const starCommands = entry.starCommands || [];
+  const erasedPercent = entry.length ? (100 * Number(diagnostics.erasedBytes || 0) / entry.length).toFixed(1) : "0.0";
+  const headerRows = header ? [
+    ["Title", header.title],
+    ["Version text", header.version || "Not supplied"],
+    ["Version byte", `&${hex(header.versionByte, 2)}`],
+    ["Copyright", header.copyright],
+    ["ROM type", `&${header.typeHex} · ${header.roles}`],
+    ["Processor", header.processor],
+    ["Language entry", header.languageEntry == null ? "Not present" : `&${hex(header.languageEntry)}`],
+    ["Service entry", header.serviceEntry == null ? "Not present" : `&${hex(header.serviceEntry)}`],
+    ["Extra features", header.features?.length ? header.features.join(", ") : "None declared"],
+  ] : [];
+  const structureRows = structures.map(item => `
+    <tr><td>${esc(item.name)}</td><td><code>+&${hex(item.offset)}</code>${item.address == null ? "" : ` · mapped <code>&${hex(item.address)}</code>`}</td><td>${item.length == null ? "Entry point" : humanSize(item.length)}</td><td><button class="button compact rom-open-offset" type="button" data-offset="${bankOffset + Number(item.offset)}">Hex</button></td></tr>`).join("");
+  const stringRows = strings.map(item => `
+    <tr><td><code>+&${hex(item.offset)}</code></td><td><code>&${hex(item.address)}</code></td><td>${esc(item.text)}</td><td><button class="button compact rom-open-offset" type="button" data-offset="${bankOffset + Number(item.offset)}">Hex</button></td></tr>`).join("");
+  const moduleRows = modules.map(item => `
+    <tr><td><strong>${esc(item.title)}</strong>${item.help ? `<small>${esc(item.help)}</small>` : ""}</td><td><code>+&${hex(item.offset)}</code></td><td>${[
+      item.start != null ? "start" : "", item.initialise != null ? "init" : "", item.finalise != null ? "final" : "", item.service != null ? "service" : "", item.commands != null ? "commands" : "", item.swiHandler != null ? "SWIs" : ""
+    ].filter(Boolean).join(", ") || "metadata only"}</td><td><button class="button compact rom-open-offset" type="button" data-offset="${bankOffset + Number(item.offset)}">Hex</button></td></tr>`).join("");
+  const commandRows = starCommands.map((item, helpIndex) => {
+    const detail = item.confidence === "declared"
+      ? `${item.module ? `Declared by ${item.module}. ` : ""}${item.configureKeyword ? "Configuration and status keyword" : item.filingSystemCommand ? "Filing-system command" : "Module command"}${item.minimumParameters == null ? "" : ` · ${item.minimumParameters}–${item.maximumParameters} parameter${item.maximumParameters === 1 ? "" : "s"}`}`
+      : item.handlerAddress != null
+        ? `MOS address-dispatch table · handler &${hex(item.handlerAddress)}`
+        : `MOS token-dispatch table${item.token == null ? "" : ` · token &${hex(item.token, 2)}`}`;
+    const helpButton = item.helpText
+      ? `<button class="rom-command-help" type="button" data-help-index="${helpIndex}" aria-label="Help for ${esc(item.display)}" aria-describedby="rom-command-help-tooltip" aria-expanded="false">?</button>`
+      : "";
+    return `<tr><td><span class="rom-command-name"><strong><code>${esc(item.display)}</code></strong>${helpButton}</span></td><td><span class="rom-command-confidence">${esc(item.confidence)}</span><small>${esc(detail)}</small></td><td><code>+&${hex(item.offset)}</code>${item.address == null ? "" : ` · &${hex(item.address)}`}</td><td><span class="rom-command-actions"><button class="button compact rom-open-offset" type="button" data-offset="${bankOffset + Number(item.offset)}">Table</button>${item.handlerOffset == null ? "" : `<button class="button compact rom-open-offset" type="button" data-offset="${bankOffset + Number(item.handlerOffset)}">Handler</button>`}</span></td></tr>`;
+  }).join("");
+  showModal(`
+    <div class="modal-heading rom-decoder-heading" tabindex="-1" autofocus><span class="modal-kicker">DECODED ROM CONTENTS</span><h2>Bank ${entry.bank} · ${esc(entry.name)}</h2><p>This is a byte-addressed ROM bank, not a filing-system directory. Only proven structures are named; printable runs are evidence, not invented files.</p></div>
+    <div class="rom-summary-grid">
+    <section class="rom-decode-section"><h3>Bank fingerprint and programming information</h3><dl class="rom-header-grid"><dt>Image byte range</dt><dd><code>&${hex(bankOffset, 6)}–&${hex(bankOffset + entry.length - 1, 6)}</code></dd><dt>SHA-256</dt><dd><code>${esc(diagnostics.sha256 || "Unavailable")}</code></dd><dt>CRC-32</dt><dd><code>&${esc(diagnostics.crc32 || "Unavailable")}</code></dd><dt>Information entropy</dt><dd>${Number(diagnostics.entropy || 0).toFixed(3)} bits per byte (0 to 8)</dd><dt>Distinct byte values</dt><dd>${Number(diagnostics.uniqueByteValues || 0)} of 256</dd><dt>Erased bytes</dt><dd>${Number(diagnostics.erasedBytes || 0).toLocaleString()} (${erasedPercent}%) using <code>&${hex(pane.image.rom?.eraseByte ?? 255, 2)}</code></dd><dt>Used range</dt><dd>${diagnostics.usedStart == null ? "Entire bank is erased" : `<code>+&${hex(diagnostics.usedStart)}–+&${hex(diagnostics.usedEnd)}</code>`}</dd><dt>Zero / &amp;FF bytes</dt><dd>${Number(diagnostics.zeroBytes || 0).toLocaleString()} / ${Number(diagnostics.ffBytes || 0).toLocaleString()}</dd><dt>Printable bytes</dt><dd>${Number(diagnostics.printableBytes || 0).toLocaleString()}</dd><dt>Identical banks</dt><dd>${entry.matchingBanks?.length ? entry.matchingBanks.map(bank => `Bank ${bank}`).join(", ") : "None"}</dd></dl></section>
+    ${header ? `<section class="rom-decode-section"><h3>BBC-family header</h3><dl class="rom-header-grid">${headerRows.map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join("")}</dl></section>` : '<div class="help-note"><strong>No standard BBC-family header:</strong> the bank remains available as raw code and data.</div>'}
+    ${extension ? `<section class="rom-decode-section rom-extension-section"><h3>RISC OS extension-ROM trailer</h3><dl class="rom-header-grid"><dt>Declared image size</dt><dd>${humanSize(extension.declaredSize)}</dd><dt>Stored checksum</dt><dd><code>&${hex(extension.checksum, 8)}</code></dd><dt>Calculated checksum</dt><dd><code>&${hex(extension.calculatedChecksum, 8)}</code></dd><dt>Result</dt><dd>${extension.checksumValid ? "Valid" : "INVALID"}</dd></dl></section>` : ""}
+    </div>
+    ${entry.warnings?.length ? `<div class="help-warning"><strong>Header consistency warning:</strong><ul>${entry.warnings.map(warning => `<li>${esc(warning)}</li>`).join("")}</ul></div>` : ""}
+    <section class="rom-decode-section"><h3>Provided star commands</h3>${starCommands.length ? `<p>RISC OS module-table commands are declared. BBC, Master and Electron names are listed only when a structurally valid token or address-dispatch table is found. Printable command-like text alone is not included. A <strong>?</strong> opens help declared by the ROM or syntax reconstructed from its help tables.</p><div class="rom-decode-table"><table><thead><tr><th>Command</th><th>Evidence</th><th>Table location</th><th></th></tr></thead><tbody>${commandRows}</tbody></table></div>` : `<div class="help-note"><strong>No commands could be listed safely.</strong> This does not prove that the ROM has none. A BBC-family service ROM may construct names dynamically, use an unfamiliar table, or accept abbreviations in code.</div>`}</section>
+    <section class="rom-decode-section"><h3>Known regions and entry points</h3><div class="rom-decode-table"><table><thead><tr><th>Meaning</th><th>Location</th><th>Extent</th><th></th></tr></thead><tbody>${structureRows || '<tr><td colspan="4">This bank is erased and contains no decoded structures.</td></tr>'}</tbody></table></div></section>
+    ${modules.length ? `<section class="rom-decode-section"><h3>Structurally plausible RISC OS modules</h3><p>These candidates passed the standard module-header offset and title checks. They are reported as candidates until their enclosing extension-ROM chunk is fully identified.</p><div class="rom-decode-table"><table><thead><tr><th>Module</th><th>Offset</th><th>Declared facilities</th><th></th></tr></thead><tbody>${moduleRows}</tbody></table></div></section>` : ""}
+    <details class="rom-string-list" ${strings.length <= 20 ? "open" : ""}><summary>${entry.stringsTruncated ? "First " : ""}${strings.length} printable string${strings.length === 1 ? "" : "s"} ${entry.stringsTruncated ? "shown" : "found"}</summary><p>Strings often reveal commands, messages and build information, but their boundaries do not make them files.${entry.stringsTruncated ? " The display is capped at 512 candidates per bank to keep the browser responsive; use hex search for the remainder." : ""}</p><div class="rom-decode-table"><table><thead><tr><th>Offset</th><th>Mapped address</th><th>Text</th><th></th></tr></thead><tbody>${stringRows || '<tr><td colspan="4">No printable strings of four or more characters were found.</td></tr>'}</tbody></table></div></details>
+    <div id="rom-command-help-tooltip" class="rom-command-tooltip" role="tooltip" hidden></div>
+    <div class="modal-actions"><button class="button ghost rom-open-offset" type="button" data-offset="${bankOffset}">Open whole bank in hex editor</button><button class="button primary" value="cancel">Close</button></div>`, undefined, { replace });
+  modalContent.querySelectorAll(".rom-open-offset").forEach(button => {
+    button.addEventListener("click", async () => {
+      const offset = Number(button.dataset.offset || bankOffset);
+      const decoderForm = modal.querySelector("form");
+      if (!decoderForm || modal.classList.contains("hex-editor-modal-host")) return;
+      const returnState = {
+        formScrollTop: decoderForm?.scrollTop || 0,
+        tables: [...modalContent.querySelectorAll(".rom-decode-table")].map(table => ({
+          scrollTop: table.scrollTop,
+          scrollLeft: table.scrollLeft,
+        })),
+        details: [...modalContent.querySelectorAll("details")].map(details => details.open),
+        focusOffset: button.dataset.offset,
+      };
+      let decoderChanged = false;
+      modal.classList.add("hex-editor-modal-host");
+      decoderForm.inert = true;
+      try {
+        await openHexEditor(index, offset, {
+          host: modal,
+          pageSize: 512,
+          afterSave: () => { decoderChanged = true; },
+          onClose: async () => {
+            modal.classList.remove("hex-editor-modal-host");
+            decoderForm.inert = false;
+            if (decoderChanged) {
+              await showRomStructure(index, bankNumber, returnState, { replace: true });
+              return;
+            }
+            decoderForm.scrollTop = returnState.formScrollTop;
+            button.focus({ preventScroll: true });
+          },
+        });
+      } catch (error) {
+        modal.classList.remove("hex-editor-modal-host");
+        decoderForm.inert = false;
+        toast(`Could not open the hex editor: ${error.message}`, true);
+      }
+    });
+  });
+  const helpTooltip = modalContent.querySelector(".rom-command-tooltip");
+  const helpButtons = [...modalContent.querySelectorAll(".rom-command-help")];
+  let pinnedHelpButton = null;
+  const hideCommandHelp = (button, force = false) => {
+    if (!force && pinnedHelpButton === button) return;
+    button?.setAttribute("aria-expanded", "false");
+    if (force || !pinnedHelpButton) helpTooltip.hidden = true;
+  };
+  const showCommandHelp = (button, pin = false) => {
+    if (pinnedHelpButton && pinnedHelpButton !== button && !pin) return;
+    const item = starCommands[Number(button.dataset.helpIndex)];
+    if (!item?.helpText) return;
+    if (pinnedHelpButton && pinnedHelpButton !== button) pinnedHelpButton.setAttribute("aria-expanded", "false");
+    if (pin) pinnedHelpButton = button;
+    helpTooltip.innerHTML = `<strong>${esc(item.helpText)}</strong><small>${esc(item.helpSource || "Help recovered from the ROM")}</small>`;
+    helpTooltip.hidden = false;
+    button.setAttribute("aria-expanded", "true");
+    const anchor = button.getBoundingClientRect();
+    const tooltip = helpTooltip.getBoundingClientRect();
+    const gutter = 10;
+    const left = Math.max(gutter, Math.min(anchor.left, window.innerWidth - tooltip.width - gutter));
+    const below = anchor.bottom + 7;
+    const top = below + tooltip.height <= window.innerHeight - gutter
+      ? below
+      : Math.max(gutter, anchor.top - tooltip.height - 7);
+    helpTooltip.style.left = `${left}px`;
+    helpTooltip.style.top = `${top}px`;
+  };
+  helpButtons.forEach(button => {
+    button.addEventListener("pointerenter", () => showCommandHelp(button));
+    button.addEventListener("pointerleave", () => hideCommandHelp(button));
+    button.addEventListener("focus", () => showCommandHelp(button));
+    button.addEventListener("blur", () => hideCommandHelp(button));
+    button.addEventListener("click", () => {
+      if (pinnedHelpButton === button) {
+        pinnedHelpButton = null;
+        hideCommandHelp(button, true);
+      } else {
+        showCommandHelp(button, true);
+      }
+    });
+  });
+  modalContent.addEventListener("keydown", event => {
+    if (event.key === "Escape" && pinnedHelpButton) {
+      event.preventDefault();
+      event.stopPropagation();
+      const button = pinnedHelpButton;
+      pinnedHelpButton = null;
+      hideCommandHelp(button, true);
+      button.focus();
+    }
+  });
+  if (restoreState) {
+    setTimeout(() => {
+      const decoderForm = modal.querySelector("form");
+      modalContent.querySelectorAll("details").forEach((details, detailIndex) => {
+        if (restoreState.details?.[detailIndex] != null) details.open = restoreState.details[detailIndex];
+      });
+      modalContent.querySelectorAll(".rom-decode-table").forEach((table, tableIndex) => {
+        const tableState = restoreState.tables?.[tableIndex];
+        if (!tableState) return;
+        table.scrollTop = tableState.scrollTop || 0;
+        table.scrollLeft = tableState.scrollLeft || 0;
+      });
+      if (decoderForm) decoderForm.scrollTop = restoreState.formScrollTop || 0;
+      const returnControl = restoreState.focusOffset == null
+        ? null
+        : modalContent.querySelector(`.rom-open-offset[data-offset="${restoreState.focusOffset}"]`);
+      returnControl?.focus({ preventScroll: true });
+    }, 60);
+  }
+}
+
 function renameSelected(index) {
   const pane = panes[index];
   const entry = selectedEntry(index);
   if (!entry) return;
   const isSlot = pane.image.kind === "mmb" && pane.slot === null;
+  const isRom = pane.image.kind === "rom";
   const oldPath = isSlot ? entry.name : fullPath(pane.path, entry.name);
-  const nameLimit = pane.image.kind === "adfs" ? 10 : isDfsPane(pane) ? 7 : 12;
+  const nameLimit = isRom ? Number(entry.header?.titleCapacity || 24) : pane.image.kind === "adfs" ? 10 : isDfsPane(pane) ? 7 : 12;
   showModal(`
-    <h2>${isSlot ? "Rename MMB disk" : `Rename ${esc(entry.name)}`}</h2>
-    <p>${isSlot ? "The slot number and disk contents stay unchanged." : "The item stays in its current directory. Drag it onto another directory to move it."}</p>
+    <h2>${isSlot ? "Rename MMB disk" : isRom ? `Edit ROM bank ${entry.bank} title` : `Rename ${esc(entry.name)}`}</h2>
+    <p>${isSlot ? "The slot number and disk contents stay unchanged." : isRom ? "This changes the title in the recognised sideways-ROM header. The code and bank position stay unchanged." : "The item stays in its current directory. Drag it onto another directory to move it."}</p>
     <div class="field"><label>${isSlot ? "Disk title" : "New name"} · max ${nameLimit} characters</label>
       <input name="destination" maxlength="${nameLimit}" value="${esc(entry.name)}" required></div>
     <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="ok">Rename</button></div>`,
   async form => {
     const body = { slot: isSlot ? entry.slot : pane.slot, side: pane.side };
     if (isSlot) body.slotTitle = form.get("destination");
+    else if (isRom) { body.bank = entry.bank; body.title = form.get("destination"); }
     else {
       body.source = oldPath;
       body.destination = fullPath(pane.path, form.get("destination"));
@@ -2855,6 +3187,9 @@ function renameSelected(index) {
     if (isSlot) {
       pane.image = data.image;
       await acceptImage(index, pane.image);
+    } else if (isRom) {
+      pane.image = data.image;
+      await loadDirectory(index);
     } else if (pane.image.kind === "adfs") {
       await refreshSharedAdfsPanes(pane.image.id, data.image, data.moved);
     } else {
@@ -2872,6 +3207,7 @@ function renameSelected(index) {
 function deleteSelected(index) {
   const pane = panes[index];
   const isSlot = pane.image.kind === "mmb" && pane.slot === null;
+  const isRom = pane.image.kind === "rom";
   const entries = selectedEntries(index).filter(item =>
     isSlot ? item.type === "disk" && item.formatted : true
   );
@@ -2884,8 +3220,8 @@ function deleteSelected(index) {
     item => item.type === "dir" || item.type === "directory"
   ) ? " Selected directories and everything inside them will be removed." : "";
   showModal(`
-    <h2>${isSlot ? "Eject" : "Delete"} ${selectionLabel}?</h2>
-    <p>${isSlot ? "Each selected slot catalogue entry and its 200 KiB disk data will be cleared." : `This removes ${single ? "the selected item" : "all selected items"} from the working image.${contentsWarning}`} Associated installed-menu entries are removed together in the same operation. Your original image remains untouched.</p>
+    <h2>${isSlot ? "Eject" : isRom ? "Erase" : "Delete"} ${selectionLabel}?</h2>
+    <p>${isSlot ? "Each selected slot catalogue entry and its 200 KiB disk data will be cleared." : isRom ? "Each selected bank will be filled with the configured erased-byte value. Bank positions and total ROM size stay unchanged." : `This removes ${single ? "the selected item" : "all selected items"} from the working image.${contentsWarning}`} ${isRom ? "" : "Associated installed-menu entries are removed together in the same operation."} Your original image remains untouched.</p>
     <div class="modal-actions"><button class="button ghost" value="cancel">Keep ${entries.length === 1 ? "it" : "them"}</button><button class="button danger" value="delete">${isSlot ? "Eject" : "Delete"} ${entries.length} ${isSlot ? `disk${entries.length === 1 ? "" : "s"}` : `item${entries.length === 1 ? "" : "s"}`}</button></div>`,
   async () => {
     const endpoint = isSlot ? `/api/images/${pane.image.id}/slots/clear` : `/api/images/${pane.image.id}/delete`;
@@ -2895,7 +3231,8 @@ function deleteSelected(index) {
           slot: pane.slot,
           side: pane.side,
           items: entries.map(item => ({
-            path: fullPath(pane.path, item.name),
+            path: isRom ? `bank:${item.bank}` : fullPath(pane.path, item.name),
+            bank: isRom ? item.bank : undefined,
             recursive: item.type === "dir" || item.type === "directory",
           })),
         };
@@ -2906,6 +3243,9 @@ function deleteSelected(index) {
     if (isSlot) {
       pane.image = data.image;
       await acceptImage(index, pane.image);
+    } else if (isRom) {
+      pane.image = data.image;
+      await loadDirectory(index);
     } else if (pane.image.kind === "adfs") {
       await refreshSharedAdfsPanes(
         pane.image.id,
@@ -3107,6 +3447,10 @@ async function prepareHostFolderMetadata(records) {
 async function addSelectedHostFolder(index, records, requestedSlot = null) {
   const pane = panes[index];
   if (!records.length || !pane.image) return;
+  if (pane.image.kind === "rom") {
+    const relevant = records.filter(item => !ignoredFolderFile(item.relativePath));
+    return addRomHostFiles(index, relevant.map(item => item.file));
+  }
   const isMmbRoot = pane.image.kind === "mmb" && pane.slot === null;
   const reviewedRecords = isMmbRoot ? records : await prepareHostFolderMetadata(records);
   const relevant = reviewedRecords.filter(item => !ignoredFolderFile(item.relativePath)
@@ -3182,6 +3526,7 @@ async function addSelectedHostFolder(index, records, requestedSlot = null) {
 async function addSelectedHostFiles(index, files) {
   if (!files.length) return;
   const pane = panes[index];
+  if (pane.image?.kind === "rom") return addRomHostFiles(index, files);
   const preparedFiles = await prepareHostFileMetadata(files);
   if (!preparedFiles.length) return toast("The selection contained metadata sidecars but no data files.", true);
   const batch = { current: 0, total: preparedFiles.length, acceptAll: false, currentMetadata: null };
@@ -3211,6 +3556,216 @@ async function addSelectedHostFiles(index, files) {
   if (batch.adfsMenuMetadata?.length) {
     await queueAdfsMenuEntries(index, pane.path, batch.adfsMenuMetadata);
   }
+}
+
+async function addRomHostFiles(index, files, firstBank = null) {
+  const pane = panes[index];
+  const bankSize = Number(pane.image.rom?.bankSize || 16384);
+  const expanded = [];
+  for (const file of files) {
+    if (!file.size) continue;
+    if (file.size <= bankSize) {
+      expanded.push({ file, offset: 0, name: file.name });
+      continue;
+    }
+    if (file.size % bankSize) {
+      toast(`${file.name} is ${humanSize(file.size)} and is not a whole number of ${humanSize(bankSize)} banks. Change the ROM layout or split it explicitly.`, true);
+      return false;
+    }
+    const bytes = await file.arrayBuffer();
+    for (let offset = 0; offset < file.size; offset += bankSize) {
+      expanded.push({
+        file: new File([bytes.slice(offset, offset + bankSize)], `${formats.stem(file.name)}-bank-${String(offset / bankSize).padStart(3, "0")}.rom`, { type: "application/octet-stream" }),
+        offset,
+        name: file.name,
+      });
+    }
+  }
+  if (!expanded.length) return toast("No ROM bytes were selected.", true);
+  return showModal(`
+    <h2>Add ${expanded.length} ROM bank${expanded.length === 1 ? "" : "s"}</h2>
+    <p>Each input is fitted to a ${humanSize(bankSize)} bank and padded with &${Number(pane.image.rom?.eraseByte ?? 255).toString(16).toUpperCase().padStart(2, "0")}. Larger, exact-multiple images are split in file order.</p>
+    <div class="field"><label>First destination</label><select name="placement">
+      <option value="empty" ${firstBank == null ? "selected" : ""}>First empty banks, then append</option>
+      <option value="bank" ${firstBank != null ? "selected" : ""}>Bank ${firstBank ?? 0}, then consecutive banks</option>
+      <option value="append">Append after the current image</option>
+    </select></div>
+    <div class="help-note"><strong>Existing bytes:</strong> choosing a numbered bank can overwrite populated banks. Acorn File Forge creates an undo checkpoint first.</div>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="add">Add banks</button></div>`,
+  async form => {
+    const placement = form.get("placement");
+    const start = placement === "append" ? Number(pane.image.rom?.bankCount || 0) : placement === "bank" ? Number(firstBank ?? 0) : null;
+    for (const [offset, item] of expanded.entries()) {
+      const body = new FormData();
+      body.append("file", item.file);
+      if (start != null) body.append("bank", start + offset);
+      const data = await paneOperation(index, `Adding ROM bank ${offset + 1} of ${expanded.length}…`, () => api(`/api/images/${pane.image.id}/files`, { method: "POST", body }));
+      pane.image = data.image;
+    }
+    await loadDirectory(index);
+    toast(`${expanded.length} ROM bank${expanded.length === 1 ? "" : "s"} added`);
+    return true;
+  });
+}
+
+async function appendBlankRomBank(index) {
+  const pane = panes[index];
+  const data = await paneOperation(index, "Appending an empty ROM bank…", () => api(`/api/images/${pane.image.id}/rom-banks/blank`, { method: "POST" }));
+  pane.image = data.image;
+  await loadDirectory(index);
+  setSelection(pane, [String(data.bank)], String(data.bank));
+  renderPane(index, true);
+  toast(`Empty ROM bank ${data.bank} appended`);
+}
+
+function configureRomLayout(index) {
+  const pane = panes[index];
+  const rom = pane.image.rom || {};
+  showModal(`
+    <h2>ROM layout</h2>
+    <p>These settings change how the existing bytes are divided and described. They do not reorder or rewrite the image.</p>
+    <div class="field"><label>Target family</label><select name="platform">
+      <option value="bbc-master-electron" ${rom.platform === "bbc-master-electron" ? "selected" : ""}>BBC / Master / Electron sideways ROM</option>
+      <option value="archimedes" ${rom.platform === "archimedes" ? "selected" : ""}>Archimedes / RISC OS ROM</option>
+      <option value="custom" ${rom.platform === "custom" ? "selected" : ""}>Custom Acorn hardware</option>
+    </select></div>
+    <div class="field"><label>Bank size in bytes</label><input name="bankSize" type="number" min="256" max="67108864" step="256" value="${Number(rom.bankSize || 16384)}" required><small>16,384 is the normal sideways-ROM bank. 8K, 32K and larger banks are supported.</small></div>
+    <div class="field"><label>Erased byte</label><select name="eraseByte"><option value="255" ${Number(rom.eraseByte) !== 0 ? "selected" : ""}>&FF</option><option value="0" ${Number(rom.eraseByte) === 0 ? "selected" : ""}>&00</option></select></div>
+    <div class="field"><label>Byte layout</label><select name="layout">
+      <option value="linear" ${rom.layout === "linear" ? "selected" : ""}>Linear / banked bytes</option>
+      <option value="byte-interleaved-2" ${rom.layout === "byte-interleaved-2" ? "selected" : ""}>Two byte-wide chips, interleaved</option>
+      <option value="byte-interleaved-4" ${rom.layout === "byte-interleaved-4" ? "selected" : ""}>Four byte-wide chips, interleaved (Archimedes)</option>
+    </select><small>The image remains byte-for-byte unchanged. The setting documents how it is wired and controls future component exports.</small></div>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="apply">Apply layout</button></div>`,
+  async form => {
+    const data = await api(`/api/images/${pane.image.id}/rom-layout`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.fromEntries(form)),
+    });
+    pane.image = data.image;
+    await loadDirectory(index);
+    toast("ROM layout updated; image bytes were not changed");
+  });
+}
+
+async function showRomWorkbench(index) {
+  const pane = panes[index];
+  if (pane?.image?.kind !== "rom") return;
+  const imageId = pane.image.id;
+  const [mapping, identity, audit, emulator] = await paneOperation(index, "Analysing ROM structure…", () => Promise.all([
+    api(`/api/images/${imageId}/rom/map`),
+    api(`/api/images/${imageId}/rom/identify`),
+    api(`/api/images/${imageId}/rom/audit`),
+    api(`/api/images/${imageId}/rom/emulator`),
+  ]));
+  const otherRoms = panes.map((item, paneIndex) => ({ item, paneIndex })).filter(row => row.paneIndex !== index && row.item.image?.kind === "rom");
+  const project = pane.image.rom?.project || {};
+  const bankOptions = mapping.banks.map(row => `<option value="${row.bank}">Bank ${row.bank} · ${esc(row.title)}</option>`).join("");
+  const findings = audit.findings.length ? audit.findings.map(row => `<li class="${esc(row.level)}">${row.bank == null ? "" : `Bank ${row.bank}: `}${esc(row.message)}</li>`).join("") : "<li>No structural faults were found.</li>";
+  const mapRows = mapping.banks.map(row => `<tr><td>${row.bank}</td><td><code>&amp;${Number(row.fileOffset).toString(16).toUpperCase().padStart(6, "0")}</code></td><td>${esc(row.title)}</td><td>${esc(row.type)}</td><td>${row.duplicates.length ? row.duplicates.join(", ") : ""}</td></tr>`).join("");
+  showModal(`<div class="rom-workbench">
+    <div class="modal-heading"><span class="modal-kicker">ROM MAINTENANCE AND DEVELOPMENT</span><h2>ROM Workbench · ${esc(pane.image.name)}</h2><p>Analyse code, compare revisions, prepare programmer files and retain project notes without treating ROM bytes as a filing system.</p></div>
+    <nav class="rom-workbench-tabs" role="tablist" aria-label="ROM Workbench sections">
+      ${[["overview","Overview"],["code","Disassembly"],["compare","Compare"],["build","Build"],["export","Programmer"],["project","Project"],["test","Emulator"]].map(([key,label], position) => `<button type="button" role="tab" id="rom-tab-${key}" aria-controls="rom-panel-${key}" aria-selected="${position ? "false" : "true"}" tabindex="${position ? "-1" : "0"}" data-rom-tab="${key}" class="${position ? "" : "active"}">${label}</button>`).join("")}
+    </nav>
+    <section role="tabpanel" id="rom-panel-overview" aria-labelledby="rom-tab-overview" data-rom-panel="overview" class="rom-workbench-panel active">
+      <div class="operation-summary"><span><b>${mapping.bankCount}</b><small>Banks</small></span><span><b>${humanSize(mapping.bankSize)}</b><small>Bank size</small></span><span><b>${identity.matched ? esc(identity.record?.title || "Known") : "Unknown"}</b><small>Catalogue identity</small></span><span><b>${audit.healthy ? "Pass" : "Review"}</b><small>Health</small></span></div>
+      ${identity.transformations.map(message => `<div class="help-note">${esc(message)}</div>`).join("")}
+      <div class="rom-map-table"><table><thead><tr><th>Bank</th><th>File offset</th><th>Title</th><th>Type</th><th>Duplicates</th></tr></thead><tbody>${mapRows}</tbody></table></div>
+      <h3>Audit findings</h3><ul class="rom-audit-findings">${findings}</ul>
+      ${audit.repairable.includes("extension-checksum") ? '<button type="button" class="button danger repair-rom-checksum" data-repair="extension-checksum">Repair extension-ROM checksum…</button>' : ""}
+      ${audit.repairable.includes("header-role-flags") ? '<button type="button" class="button danger repair-rom-checksum" data-repair="header-role-flags">Align header role flags with entry vectors…</button>' : ""}
+      <details class="rom-identity-editor"><summary>Identify this exact ROM</summary><div class="rom-identity-grid"><label>Title<input name="identityTitle" value="${esc(identity.record?.title || project.identity?.title || "")}"></label><label>Version<input name="identityVersion" value="${esc(identity.record?.version || project.identity?.version || "")}"></label><label>Publisher<input name="identityPublisher" value="${esc(identity.record?.publisher || project.identity?.publisher || "")}"></label><label>Platform<input name="identityPlatform" value="${esc(identity.record?.platform || project.identity?.platform || "")}"></label></div><div class="field"><label>Identification notes</label><textarea name="identityNotes" rows="3">${esc(identity.record?.notes || project.identity?.notes || "")}</textarea></div><button type="button" class="button primary save-rom-identity">Save fingerprinted identity</button><small>This browser owner's catalogue keys the record to the complete SHA-256, not the filename.</small></details>
+    </section>
+    <section role="tabpanel" id="rom-panel-code" aria-labelledby="rom-tab-code" data-rom-panel="code" class="rom-workbench-panel" hidden>
+      <div class="rom-tool-controls"><label>Bank<select name="disasmBank">${bankOptions}</select></label><label>Architecture<select name="disasmArchitecture"><option value="auto">Auto detect</option><option value="6502">6502</option><option value="arm">ARM</option><option value="m68k">68000</option></select></label><label>Mapped origin<input name="disasmOrigin" value="0x8000"></label><label>Offset<input name="disasmOffset" value="0x0"></label><label>Bytes<input name="disasmLength" type="number" min="1" max="262144" value="4096"></label><button type="button" class="button primary run-disassembly">Disassemble</button></div>
+      <div class="help-note">6502, ARM and 68000 code are decoded with architecture-appropriate byte order. Known entry points seed reachable-code analysis, branch and call targets gain cross-references, and unknown 6502 opcodes remain <code>EQUB</code> data.</div>
+      <div class="rom-disassembly-output empty-list">Choose a bank and start address.</div>
+    </section>
+    <section role="tabpanel" id="rom-panel-compare" aria-labelledby="rom-tab-compare" data-rom-panel="compare" class="rom-workbench-panel" hidden>
+      ${otherRoms.length ? `<div class="rom-tool-controls"><label>Compare with<select name="compareImage">${otherRoms.map(row => `<option value="${esc(row.item.image.id)}">Pane ${row.paneIndex + 1} · ${esc(row.item.image.name)}</option>`).join("")}</select></label><button type="button" class="button primary compare-rom">Compare images</button></div>` : '<div class="help-note">Open another ROM in a second pane to compare it with this image.</div>'}
+      <div class="rom-compare-output"></div>
+      <hr><label class="field"><span>Apply Acorn File Forge patch</span><input class="rom-patch-file" type="file" accept="application/json,.json,.affpatch"></label><button type="button" class="button danger apply-rom-patch" disabled>Apply checksum-verified patch…</button>
+    </section>
+    <section role="tabpanel" id="rom-panel-build" aria-labelledby="rom-tab-build" data-rom-panel="build" class="rom-workbench-panel" hidden>
+      <div class="help-warning"><strong>This replaces the working ROM bytes.</strong> An automatic undo checkpoint is created. Generated handlers are inert until ROM code is supplied.</div>
+      <div class="field"><label>Template</label><select name="builderTemplate"><option value="service">BBC-family service-ROM scaffold</option><option value="data-archive">AFFROMFS data archive</option></select></div>
+      <div class="field"><label>ROM title</label><input name="builderTitle" maxlength="24" value="${esc(PathNameWithoutExtension(pane.image.name) || "NEW ROM")}"></div>
+      <div class="field"><label>Size</label><select name="builderSize"><option value="8192">8 KiB</option><option value="16384" selected>16 KiB</option><option value="32768">32 KiB</option></select></div>
+      <div class="field"><label>Star commands, one per line</label><textarea name="builderCommands" rows="5" placeholder="MENU\nROMS\nLOADROM &lt;file&gt; &lt;bank&gt;"></textarea></div>
+      <div class="field rom-archive-files" hidden><label>Files for the data archive</label><input name="builderFiles" type="file" multiple><small>AFFROMFS needs its companion service code; an unmodified MOS does not mount it automatically.</small></div>
+      <button type="button" class="button danger build-rom">Build and replace working ROM…</button>
+    </section>
+    <section role="tabpanel" id="rom-panel-export" aria-labelledby="rom-tab-export" data-rom-panel="export" class="rom-workbench-panel" hidden>
+      <div class="field"><label>Physical device size in bytes</label><input name="deviceSize" type="number" min="${pane.image.size}" max="67108864" step="1" value="${2 ** Math.ceil(Math.log2(Math.max(1, pane.image.size)))}"></div>
+      <div class="field"><label>Physical byte lanes</label><select name="exportLanes"><option value="1">One chip</option><option value="2">Two byte-wide chips</option><option value="4">Four byte-wide chips</option></select></div>
+      <label class="check-line"><input name="exportMirror" type="checkbox"> Mirror the image to fill the device</label><label class="check-line"><input name="exportSwap" type="checkbox"> Swap each adjacent byte pair</label><label class="check-line"><input name="exportWordSwap" type="checkbox"> Swap 16-bit words within each 32-bit group</label>
+      <div class="field"><label>Address-line swaps</label><input name="exportAddressSwaps" placeholder="0:1, 2:3"><small>Optional physical rewiring, written as address-bit pairs. For example, <code>0:1</code> swaps A0 and A1.</small></div>
+      <div class="help-warning">Review the ZIP programming report and verify the exported checksum before writing physical hardware.</div><button type="button" class="button primary export-rom">Build programmer ZIP</button>
+    </section>
+    <section role="tabpanel" id="rom-panel-project" aria-labelledby="rom-tab-project" data-rom-panel="project" class="rom-workbench-panel" hidden>
+      <div class="field"><label>Hardware and socket notes</label><input name="projectHardware" value="${esc(project.hardware || "")}"></div><div class="field"><label>Project notes</label><textarea name="projectNotes" rows="6">${esc(project.notes || "")}</textarea></div><div class="field"><label>Symbols as address = label</label><textarea name="projectSymbols" rows="6">${esc(Object.entries(project.symbols || {}).map(([address,label]) => `${address} = ${label}`).join("\n"))}</textarea></div><div class="field"><label>Known regions as start-end = meaning</label><textarea name="projectRegions" rows="6">${esc((project.regions || []).map(row => `${row.start}-${row.end} = ${row.name}`).join("\n"))}</textarea></div><button type="button" class="button primary save-rom-project">Save project metadata</button>
+    </section>
+    <section role="tabpanel" id="rom-panel-test" aria-labelledby="rom-tab-test" data-rom-panel="test" class="rom-workbench-panel" hidden><div class="${emulator.available ? "help-note" : "help-warning"}">${esc(emulator.message)}</div><button type="button" class="button primary run-rom-emulator" ${emulator.available ? "" : "disabled"}>Run configured emulator test</button><pre class="rom-emulator-output"></pre></section>
+    <div class="modal-actions"><button class="button primary" value="cancel">Close workbench</button></div>
+  </div>`);
+
+  const root = modalContent.querySelector(".rom-workbench");
+  const activate = name => {
+    root.querySelectorAll("[data-rom-tab]").forEach(button => { const active=button.dataset.romTab === name; button.classList.toggle("active", active); button.setAttribute("aria-selected", String(active)); button.tabIndex=active?0:-1; });
+    root.querySelectorAll("[data-rom-panel]").forEach(panel => { const active=panel.dataset.romPanel === name; panel.classList.toggle("active", active); panel.hidden=!active; });
+  };
+  root.querySelectorAll("[data-rom-tab]").forEach(button => button.onclick = () => activate(button.dataset.romTab));
+  root.querySelector('[name="builderTemplate"]').onchange = event => root.querySelector(".rom-archive-files").hidden = event.target.value !== "data-archive";
+  root.querySelector(".run-disassembly").onclick = async () => {
+    const bank = root.querySelector('[name="disasmBank"]').value;
+    const architecture = root.querySelector('[name="disasmArchitecture"]').value;
+    const origin = root.querySelector('[name="disasmOrigin"]').value || (architecture === "arm" ? "0" : "0x8000");
+    const offset = root.querySelector('[name="disasmOffset"]').value || "0";
+    const length = root.querySelector('[name="disasmLength"]').value || "4096";
+    const report = await api(`/api/images/${imageId}/rom/disassembly?bank=${encodeURIComponent(bank)}&architecture=${encodeURIComponent(architecture)}&origin=${encodeURIComponent(origin)}&offset=${encodeURIComponent(offset)}&length=${encodeURIComponent(length)}`);
+    const output=root.querySelector(".rom-disassembly-output");
+    output.innerHTML = `<div class="operation-summary"><span><b>${esc(report.architecture.toUpperCase())}</b><small>Architecture</small></span><span><b>${report.rows.length}</b><small>Decoded instructions</small></span><span><b>${report.reachableInstructions}</b><small>Reachable</small></span><span><b>${report.crossReferences.length}</b><small>Referenced targets</small></span></div><table><thead><tr><th>Address</th><th>Bytes</th><th>Instruction</th><th>References</th><th>Comment</th></tr></thead><tbody>${report.rows.map(row => `<tr class="${row.reachable ? "reachable" : "unreached"}"><td><code>&amp;${Number(row.address).toString(16).toUpperCase().padStart(4,"0")}</code></td><td><code>${row.bytes}</code></td><td><code>${row.label ? `${esc(row.label)}: ` : ""}${row.mnemonic} ${esc(row.operand)}</code></td><td>${row.references?.length ? row.references.map(value=>`&amp;${Number(value).toString(16).toUpperCase()}`).join(", ") : ""}</td><td>${esc(row.comment)}</td></tr>`).join("")}</tbody></table>`;
+    output.scrollTop=0;
+    output.scrollLeft=0;
+  };
+  root.querySelector('[name="disasmArchitecture"]').onchange = event => {
+    if (event.target.value === "arm") root.querySelector('[name="disasmOrigin"]').value = "0x0";
+    else if (root.querySelector('[name="disasmOrigin"]').value === "0x0") root.querySelector('[name="disasmOrigin"]').value = "0x8000";
+  };
+  root.querySelector(".compare-rom")?.addEventListener("click", async () => {
+    const report = await api(`/api/images/${imageId}/rom/compare`, { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify({targetImage: root.querySelector('[name="compareImage"]').value, includePatch: true}) });
+    root.querySelector(".rom-compare-output").innerHTML = `<div class="operation-summary"><span><b>${report.changedBytes}</b><small>Changed bytes</small></span><span><b>${report.ranges.length}${report.rangesTruncated?"+":""}</b><small>Changed ranges</small></span></div>${report.patch?'<button type="button" class="button ghost download-rom-patch">Download all as guarded patch</button><button type="button" class="button ghost download-selected-rom-patch">Download selected ranges</button>':`<div class="help-warning">${esc(report.patchUnavailable||"This comparison is too large for a safe patch file.")}</div>`}<div class="rom-map-table"><table><thead><tr><th><span class="sr-only">Select</span></th><th>Start</th><th>End</th><th>Length</th></tr></thead><tbody>${report.ranges.slice(0,500).map((row,rangeIndex) => `<tr><td><input type="checkbox" class="rom-range-choice" value="${rangeIndex}" aria-label="Select changed range ${rangeIndex+1}"></td><td>&amp;${row.start.toString(16).toUpperCase()}</td><td>&amp;${row.end.toString(16).toUpperCase()}</td><td>${row.length}</td></tr>`).join("")}</tbody></table></div>`;
+    root.querySelector(".download-rom-patch")?.addEventListener("click", () => downloadDocument(`${PathNameWithoutExtension(report.leftName)}-to-${PathNameWithoutExtension(report.rightName)}.affpatch`, JSON.stringify(report.patch, null, 2)));
+    root.querySelector(".download-selected-rom-patch")?.addEventListener("click", async () => { const rangeIndexes=[...root.querySelectorAll(".rom-range-choice:checked")].map(input=>Number(input.value)); if(!rangeIndexes.length)return toast("Select at least one changed range.",true); const selected=await api(`/api/images/${imageId}/rom/compare`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({targetImage:root.querySelector('[name="compareImage"]').value,includePatch:true,rangeIndexes})}); if(!selected.patch)return toast(selected.patchUnavailable||"Could not build that selective patch.",true); downloadDocument(`${PathNameWithoutExtension(report.leftName)}-selected-changes.affpatch`,JSON.stringify(selected.patch,null,2)); });
+  });
+  let patchDocument = null;
+  root.querySelector(".rom-patch-file").onchange = async event => { try { patchDocument = JSON.parse(await event.target.files[0].text()); root.querySelector(".apply-rom-patch").disabled = false; } catch (error) { patchDocument = null; toast(`Could not read patch: ${error.message}`, true); } };
+  root.querySelector(".apply-rom-patch").onclick = async () => {
+    if (!patchDocument || !window.confirm("This changes raw ROM bytes and may make hardware unbootable. Apply the checksum-verified patch?")) return;
+    const data = await api(`/api/images/${imageId}/rom/patch`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({patch:patchDocument})}); pane.image=data.image; modal.close(); await loadDirectory(index); toast("ROM patch applied and verified");
+  };
+  root.querySelectorAll(".repair-rom-checksum").forEach(button => button.addEventListener("click", async () => { const action=button.dataset.repair; if (!window.confirm("Repair this proven ROM metadata fault? An undo checkpoint will be created.")) return; const data=await api(`/api/images/${imageId}/rom/repair`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action})}); pane.image=data.image; modal.close(); await loadDirectory(index); toast("ROM metadata repaired and re-audited"); }));
+  root.querySelector(".build-rom").onclick = async () => {
+    if (!window.confirm("This is dangerous: replace every byte in the working ROM with the generated image?")) return;
+    const commands = root.querySelector('[name="builderCommands"]').value.split(/\n/).map(line => line.trim()).filter(Boolean).map(line => { const [name,...syntax]=line.split(/\s+/); return {name,syntax:syntax.join(" ")}; });
+    const files = [];
+    for (const file of root.querySelector('[name="builderFiles"]').files) files.push({name:file.name,hex:[...new Uint8Array(await file.arrayBuffer())].map(value=>value.toString(16).padStart(2,"0")).join("")});
+    const body={template:root.querySelector('[name="builderTemplate"]').value,title:root.querySelector('[name="builderTitle"]').value,size:Number(root.querySelector('[name="builderSize"]').value),commands,files};
+    const data=await api(`/api/images/${imageId}/rom/build`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); pane.image=data.image; modal.close(); await loadDirectory(index); toast("ROM scaffold built; handlers remain inert until code is supplied");
+  };
+  root.querySelector(".export-rom").onclick = async () => {
+    const swaps=root.querySelector('[name="exportAddressSwaps"]').value.split(",").map(value=>value.trim()).filter(Boolean).map(value=>value.split(":").map(Number));
+    const response=await fetch(`/api/images/${imageId}/rom/hardware-export`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({deviceSize:Number(root.querySelector('[name="deviceSize"]').value),lanes:Number(root.querySelector('[name="exportLanes"]').value),mirror:root.querySelector('[name="exportMirror"]').checked,byteSwap:root.querySelector('[name="exportSwap"]').checked,wordSwap:root.querySelector('[name="exportWordSwap"]').checked,addressSwaps:swaps})}); if(!response.ok){const row=await response.json();throw new Error(row.error||"Export failed");} const blob=await response.blob(); const url=URL.createObjectURL(blob); const link=document.createElement("a");link.href=url;link.download=`${PathNameWithoutExtension(pane.image.name)}-programmer.zip`;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  };
+  root.querySelector(".save-rom-project").onclick = async () => { const symbols={}; root.querySelector('[name="projectSymbols"]').value.split(/\n/).forEach(line=>{const split=line.indexOf("=");if(split>0)symbols[line.slice(0,split).trim()]=line.slice(split+1).trim();}); const regions=[]; root.querySelector('[name="projectRegions"]').value.split(/\n/).forEach(line=>{const match=line.match(/^\s*([^\s-]+)\s*-\s*([^\s=]+)\s*=\s*(.+)$/);if(match)regions.push({start:match[1],end:match[2],name:match[3].trim()});}); const data=await api(`/api/images/${imageId}/rom/project`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({...project,hardware:root.querySelector('[name="projectHardware"]').value,notes:root.querySelector('[name="projectNotes"]').value,symbols,regions})});pane.image=data.image;toast("ROM project metadata saved"); };
+  root.querySelector(".save-rom-identity").onclick = async () => { const body={title:root.querySelector('[name="identityTitle"]').value,version:root.querySelector('[name="identityVersion"]').value,publisher:root.querySelector('[name="identityPublisher"]').value,platform:root.querySelector('[name="identityPlatform"]').value,notes:root.querySelector('[name="identityNotes"]').value};const data=await api(`/api/images/${imageId}/rom/identity`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});pane.image=data.image;toast("ROM identity saved against its exact fingerprint"); };
+  root.querySelector(".run-rom-emulator").onclick = async () => { const data=await api(`/api/images/${imageId}/rom/emulator`,{method:"POST"});root.querySelector(".rom-emulator-output").textContent=`Exit ${data.result.returnCode}\n${data.result.stdout}\n${data.result.stderr}`; };
+}
+
+function PathNameWithoutExtension(value) {
+  return String(value || "").replace(/\.[^.]+$/, "");
 }
 
 function normaliseHostAddress(value) {
@@ -4025,7 +4580,7 @@ async function pasteFileItems(index, clipboard) {
   const success = await transferFiles(index, clipboard.items);
   if (!success) return false;
   const movedInternally = sameImage && (
-    pane.image.kind === "adfs" || (isDfsPane(pane) && clipboard.items.every(item => !item.recursive))
+    pane.image.kind === "adfs" || pane.image.kind === "rom" || (isDfsPane(pane) && clipboard.items.every(item => !item.recursive))
   );
   if (clipboard.mode === "cut" && !movedInternally) {
     await deleteCutFileSources(clipboard);
@@ -4072,6 +4627,26 @@ async function transferFiles(targetIndex, sources, targetPath = null) {
   if (!target.image || (target.image.kind === "mmb" && target.slot === null)) return toast("Open a destination disk first.", true);
   if (!Array.isArray(sources) || !sources.length) return;
   const destination = targetPath || target.path;
+  const movingWithinRom = target.image.kind === "rom"
+    && !(clipboardMutationInProgress && workspaceClipboard?.mode === "copy")
+    && sources.every(source => source.image === target.image.id && Number.isInteger(source.romBank ?? Number(String(source.path).replace("bank:", ""))));
+  if (movingWithinRom) {
+    const targetStart = String(destination).startsWith("bank:")
+      ? Number(String(destination).slice(5))
+      : Number(target.image.rom?.bankCount || 0);
+    const banks = sources.map(source => Number(source.romBank ?? String(source.path).replace("bank:", "")));
+    const data = await paneOperation(targetIndex, `Moving ${banks.length} ROM bank${banks.length === 1 ? "" : "s"}…`, () => api(`/api/images/${target.image.id}/rom-banks/move`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ banks, targetStart }),
+    }));
+    target.image = data.image;
+    await loadDirectory(targetIndex);
+    setSelection(target, data.banks.map(String), String(data.banks[0]));
+    renderPane(targetIndex, true);
+    toast(`${banks.length} ROM bank${banks.length === 1 ? "" : "s"} moved`);
+    return true;
+  }
   const movingWithinAdfs = target.image.kind === "adfs"
     && sources.every(source => source.image === target.image.id);
   if (movingWithinAdfs) {
@@ -4083,7 +4658,7 @@ async function transferFiles(targetIndex, sources, targetPath = null) {
   if (movingWithinDfs) {
     return performDfsMoves(targetIndex, sources, destination);
   }
-  if (sources.some(source => source.pane === targetIndex)) {
+  if (sources.some(source => source.pane === targetIndex) && target.image.kind !== "rom") {
     return toast("Files can only be moved within the same ADFS image.", true);
   }
   const transfers = sources.map((source, index) => ({
@@ -4238,13 +4813,19 @@ async function performTransfers(targetIndex, transfers, destination = null) {
       target.progressCurrent = index;
       target.progressTotal = transfers.length;
       renderPane(targetIndex);
+      const romStart = target.image.kind === "rom" && String(targetDirectory).startsWith("bank:")
+        ? Number(String(targetDirectory).slice(5))
+        : null;
+      const targetPath = target.image.kind === "rom"
+        ? (romStart == null ? "$" : `bank:${romStart + index}`)
+        : fullPath(targetDirectory, transfer.targetName);
       const data = await api("/api/transfer", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sourceImage: transfer.image, sourceSlot: transfer.slot, sourcePath: transfer.path,
           sourceSide: transfer.side,
           targetImage: target.image.id, targetSlot: target.slot, targetSide: target.side,
-          targetPath: fullPath(targetDirectory, transfer.targetName),
+          targetPath,
           recursive: transfer.recursive
         })
       });
@@ -6180,9 +6761,10 @@ function showCreateImageModal(preferredIndex = null) {
       <option value="adfs-hard">Archimedes / RISC OS virtual HDD · HDF</option>
       <option value="adfs-physical">Raw physical HDD image · RAW</option>
       <option value="mmb">MMB bank · 511 empty slots</option>
+      <option value="rom">Acorn ROM image · banked or custom</option>
     </select></div>
-    <div class="field"><label>Disk title</label><input name="title" maxlength="12" value="BLANK" required><small data-title-help></small></div>
-    <div class="field"><label>Disk size</label><input name="capacity" value="200 KiB" readonly></div>
+    <div class="field"><label>Image title</label><input name="title" maxlength="12" value="BLANK" required><small data-title-help></small></div>
+    <div class="field"><label>Image size</label><input name="capacity" value="200 KiB" readonly></div>
     <div class="field"><label>Target hardware</label><select name="targetHardware">
       <option value="auto">Auto / inspect only</option>
       <option value="beebscsi">BeebSCSI DAT + DSC · Electron / BBC / Master</option>
@@ -6190,6 +6772,14 @@ function showCreateImageModal(preferredIndex = null) {
       <option value="bbc-master">BBC / Master · normal 8-bit ADFS</option>
       <option value="risc-os">Archimedes / RISC OS</option>
     </select><small data-hardware-help></small></div>
+    <div class="rom-create-options" hidden>
+      <div class="field"><label>ROM family</label><select name="romPlatform"><option value="bbc-master-electron">BBC / Master / Electron</option><option value="archimedes">Archimedes / RISC OS</option><option value="custom">Custom Acorn hardware</option></select></div>
+      <div class="field"><label>Total image size in bytes</label><input name="romTotalSize" type="number" min="256" max="67108864" step="256" value="16384" required></div>
+      <div class="field"><label>Bank size in bytes</label><input name="romBankSize" type="number" min="256" max="67108864" step="256" value="16384" required><small>Use 16,384 for normal sideways ROMs, including 32K and 256K images paged as 16K banks.</small></div>
+      <div class="field"><label>Initial contents</label><select name="romTemplate"><option value="blank">Erased bytes only</option><option value="sideways">Safe BBC-family language + service header skeleton</option></select></div>
+      <div class="field"><label>Erased byte</label><select name="romEraseByte"><option value="255">&FF</option><option value="0">&00</option></select></div>
+      <div class="field"><label>Byte layout</label><select name="romLayout"><option value="linear">Linear / banked</option><option value="byte-interleaved-2">Two byte-wide chips</option><option value="byte-interleaved-4">Four byte-wide chips</option></select></div>
+    </div>
     <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="create">Create image</button></div>`,
   async form => {
     const targetIndex = Number(form.get("targetPane"));
@@ -6201,7 +6791,15 @@ function showCreateImageModal(preferredIndex = null) {
         format: form.get("format"),
         title: form.get("title") || "BLANK",
         capacity: form.get("capacity"),
-        targetHardware: modalContent.querySelector('select[name="targetHardware"]').value || "auto"
+        targetHardware: modalContent.querySelector('select[name="targetHardware"]').value || "auto",
+        rom: form.get("format") === "rom" ? {
+          platform: form.get("romPlatform"),
+          totalSize: Number(form.get("romTotalSize")),
+          bankSize: Number(form.get("romBankSize")),
+          template: form.get("romTemplate"),
+          eraseByte: Number(form.get("romEraseByte")),
+          layout: form.get("romLayout"),
+        } : undefined,
       })
     });
     await acceptImage(targetIndex, data.image);
@@ -6211,6 +6809,7 @@ function showCreateImageModal(preferredIndex = null) {
   const capacity = modalContent.querySelector('input[name="capacity"]');
   const capacityLabel = capacity.closest(".field").querySelector("label");
   const title = modalContent.querySelector('input[name="title"]');
+  const titleLabel = title.closest(".field").querySelector("label");
   const titleHelp = modalContent.querySelector("[data-title-help]");
   const targetHardware = modalContent.querySelector('select[name="targetHardware"]');
   const hardwareHelp = modalContent.querySelector("[data-hardware-help]");
@@ -6228,7 +6827,8 @@ function showCreateImageModal(preferredIndex = null) {
     beebscsi: { size: null, defaultCapacity: "20MB", hardware: "beebscsi" },
     "adfs-hard": { size: null, defaultCapacity: "20MB", hardware: "risc-os" },
     "adfs-physical": { size: null, defaultCapacity: "20MB", hardware: "risc-os" },
-    mmb: { size: "99.8 MiB (511 × 200 KiB)", hardware: null, hasTitle: false }
+    mmb: { size: "99.8 MiB (511 × 200 KiB)", hardware: null, hasTitle: false },
+    rom: { size: "Set below", hardware: null, chooseHardware: false }
   };
   const capacities = new Map();
   let diskTitle = title.value;
@@ -6242,12 +6842,19 @@ function showCreateImageModal(preferredIndex = null) {
     capacity.readOnly = Boolean(profile.size);
     capacity.value = profile.size || capacities.get(format.value) || profile.defaultCapacity;
     capacity.placeholder = profile.size ? "" : profile.defaultCapacity;
-    capacityLabel.textContent = profile.size ? "Disk size" : "Hard disk capacity (DAT/HDF/RAW)";
+    capacityLabel.textContent = profile.size ? "Image size" : "Hard disk capacity (DAT/HDF/RAW)";
 
     const hasTitle = profile.hasTitle !== false;
     title.disabled = !hasTitle;
     title.required = hasTitle;
     title.value = hasTitle ? diskTitle : "Not applicable to an MMB bank";
+    titleLabel.textContent = format.value === "rom"
+      ? "ROM filename and title"
+      : format.value === "mmb"
+        ? "Image title"
+        : ["adfs-s", "adfs-m", "adfs-l", "hfe-adfs-s", "hfe-adfs-m", "hfe-adfs-l", "beebscsi", "adfs-hard", "adfs-physical"].includes(format.value)
+          ? "Volume title"
+          : "Disk title";
     titleHelp.textContent = hasTitle
       ? "Stored in the new filesystem."
       : "MMB banks contain separately titled disk slots and have no bank-wide filesystem title.";
@@ -6261,6 +6868,14 @@ function showCreateImageModal(preferredIndex = null) {
         : profile.hardware === "risc-os"
           ? "Fixed because this is an Archimedes / RISC OS hard-drive format."
           : "Not applicable to this format.";
+    modalContent.querySelector(".rom-create-options").hidden = format.value !== "rom";
+    if (format.value === "rom") {
+      capacityLabel.textContent = "ROM capacity";
+      title.maxLength = 24;
+      titleHelp.textContent = "Used as the filename and, for the header template, its initial ROM title.";
+    } else {
+      title.maxLength = 12;
+    }
     previousFormat = format.value;
   };
   format.addEventListener("change", updateFormatControls);
@@ -6284,6 +6899,7 @@ function showHelp() {
           <strong>MEDIA GUIDES</strong>
           <a href="#help-dfs">SSD and DSD</a>
           <a href="#help-hfe">HFE floppy images</a>
+          <a href="#help-rom">ROM images</a>
           <a href="#help-mmb">MMB disk banks</a>
           <a href="#help-adfs">ADFS and RISC OS</a>
           <a href="#help-beebscsi">BeebSCSI DAT/DSC</a>
@@ -6317,7 +6933,7 @@ function showHelp() {
               <h4>Open an existing image</h4>
               <ol>
                 <li>Choose any empty pane.</li>
-                <li>Select <strong>Open disk image</strong>, or drag an image from your computer onto the empty pane.</li>
+                <li>Select <strong>Open image</strong>, or drag a disk, tape or ROM image from your computer onto the empty pane.</li>
                 <li>Choose the image. Supported families include SSD, DSD, HFE, MMB, ADFS floppy and hard-drive images, DAT/DSC, HDF, HDD, IMG, RAW, BIN and UEF. ZIP distributions can contain one supported image or a matched DAT/DSC pair.</li>
                 <li>Wait for the opening indicator. The catalogue or MMB slot index appears when identification is complete.</li>
               </ol>
@@ -6325,7 +6941,7 @@ function showHelp() {
             <div class="help-task">
               <h4>Create a new image</h4>
               <ol>
-                <li>Select <strong>Create new disk image</strong> in an empty pane.</li>
+                <li>Select <strong>Create new image</strong> in an empty pane.</li>
                 <li>Choose DFS SSD or DSD, an HFE-wrapped DFS/ADFS floppy, ADFS S/M/L floppy, BeebSCSI DAT/DSC hard drive, HDF virtual HDD, RAW physical-drive image, or an MMB bank.</li>
                 <li>Enter a disk title. For DAT, HDF and RAW images, enter a capacity such as <code>20MB</code> or <code>512MB</code>.</li>
                 <li>The size field is read-only for fixed SSD, DSD, ADFS floppy, HFE and MMB formats. It becomes editable for BeebSCSI, HDF and RAW hard drives and remembers the last HDD capacity you entered.</li>
@@ -6507,7 +7123,7 @@ function showHelp() {
             <figure><img src="/help/hfe-create.png" alt="Create image dialog showing HFE-wrapped DFS and ADFS floppy choices"><figcaption>Create a new HFE around DFS SSD/DSD or ADFS S/M/L geometry. Existing supported HFE images open through the normal image picker.</figcaption></figure>
             <p>HFE stores floppy track timing and bit cells, while DFS and ADFS describe files inside the sectors. Acorn File Forge decodes the sectors with the HxC engine and then opens the detected filing system.</p>
             <ol>
-              <li>Open an HFE normally, or create an HFE-wrapped DFS/ADFS floppy from <strong>Create new disk image</strong>.</li>
+              <li>Open an HFE normally, or create an HFE-wrapped DFS/ADFS floppy from <strong>Create new image</strong>.</li>
               <li>Check the opening warning. A clean HFE v1 disk is editable through the usual file tools.</li>
               <li>HFE v2/v3, weak-bit, bad-sector, protected or advanced timing images open as a clearly labelled read-only safe view. Export or drag files from them without changing their tracks.</li>
               <li>For an editable HFE, make the required changes and select <strong>Save Image</strong> in the pane heading.</li>
@@ -6515,6 +7131,90 @@ function showHelp() {
             </ol>
             <div class="help-note"><strong>What the pane shows:</strong> the format badge reads HFE, while the directory rules, sides and capacity come from its decoded DFS or ADFS filesystem. Advanced images show <strong>Read-only safe view</strong> and hide editing, compaction and menu-writing controls.</div>
             <div class="help-note"><strong>MMB and ADFS transfers:</strong> a DFS-formatted HFE may be inserted into an MMB. Any supported HFE filesystem can be opened in one pane and copied or extracted into another image. MMB stores only DFS sectors, so timing, weak-bit and protection information from an advanced HFE is deliberately omitted and reported as a destination warning.</div>
+          </section>
+          <section id="help-rom">
+            <h3>ROM images: banks, headers and chip sets</h3>
+            <p class="help-lead">A ROM is a byte image rather than a filing system. The pane divides it into explicit banks without changing the saved bytes.</p>
+            <figure><img src="/help/rom-pane.png" alt="ROM pane showing bank address, decoded identity, purpose, entry points and programmed utilisation"><figcaption>The main pane is a bank inventory, not a directory. At narrow pane widths each bank becomes a readable two-column card while retaining the same decoded fields.</figcaption></figure>
+            <div class="help-note"><strong>Terms used in the pane:</strong> <em>Bank</em> is the zero-based logical block selected by the configured bank size. <em>File address</em> is its byte offset in the complete image. <em>Mapped address</em> is the conventional CPU window for the selected target. <em>Programmed</em> means bytes that differ from the configured erased value; it is not filesystem free space.</div>
+            <div class="help-task"><h4>Open and inspect a ROM</h4><ol>
+              <li>Open a <code>.rom</code>, numbered <code>.rom0</code> to <code>.rom7</code>, or a <code>.bin</code> carrying a recognised sideways-ROM header. For a headerless or generically named dump, choose the Acorn ROM raw-format override in the open dialog.</li>
+              <li>The default view uses 16 KiB banks. Choose <strong>Tools → ROM layout</strong> if the device uses 8K, 32K or another 256-byte-aligned bank size.</li>
+              <li>Read the bank inventory from left to right: bank and image address, decoded identity, purpose and entry points, then programmed contents. A BBC-family bank also shows its mapped CPU window. Empty and unrecognised banks are labelled plainly.</li>
+              <li>The guidance strip above the inventory explains the shortcuts. Select ⓘ for decoded information, double-click for Hex, or open <strong>Tools → ROM Workbench</strong> for disassembly, comparison and hardware preparation.</li>
+              <li>Image Health recognises BBC-family headers and the standard RISC OS <code>ExtnROM0</code> trailer. A bad RISC OS extension-ROM checksum is reported as a failure.</li>
+              <li>Select ⓘ on a bank to open its decoded-content view. It shows header fields, processor type, declared feature bits, mapped entry points, known regions and bounded printable strings with their byte offsets and mapped addresses.</li>
+              <li>Use <strong>Provided star commands</strong> in that view to see commands such as <code>*MENU</code>. RISC OS module command tables are decoded as declared commands, including parameter limits and configuration keywords.</li>
+              <li>A <strong>?</strong> beside a command provides its available <code>*HELP</code> information. Point at it, focus it from the keyboard, or select it to keep the tooltip open. The source label distinguishes declared RISC OS help, reconstructed BBC command syntax and literal lines recovered from a shared BBC help topic. Press <kbd>Escape</kbd> to close pinned help.</li>
+              <li>BBC, Master and Electron sideways ROMs do not have one standard command catalogue. The app recognises coherent token-dispatch and address-dispatch MOS keyword tables. Address tables must also have an indexed 6502 code reference and valid handlers inside the sideways-ROM window.</li>
+              <li>Printable <code>*Command</code> text alone is not included because help text, examples and even machine code can resemble a command. Address-dispatch results provide separate Table and Handler buttons. Token tables link to their table entry. These links open a hex editor inside the decoded-information dialog; closing it reveals the same information at its previous scroll position. Hex editing opened from a pane menu stays inside that pane.</li>
+              <li>If no command is shown, the ROM may still provide commands through dynamic matching, abbreviations or a table form the static scanner does not recognise. Try the ROM's <code>*HELP</code> output on suitable hardware or inspect its service entry in the hex editor.</li>
+              <li>Printable strings can also reveal messages and build information, but are labelled as evidence rather than guessed files. Every decoded location and command has a direct Hex button.</li>
+              <li>The decoder also reports SHA-256, CRC-32, entropy, distinct byte values, erased space, used range, programming offsets and identical banks. Header flags are checked against the actual entry vectors.</li>
+              <li>For an Archimedes target, plausible RISC OS module headers expose titles, help text, entry facilities and SWI information. They remain labelled as candidates unless the enclosing ROM structure proves them.</li>
+              <li>A recognised BBC, Master or Electron header shows its title, version and language/service roles. RISC OS extension images show their <code>ExtnROM0</code> size and checksum trailer. Unknown custom data remains honestly labelled as raw code and data.</li>
+              <li>Double-click a bank to open the hex editor at that bank's first byte. Use the image health dashboard to report partial banks and recognised headers.</li>
+            </ol></div>
+            <figure><img src="/help/rom-decoder.png" alt="Decoded BBC-family ROM header, fingerprints and star-command table"><figcaption>The decoder separates proven header fields, byte statistics and structured command evidence. It opens with focus on the heading, not on the first command; Tab moves into the controls.</figcaption></figure>
+            <figure><img src="/help/rom-command-help.png" alt="A pinned tooltip showing command syntax reconstructed from a ROM table"><figcaption>Command help states its source. Hover or keyboard focus shows it temporarily; select the question mark to pin it while reading.</figcaption></figure>
+            <div class="help-note"><strong>Decoder boundaries:</strong> entropy, strings and command candidates are evidence, not a claim that code is safe or that strings are files. A missing command may be constructed dynamically. A plausible RISC OS module remains a candidate until its enclosing structure proves it.</div>
+            <div class="help-task"><h4>Create and edit a banked image</h4><ol>
+              <li>Choose <strong>Create new image → Acorn ROM image</strong>. Set the total byte size, logical bank size, target family, erased byte and layout.</li>
+              <li>Choose erased bytes for a blank device, or the inert BBC-family language and service header skeleton for custom sideways-ROM development.</li>
+              <li>Use <strong>File → Add ROM banks</strong> for one or several files. Exact-multiple combined images are split into consecutive banks; anything requiring silent truncation is refused.</li>
+              <li>Rename edits a recognised header title. Erase fills selected banks with <code>&FF</code> or <code>&00</code> without shrinking the image. Append empty bank grows the image by exactly one configured bank.</li>
+              <li>Use Cut, Copy, Paste or drag between ROM panes. Dragging inside one ROM is an atomic move and overlapping ranges are safe.</li>
+            </ol></div>
+            <div class="help-task"><h4>Open physical chip sets</h4><ol>
+              <li>Select two or four equal-sized ROM component files together.</li>
+              <li>Choose concatenate for consecutive banks, or byte interleave for byte-wide chips. Keep the displayed file order correct for the physical sockets.</li>
+              <li>Four-way byte interleaving covers the usual Archimedes/RISC OS ROM arrangement. The working pane shows logical byte order.</li>
+              <li>The save ZIP keeps the logical image and reconstructs the individual component files under <code>ROM-components</code>. Its README records the original component names and order.</li>
+            </ol></div>
+            <div class="help-task"><h4>Analyse and compare ROM code</h4><ol>
+              <li>Choose <strong>Tools → ROM Workbench</strong>. Overview shows every bank, its file offset, decoded identity, physical byte lanes and duplicate banks.</li>
+              <li>Review the audit findings. The app can safely align contradictory sideways-ROM role flags with proven entry vectors and rebuild a standard RISC OS extension-ROM checksum. An automatic undo point is made first.</li>
+              <li>Open <strong>Disassembly</strong>, choose a bank, architecture, mapped origin and offset. Auto detect chooses ARM for an Archimedes target and follows a recognised BBC-family processor header elsewhere.</li>
+              <li>NMOS 6502, ARM and 68000 instructions use their correct byte order. Unknown 6502 opcodes remain visible as <code>EQUB</code> data. Known entry points seed reachable-code analysis, call and branch targets gain cross-references, and BBC MOS jump-table calls are labelled.</li>
+              <li>Save address labels under <strong>Project</strong> using <code>address = label</code>. Known regions use <code>start-end = meaning</code>. Disassemble again to apply them to the listing.</li>
+              <li>To compare revisions, open the other ROM in another pane and select it under <strong>Compare</strong>. Download the guarded patch when required.</li>
+              <li>Tick individual comparison ranges to export only reviewed changes. A patch is applied only when the complete source SHA-256 matches. The finished bytes must then match the stored target SHA-256 or the operation fails.</li>
+              <li>Use <strong>Identify this exact ROM</strong> on Overview to add a private title, version, publisher and platform record. It is keyed by SHA-256 and scoped to the current browser owner.</li>
+            </ol></div>
+            <figure><img src="/help/rom-workbench-overview.png" alt="ROM Workbench Overview showing bank map, exact identity and audit findings"><figcaption>Overview relates logical banks to file offsets, decoded type and duplicates. Repairs appear only when the fault and replacement value are deterministic.</figcaption></figure>
+            <figure><img src="/help/rom-workbench-disassembly.png" alt="ROM Workbench Disassembly showing architecture controls, decoded instructions, reachability and references"><figcaption>Disassembly is bounded static analysis. Select architecture, mapped origin, bank offset and byte count; saved project symbols and regions annotate later listings.</figcaption></figure>
+            <div class="help-note"><strong>Workbench safety model:</strong> Overview, Disassembly and Compare are read-only. Identity, Project and Emulator store separate project metadata. Repair, patch application and Build change ROM bytes only after review and an automatic checkpoint. Programmer transforms affect only its downloaded ZIP.</div>
+            <div class="help-task"><h4>Build and prepare ROMs</h4><ol>
+              <li>Under <strong>Build</strong>, choose a service-ROM scaffold or AFFROMFS data archive, then review the replacement warning.</li>
+              <li>The service-ROM scaffold has an inert handler. It is a development starting point and does not pretend that named commands already have implementations.</li>
+              <li>AFFROMFS packages named bytes for companion service code. An unmodified MOS cannot mount it as a filing system.</li>
+              <li>Under <strong>Programmer</strong>, choose the physical device size, one, two or four byte lanes, and any required mirroring, adjacent-byte swapping, 16-bit word swapping or address-line swaps.</li>
+              <li>Keep the generated programming report with the chip files and verify its checksum against a programmer read-back.</li>
+              <li>The saved image ZIP includes <code>ROM-project.json</code> with notes, symbols and emulator results. These annotations never alter the ROM bytes.</li>
+            </ol></div>
+            <figure><img src="/help/rom-workbench-programmer.png" alt="ROM Workbench Programmer tab configured to mirror and split a ROM into two byte-wide chips"><figcaption>Programmer export applies padding or mirroring, byte and word transforms, address-line swaps, then physical lane splitting. Its report records checksums for programmer read-back.</figcaption></figure>
+            <div class="help-task"><h4>Understand each Workbench tab</h4><ul>
+              <li><strong>Overview:</strong> bank map, byte lanes, exact SHA-256 identity, audit and narrowly proven repairs.</li>
+              <li><strong>Disassembly:</strong> NMOS 6502, ARM or 68000 decoding with reachable-code analysis, cross-references, MOS call labels and project annotations.</li>
+              <li><strong>Compare:</strong> contiguous revision differences and complete or selective patches guarded by source and target SHA-256.</li>
+              <li><strong>Build:</strong> an inert BBC service-ROM scaffold or an <code>AFFROMFS1</code> data archive for companion code. Neither is a finished application by itself.</li>
+              <li><strong>Programmer:</strong> device padding or mirroring, adjacent-byte swaps, 16-bit word swaps, address-line swaps and one, two or four physical byte lanes.</li>
+              <li><strong>Project:</strong> hardware notes, research, address labels and known regions stored outside the ROM bytes.</li>
+              <li><strong>Emulator:</strong> a locally configured direct command with a 30-second limit; its output is retained in project metadata.</li>
+            </ul></div>
+            <div class="help-task"><h4>Run a configured emulator check</h4><ol>
+              <li>Configure <code>ACORN_ROM_EMULATOR_COMMAND</code> in the local deployment. It must contain a <code>{rom}</code> placeholder.</li>
+              <li>Open <strong>ROM Workbench → Emulator</strong> and run the test.</li>
+              <li>The app invokes the configured executable directly, never through a shell, stops it after 30 seconds and records its output and return code in the project metadata.</li>
+            </ol></div>
+            <div class="help-task"><h4>Troubleshoot a ROM</h4><ul>
+              <li>If identity, processor or mapped addresses look wrong, confirm platform, layout and bank size before editing bytes.</li>
+              <li>If commands are missing, test <code>*HELP</code> on suitable hardware and inspect the service entry. Static extraction intentionally rejects weak string-only matches.</li>
+              <li>If disassembly looks meaningless, check architecture, origin and offset. The range may be text, tables, compressed data, an interleaved dump or unreachable code.</li>
+              <li>If a programmed device fails, verify chip size, erased value, lane order, swaps, board links and read-back checksum against the Programmer report.</li>
+              <li>Run <strong>Analyse → Image health dashboard</strong> after raw changes. Return to the checkpoint or untouched source when the result is uncertain.</li>
+            </ul></div>
+            <div class="help-warning"><strong>Hardware warning:</strong> a valid header does not prove that code is safe, correctly bank-switched or suitable for a particular machine. Make a checkpoint, retain the original dump and test an emulator or spare programmable device first.</div>
           </section>
           <section id="help-mmb">
             <h3>MMB disk banks: slots and embedded disks</h3>

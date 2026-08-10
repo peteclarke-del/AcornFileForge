@@ -1,7 +1,7 @@
 # Acorn File Forge
 
-Acorn File Forge is a browser-based workshop for Acorn disk, hard-drive and
-tape images. It covers BBC Micro, BBC Master, Electron, Archimedes and
+Acorn File Forge is a browser-based workshop for Acorn disk, hard-drive, tape
+and ROM images. It covers BBC Micro, BBC Master, Electron, Archimedes and
 compatible RISC OS media.
 
 Open up to three images together, browse their real filing systems and drag
@@ -85,12 +85,26 @@ this guide, including one to three rearrangeable panes, undo and named
 checkpoints, browser-private recovery, background job tracking, MMB and ADFS
 menu maintenance, HFE handling, UEF extraction, an Online Library and
 hardware-aware ADFS checks.
-The application is useful today, but disk images can contain unusual loaders,
+The application is useful today, but Acorn media images can contain unusual loaders,
 copy protection and filesystem variants. Keep a known-good source image and
 test important downloads before putting them onto real hardware.
 
 Bug reports and proposed improvements can be raised in the
 [GitHub repository](https://github.com/peteclarke-del/AcornFileForge).
+
+## Documentation map
+
+- This README is the complete installation, workflow and format guide.
+- The [ROM image handbook](docs/ROM-GUIDE.md) is the deeper technical reference
+  for bank layouts, decoded structures, ROM Workbench, patches and programmers.
+- **Help** in the application contains illustrated, task-based instructions and
+  stays with the running version of the frontend.
+- Every saved image ZIP contains its own generated `README.md` describing that
+  exact image, target profile, checksums, catalogue, warnings and recovery
+  notes. ROM archives also contain `ROM-project.json`.
+
+Documentation screenshots are taken from the current Docker build with real
+sample media. They show actual decoded data and controls rather than mockups.
 
 ## The basic workflow
 
@@ -99,7 +113,7 @@ Bug reports and proposed improvements can be raised in the
    scratch area. Add a third in the same way; three is the maximum.
 3. Double-click directories or MMB slots to browse them. Use the `..` row to
    return to the parent, or select a breadcrumb to jump straight there.
-4. Drag files, directories, disk images, or MMB slots to their destination.
+4. Drag files, directories, disk images, ROM banks, or MMB slots to their destination.
 5. Use **Edit** to undo the latest operation or create a named checkpoint
    before a larger experiment.
 6. Use **Tools → Check filesystem** after substantial edits.
@@ -556,6 +570,7 @@ still stops only at a safe filesystem boundary.
 | Raw drive dump | IMG, RAW, BIN, extensionless images | Identify the filesystem from its contents, then open it as DFS or ADFS |
 | Acorn cassette | UEF and compressed UEF | Reconstruct ordinary tape files, export them, drag them to disks, or convert them to SSD or DSD |
 | HxC floppy container | HFE v1, v2 and v3 | Decode DFS or ADFS sectors for browsing and extraction; safely edit ordinary HFE v1 disks and save them back with their original track layout |
+| Acorn ROM | ROM, ROM0-ROM7, recognised BIN | Inspect BBC-family headers, browse and rearrange banks, edit bytes and titles, build custom images, and combine or split byte-wide chip sets |
 
 The file extension is only a hint. Generic names such as `HardDisc4`,
 `drive.img`, or `backup.bin` are inspected by content. A DFS image renamed to
@@ -563,7 +578,7 @@ The file extension is only a hint. Generic names such as `HardDisc4`,
 
 ### Images you can create
 
-The **Create new disk image** dialog offers:
+The **Create new image** dialog offers:
 
 - DFS SSD, 200 KiB
 - DFS DSD, 400 KiB
@@ -575,12 +590,19 @@ The **Create new disk image** dialog offers:
 - Archimedes or RISC OS virtual hard drive in HDF form
 - Raw physical-drive image
 - MMB bank with 511 empty slots
+- Acorn ROM from 256 bytes to 64 MiB, with a configurable bank size, erased byte, platform and linear, two-chip or four-chip byte layout
 
 Hard-drive capacity is entered as a size such as `4MB`, `20MB`, or `512MB`.
 The size field follows the selected format. Fixed-size DFS, ADFS floppy, HFE,
 and MMB choices show their actual capacity in a read-only field. BeebSCSI,
 HDF, and RAW hard-drive choices keep the field editable and preserve the last
 typed HDD capacity while switching between formats.
+
+ROM creation defaults to a 16 KiB bank. Choose erased bytes for a clean device
+image or an inert BBC-family language and service header skeleton as a starting
+point for custom code. Total size and bank size are independent, so 8K, 16K,
+32K and 256K banked devices can be represented without padding an existing
+image behind your back.
 
 The target-hardware control follows the format too. It is disabled as not
 applicable for DFS and MMB, fixed to BeebSCSI for a DAT/DSC pair, and fixed to
@@ -702,6 +724,10 @@ include the required matching DSC geometry file.
   replacement.
 - Load and execute addresses, RISC OS filetypes, dates, and access flags are
   preserved where the destination format supports them.
+- ROM banks can be dragged or copied between ROM panes. A drag within the same
+  image is an atomic move, including overlapping ranges. Copy a bank to DFS or
+  ADFS to create a binary with load and execute addresses of `&8000`. Pasting
+  loose files into an MMB still builds proper SSD or DSD media first.
 
 ### Complete images
 
@@ -871,6 +897,160 @@ The original HFE remains untouched in the session until a verified replacement
 has been produced. This matters because an apparently normal catalogue can
 coexist with non-sector protection data that a filesystem editor cannot
 represent.
+
+## Working with ROM images
+
+A ROM pane treats the image as banks of bytes rather than pretending it has a
+filing system. The default bank is 16 KiB, which suits normal BBC, Master and
+Electron sideways ROMs and combined 32K or 256K images paged in 16K blocks.
+For a headerless custom BIN or generically named dump, choose **Open image →
+Raw format override → Acorn ROM** so filesystem probing cannot misclassify it.
+Choose **Tools → ROM layout** for 8K, 32K or custom bank sizes, an `&FF` or
+`&00` erased value, and BBC-family, Archimedes or custom target notes. A partial
+final bank is preserved and reported by the health check.
+
+![ROM bank inventory with decoded address, identity, purpose and utilisation](app/static/help/rom-pane.png)
+
+The dedicated [ROM image handbook](docs/ROM-GUIDE.md) contains the complete
+field reference, supported layouts, Workbench instructions, physical programmer
+transform order, patch safeguards and troubleshooting guide. The summary below
+is enough for normal use.
+
+### Pane and decoded bank information
+
+- A recognised BBC-family header shows its title, version, copyright, language
+  and service roles. Rename changes only the allocated header strings. Raw or
+  unrecognised banks remain fully editable in the hex editor.
+- The main ROM inventory explains each bank before you open another tool. It
+  shows the bank number, image offset, BBC mapped window where applicable,
+  decoded title, version, copyright, language or service purpose, processor,
+  entry vectors, programmed space, duplicate banks and a shortened SHA-256.
+  The guidance strip links those facts to Info, Hex, ROM Workbench and layout.
+- The ⓘ action opens a decoded-content view with processor and feature flags,
+  mapped entry points, known regions, and bounded printable strings. Each
+  location can be opened directly in the hex editor. Strings are evidence of
+  commands, messages or build information, not invented files.
+- The decoded view also lists provided star commands. RISC OS commands come
+  from the module's standard help and command keyword table and are marked
+  `declared`. BBC, Master and Electron service ROMs have no universal command
+  catalogue, so the scanner recognises common token dispatch and address
+  dispatch MOS keyword tables. It requires a coherent run of commands and,
+  for address tables, a 6502 indexed reference plus valid in-ROM handler
+  addresses. Printable `*Command` text alone is deliberately not listed. The
+  RH Plus sample, for example, exposes `*ROMS`, `*SRLOAD`, `*SRSAVE`,
+  `*UNPLUG` and its other OSCLI table entries while excluding its help-only
+  group headings. A `?` beside a command opens its ROM-supplied help or a
+  signature reconstructed from the ROM's help tables. The tooltip says whether
+  its contents are declared RISC OS help, reconstructed command syntax, or a
+  literal line from a shared BBC `*HELP` topic. Hover, keyboard focus and click
+  are supported. Table and handler buttons open the relevant ROM bytes in a
+  hex editor inside the decoded-information dialog. Closing it reveals the
+  same information at its previous scroll position. Hex editing launched from
+  a pane menu remains scoped to that pane.
+- The same view reports the bank's SHA-256 and CRC-32 fingerprints, entropy,
+  distinct byte count, erased-byte percentage, used range, zero and `&FF`
+  counts, image programming offset, and any byte-identical banks. Image Health
+  checks duplicate banks and disagreements between header role flags and entry
+  vectors.
+- On an Archimedes or recognised RISC OS extension image, structurally valid
+  relocatable-module header candidates show their title, help text, entry
+  facilities, SWI information and exact offsets. Candidates stay clearly
+  labelled until an enclosing extension-ROM chunk proves their role.
+- A standard RISC OS `ExtnROM0` extension-ROM trailer is recognised. Image
+  Health reports its checksum if it does not match the image bytes.
+- Double-click a bank to open the hex editor at its first byte. Erase fills a
+  selected bank with the configured erased value while keeping the image size.
+- **File → Add ROM banks** accepts several files. Exact multiples of the bank
+  size are split in order; a file that would need silent truncation is refused.
+- Select two or four equal-size ROM files together to concatenate them or
+  interleave them as byte-wide chips. Four-chip mode covers the usual
+  Archimedes/RISC OS physical ROM arrangement. The save ZIP contains the
+  logical working image, the original chip names and reconstructed chip files.
+- Cut, Copy, Paste and drag work across ROM images and the normal disk formats
+  where the target can represent the bytes. ROM banks do not acquire fake
+  directories, lock bits or filesystem compaction controls.
+- Save produces the normal timestamped ZIP and technical README. The README
+  records bank size, layout, erased value, target family, component order,
+  header findings and SHA-256 checksum. It also contains `ROM-project.json`,
+  which keeps hardware notes, symbols, comments, regions and emulator test
+  results separate from the ROM bytes.
+
+![Decoded ROM header, fingerprints and star-command evidence](app/static/help/rom-decoder.png)
+
+The decoded dialog starts with focus on its heading, so opening it does not
+highlight or expand the first command. Use Tab to enter the command table. A
+command help tooltip appears on hover or keyboard focus and can be pinned with
+a click.
+
+![Pinned help recovered from the ROM's command tables](app/static/help/rom-command-help.png)
+
+### ROM Workbench
+
+Choose **Tools → ROM Workbench** for the higher-level maintenance tools:
+
+- **Overview** draws the logical bank map, file offsets, physical byte lanes,
+  duplicate-bank relationships, fingerprints and structural audit. Proven
+  contradictions between header role flags and entry vectors can be aligned
+  automatically. A bad standard RISC OS extension-ROM checksum can also be
+  rebuilt. Both operations receive an automatic undo checkpoint.
+- **Disassembly** decodes NMOS 6502, ARM and 68000 instructions from any bank
+  and offset. ARM uses little-endian 32-bit instruction mode and 68000 uses its
+  native big-endian mode. Unknown 6502 opcodes remain `EQUB` bytes rather than
+  being presented as invented code. Known entry points seed reachable-code
+  analysis, branch and call targets receive cross-references, and calls through
+  the BBC MOS jump table are labelled with names such as `OSBYTE`, `OSWORD`,
+  `OSFILE` and `OSCLI`. Symbols and address regions saved in the project
+  metadata are applied to the listing.
+- **Compare** compares this ROM with another ROM open in a workbench pane. It
+  lists contiguous changed ranges and exports an Acorn File Forge patch. A
+  patch records both source and target SHA-256 checksums, so it is rejected if
+  the source is the wrong version or the result is not exact. Tick individual
+  ranges when only reviewed changes should be included in a selective patch.
+- **Build** creates an inert BBC-family service-ROM development scaffold with
+  a valid header, descriptive command table and handlers that initially return
+  immediately. It can also package host files in the documented `AFFROMFS1`
+  data layout. AFFROMFS requires matching service code and is not a filing
+  system understood by an unmodified MOS.
+- **Programmer** pads or mirrors the image to a power-of-two physical device,
+  optionally swaps adjacent bytes or 16-bit words, applies explicit address-line
+  swaps, and splits it into one, two or four byte lanes. The resulting ZIP
+  includes the chip files and a checksum-bearing programming report.
+- **Project** records hardware, socket, research and symbol information without
+  modifying the image. **Emulator** runs only when the local Docker deployment
+  has an `ACORN_ROM_EMULATOR_COMMAND` containing a `{rom}` placeholder. The
+  command is executed directly without a shell, has a 30-second limit, and its
+  result is retained in the project metadata.
+
+![ROM Workbench bank map and structural audit](app/static/help/rom-workbench-overview.png)
+
+![ROM Workbench 6502 disassembly with reachability and cross-references](app/static/help/rom-workbench-disassembly.png)
+
+![ROM Workbench physical programmer preparation](app/static/help/rom-workbench-programmer.png)
+
+Workbench data falls into three safety classes:
+
+| Class | Examples | Effect on working bytes |
+| --- | --- | --- |
+| Read-only analysis | Overview, audit, disassembly, compare, identity lookup | None |
+| Project metadata | Exact-ROM identity, notes, symbols, regions, emulator results | Stored beside the image, not in ROM bytes |
+| Reviewed write | Header repair, checksum repair, patch apply, Build | Automatic checkpoint, explicit confirmation and image revision change |
+
+Programmer export is read-only with respect to the logical working ROM. Its
+padding, mirroring, byte swapping, word swapping, address-line swapping and
+lane splitting exist only in the downloaded programmer ZIP.
+
+### Identification, saving and safety
+
+Exact known-ROM identification reads `app/rom_catalogue.json`. Catalogue rows
+use SHA-256 rather than titles or filenames. This makes the catalogue safe to
+extend locally and prevents similar-looking versions from being confused. The
+Overview tab can store an identification in an owner-scoped local catalogue,
+so later sessions in the same browser recognise the exact dump without sharing
+that private record with another user.
+
+Raw ROM edits can make hardware unbootable. Use a checkpoint, keep the original
+dump and test a disposable programmed device or emulator before replacing a
+known-good ROM.
 
 ## Working with MMB
 

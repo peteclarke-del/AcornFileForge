@@ -11,6 +11,7 @@ from pathlib import Path
 from .checksum import sha256_path
 from .disk_service import DiskError, DiskService, ImageSession
 from .readme_service import timestamped_archive_name, write_download_readme
+from .rom_workbench import project_json
 
 
 Progress = Callable[[str, int | None, int | None], None]
@@ -100,6 +101,14 @@ def build_download_archive(
     if session.descriptor_path:
         files.append(
             (session.descriptor_path, f"{archive_root}{session.descriptor_name}")
+        )
+    if session.kind == "rom":
+        project_path = session.path.parent / "rom-project.json"
+        project_path.write_bytes(project_json(session.rom_project))
+        files.append((project_path, "ROM-project.json"))
+        files.extend(
+            (path, f"ROM-components/{name}")
+            for path, name in service.rom_component_exports(session)
         )
     byte_total = sum(path.stat().st_size for path, _name in files)
     byte_current = 0
