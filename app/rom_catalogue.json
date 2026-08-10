@@ -1,0 +1,29 @@
+{
+  "format": "acorn-file-forge-rom-catalogue-1",
+  "roms": [
+    {
+      "sha256": "357fb3455b26d0c777e72cff4721cafbe9cd3193f84298e95d219f2edfaa511b",
+      "title": "PRES ADFS",
+      "version": "1.15",
+      "platform": "Electron Plus 3",
+      "copyright": "(C)1983 Acorn",
+      "size": 16384
+    },
+    {
+      "sha256": "cda520a110b160af2c750b2d28c84353ad2c3ede15b4821cf96452ee4dc3b5f8",
+      "title": "RH Plus 1",
+      "version": "1.33 (22 Jun 2018)",
+      "platform": "BBC / Master",
+      "copyright": "(C)J.G.Harston",
+      "size": 16384
+    },
+    {
+      "sha256": "598dabff6b6d5a654f5196c7ec9507e1d0ab6f4cd2aa2b1f83d381de02e909d1",
+      "title": "Sound Expansion",
+      "version": "3.0",
+      "platform": "BBC / Master",
+      "copyright": "(C)1989 Complex Software Systems",
+      "size": 16384
+    }
+  ]
+}

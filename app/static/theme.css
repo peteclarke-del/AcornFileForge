@@ -80,6 +80,7 @@
   --mmb-format-text: #fffaf0;
   --adfs-format-text: #241f19;
   --tape-format-text: #fffaf0;
+  --rom-format-text: #fffaf0;
   --format-icon-border: #4b4236;
   --format-icon-shadow: #4b4236;
 
@@ -182,6 +183,7 @@ html[data-theme="dark"] {
   --mmb-format-text: #141710;
   --adfs-format-text: #141710;
   --tape-format-text: #fffaf0;
+  --rom-format-text: #fffaf0;
   --format-icon-border: #5d6256;
   --format-icon-shadow: #080a08;
 
