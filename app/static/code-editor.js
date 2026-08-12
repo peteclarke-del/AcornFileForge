@@ -224,6 +224,12 @@ window.AcornCodeEditor = (() => {
 
   const token = (type, text, start, helpKey = "", helpLanguage = "") => ({ type, text, start, end: start + text.length, helpKey, helpLanguage });
 
+  // Help keys deliberately discard punctuation, but BBC BASIC's trailing `%`
+  // is semantic: it marks an integer variable. Keep lexical classification
+  // separate so names such as page%, load% and print% cannot be mistaken for
+  // the PAGE, LOAD and PRINT commands during highlighting or refactoring.
+  const isBasicKeywordToken = (raw, key) => !/%$/.test(raw) && BASIC_KEYWORDS.has(key);
+
   function inlineMnemonic(raw, architecture) {
     const key = normaliseHelpKey(raw);
     if (architecture === "arm") {
@@ -265,7 +271,7 @@ window.AcornCodeEditor = (() => {
           continue;
         }
         const remainder = line.slice(offset);
-        const word = remainder.match(/^(?:\*?[A-Za-z][A-Za-z0-9_$]*|&[0-9A-Fa-f]+|\d+(?:\.\d+)?)/);
+        const word = remainder.match(/^(?:\*?[A-Za-z][A-Za-z0-9_$%]*|&[0-9A-Fa-f]+|\d+(?:\.\d+)?)/);
         if (!word) {
           if (inlineAssembler && line[offset] === ":") assemblerStatementStart = true;
           offset += 1;
@@ -273,7 +279,7 @@ window.AcornCodeEditor = (() => {
         }
         const raw = word[0];
         const key = normaliseHelpKey(raw);
-        if (language === "basic" && !inlineAssembler && key === "REM") {
+        if (language === "basic" && !inlineAssembler && key === "REM" && isBasicKeywordToken(raw, key)) {
           tokens.push(token("comment", line.slice(offset), lineStart + offset, "REM"));
           break;
         }
@@ -294,7 +300,7 @@ window.AcornCodeEditor = (() => {
           continue;
         }
         const starHelpKey = raw.startsWith("*") && SCRIPT_HELP[key] ? `*${key}` : "";
-        const isKeyword = language === "basic" ? (BASIC_KEYWORDS.has(key) || Boolean(starHelpKey)) : language === "script" ? (SCRIPT_COMMANDS.has(key) || (offset === (line.match(/^\s*/)?.[0].length || 0) && raw.startsWith("*"))) : false;
+        const isKeyword = language === "basic" ? (isBasicKeywordToken(raw, key) || Boolean(starHelpKey)) : language === "script" ? (SCRIPT_COMMANDS.has(key) || (offset === (line.match(/^\s*/)?.[0].length || 0) && raw.startsWith("*"))) : false;
         if (isNumber) tokens.push(token("number", raw, lineStart + offset));
         else if (isKeyword) tokens.push(token("keyword", raw, lineStart + offset, starHelpKey || key));
         else if (/^(?:PROC|FN)/i.test(raw)) tokens.push(token("symbol", raw, lineStart + offset, raw.match(/^(PROC|FN)/i)?.[1]));
@@ -346,7 +352,7 @@ window.AcornCodeEditor = (() => {
           continue;
         }
         if (quoted) continue;
-        if (!inside && /^REM\b/i.test(line.slice(index)) && (index === 0 || /[^A-Za-z0-9_$]/.test(line[index - 1]))) break;
+        if (!inside && /^REM(?![$%])/i.test(line.slice(index)) && (index === 0 || /[^A-Za-z0-9_$%]/.test(line[index - 1]))) break;
         if (inside && line[index] === "\\") break;
         if (line[index] === "[") { inside = true; flagged = true; }
         else if (inside && line[index] === "]") { flagged = true; inside = false; }
@@ -438,7 +444,7 @@ window.AcornCodeEditor = (() => {
       if (text[index] === '"') { mask[index] = " "; quoted = !quoted; continue; }
       if (quoted) { mask[index] = " "; continue; }
       const rest = text.slice(index);
-      if ((language === "basic" && /^REM(?:\b|(?=[^A-Za-z0-9_]))/i.test(rest)) ||
+      if ((language === "basic" && /^REM(?![$%])/i.test(rest)) ||
           (language === "script" && /^\|/.test(rest))) {
         while (index < text.length && text[index] !== "\n") { mask[index] = " "; index += 1; }
         index -= 1;
@@ -482,7 +488,7 @@ window.AcornCodeEditor = (() => {
         }
         if (quoted) { masked[index] = " "; continue; }
         if (character === "[") { masked[index] = " "; assembler = true; continue; }
-        if (/^REM\b/i.test(line.slice(index)) && (index === 0 || /[^A-Za-z0-9_$]/.test(line[index - 1]))) {
+        if (/^REM(?![$%])/i.test(line.slice(index)) && (index === 0 || /[^A-Za-z0-9_$%]/.test(line[index - 1]))) {
           masked.fill(" ", index);
           break;
         }
@@ -501,21 +507,21 @@ window.AcornCodeEditor = (() => {
           if (!remainder.includes("=")) events.push({ ...event, kind: "open", type: "function", label: `FN${match[1]}` });
           return;
         }
-        if (/^ENDPROC\b/i.test(statement)) return events.push({ ...event, kind: "close", type: "procedure" });
+        if (/^ENDPROC(?![$%])/i.test(statement)) return events.push({ ...event, kind: "close", type: "procedure" });
         if (/^=/.test(statement)) return events.push({ ...event, kind: "close", type: "function" });
         match = statement.match(/^FOR\s*([A-Za-z][A-Za-z0-9_$%]*)(?=\s*=)/i);
         if (match) return events.push({ ...event, kind: "open", type: "for", label: `${match[1]} loop` });
-        if (/^NEXT(?:\b|(?=[A-Za-z]))/i.test(statement)) return events.push({ ...event, kind: "close", type: "for" });
-        if (/^REPEAT\b/i.test(statement)) return events.push({ ...event, kind: "open", type: "repeat", label: "REPEAT loop" });
-        if (/^UNTIL(?:\b|(?=[A-Za-z]))/i.test(statement)) return events.push({ ...event, kind: "close", type: "repeat" });
-        if (/^IF(?:\b|(?=[A-Za-z]))/i.test(statement) && /\bTHEN\s*$/i.test(statement)) return events.push({ ...event, kind: "open", type: "if", label: "IF block" });
-        if (/^ELSE\b/i.test(statement)) return events.push({ ...event, kind: "branch", type: "if" });
-        if (/^ENDIF\b/i.test(statement)) return events.push({ ...event, kind: "close", type: "if" });
-        if (/^CASE(?:\b|(?=[A-Za-z]))/i.test(statement)) return events.push({ ...event, kind: "open", type: "case", label: "CASE block" });
-        if (/^(?:WHEN(?=\b|[A-Za-z0-9_&])|OTHERWISE\b)/i.test(statement)) return events.push({ ...event, kind: "branch", type: "case" });
-        if (/^ENDCASE\b/i.test(statement)) return events.push({ ...event, kind: "close", type: "case" });
-        if (/^WHILE(?:\b|(?=[A-Za-z]))/i.test(statement)) return events.push({ ...event, kind: "open", type: "while", label: "WHILE loop" });
-        if (/^ENDWHILE\b/i.test(statement)) events.push({ ...event, kind: "close", type: "while" });
+        if (/^NEXT(?![$%])(?:\b|(?=[A-Za-z]))/i.test(statement)) return events.push({ ...event, kind: "close", type: "for" });
+        if (/^REPEAT(?![$%])/i.test(statement)) return events.push({ ...event, kind: "open", type: "repeat", label: "REPEAT loop" });
+        if (/^UNTIL(?![$%])(?:\b|(?=[A-Za-z]))/i.test(statement)) return events.push({ ...event, kind: "close", type: "repeat" });
+        if (/^IF(?![$%])(?:\b|(?=[A-Za-z]))/i.test(statement) && /\bTHEN\s*$/i.test(statement)) return events.push({ ...event, kind: "open", type: "if", label: "IF block" });
+        if (/^ELSE(?![$%])/i.test(statement)) return events.push({ ...event, kind: "branch", type: "if" });
+        if (/^ENDIF(?![$%])/i.test(statement)) return events.push({ ...event, kind: "close", type: "if" });
+        if (/^CASE(?![$%])(?:\b|(?=[A-Za-z]))/i.test(statement)) return events.push({ ...event, kind: "open", type: "case", label: "CASE block" });
+        if (/^(?:WHEN(?![$%])(?=\b|[A-Za-z0-9_&])|OTHERWISE(?![$%]))/i.test(statement)) return events.push({ ...event, kind: "branch", type: "case" });
+        if (/^ENDCASE(?![$%])/i.test(statement)) return events.push({ ...event, kind: "close", type: "case" });
+        if (/^WHILE(?![$%])(?:\b|(?=[A-Za-z]))/i.test(statement)) return events.push({ ...event, kind: "open", type: "while", label: "WHILE loop" });
+        if (/^ENDWHILE(?![$%])/i.test(statement)) events.push({ ...event, kind: "close", type: "while" });
       });
       return { line, events };
     });
@@ -587,14 +593,14 @@ window.AcornCodeEditor = (() => {
 
   function basicStatements(body) {
     const normal = String(body)
-      .replace(/^IF(?=\S)/i, "$& ")
-      .replace(/\bTHEN(?=\d)/gi, "$& ")
-      .replace(/(\d)ELSE(?=\S)/gi, "$1 ELSE ")
-      .replace(/\bELSE(?=[A-Za-z])/gi, "$& ");
+      .replace(/^IF(?![$%])(?=\S)/i, "$& ")
+      .replace(/\bTHEN(?![$%])(?=\d)/gi, "$& ")
+      .replace(/(\d)ELSE(?![$%])(?=\S)/gi, "$1 ELSE ")
+      .replace(/\bELSE(?![$%])(?=[A-Za-z])/gi, "$& ");
     const statements = [];
     let start = 0;
     let quoted = false;
-    const commentAt = normal.search(/\bREM\b/i);
+    const commentAt = normal.search(/\bREM(?![$%])/i);
     for (let index = 0; index < normal.length; index += 1) {
       if (normal[index] === '"') quoted = !quoted;
       if (!quoted && normal.slice(start, index).trimStart().startsWith("*")) break;
@@ -605,9 +611,9 @@ window.AcornCodeEditor = (() => {
     }
     statements.push(normal.slice(start).trim());
     return statements.filter(Boolean).map(statement => statement
-      .replace(/^IF(?=\S)/i, "$& ")
-      .replace(/\bTHEN(?=\S)/gi, "$& ")
-      .replace(/(\d)ELSE(?=\S)/gi, "$1 ELSE "));
+      .replace(/^IF(?![$%])(?=\S)/i, "$& ")
+      .replace(/\bTHEN(?![$%])(?=\S)/gi, "$& ")
+      .replace(/(\d)ELSE(?![$%])(?=\S)/gi, "$1 ELSE "));
   }
 
   function keywordOutsideQuotes(text, keyword, from = 0) {
@@ -624,10 +630,10 @@ window.AcornCodeEditor = (() => {
   }
 
   function inlineIfElseChain(body, nextNumber) {
-    if (nextNumber == null || !/^\s*IF\b/i.test(body)) return null;
+    if (nextNumber == null || !/^\s*IF(?![$%])/i.test(body)) return null;
     const branches = [];
     let remaining = String(body).trim();
-    while (/^IF\b/i.test(remaining)) {
+    while (/^IF(?![$%])/i.test(remaining)) {
       const thenAt = keywordOutsideQuotes(remaining, "THEN", 2);
       const elseAt = keywordOutsideQuotes(remaining, "ELSE", thenAt >= 0 ? thenAt + 4 : 2);
       if (elseAt < 0) return null;
@@ -652,7 +658,7 @@ window.AcornCodeEditor = (() => {
         condition = beforeElse.slice(0, boundary).trim();
         action = beforeElse.slice(boundary).trim();
       }
-      if (!condition || !action || /^IF\b/i.test(action)) return null;
+      if (!condition || !action || /^IF(?![$%])/i.test(action)) return null;
       branches.push({ condition, action });
       remaining = remaining.slice(elseAt + 4).trim();
     }
@@ -689,12 +695,12 @@ window.AcornCodeEditor = (() => {
   }
 
   function inlineIfExpansion(statements, nextNumber) {
-    const ifIndex = statements.findIndex(statement => /^IF\b/i.test(statement));
+    const ifIndex = statements.findIndex(statement => /^IF(?![$%])/i.test(statement));
     if (ifIndex < 0) return statements;
     const statement = statements[ifIndex];
     const prefix = statements.slice(0, ifIndex);
     const tail = statements.slice(ifIndex + 1);
-    const directElse = statement.match(/^IF\s*(.*?)\s+THEN\s*(\d+)\s+ELSE\s*(.+)$/i);
+    const directElse = statement.match(/^IF(?![$%])\s*(.*?)\s+THEN\s*(\d+)\s+ELSE\s*(.+)$/i);
     if (directElse) {
       const falseAction = /^\d+\s*$/.test(directElse[3]) ? `GOTO ${directElse[3].trim()}` : directElse[3];
       return [...prefix, `IF ${directElse[1]} THEN ${directElse[2]}`, falseAction, ...tail];
@@ -702,7 +708,7 @@ window.AcornCodeEditor = (() => {
     if (nextNumber == null || /\bELSE\b/i.test(statement)) return null;
     let condition = "";
     let action = "";
-    const withThen = statement.match(/^IF\s*(.*?)\s+THEN\s*(.+)$/i);
+    const withThen = statement.match(/^IF(?![$%])\s*(.*?)\s+THEN\s*(.+)$/i);
     if (withThen) {
       [, condition, action] = withThen;
     } else {
@@ -756,7 +762,7 @@ window.AcornCodeEditor = (() => {
     }
     const ifAt = keywordOutsideQuotes(match[2], "IF");
     const prefixText = ifAt > 0 ? match[2].slice(0, ifAt).replace(/:\s*$/, "") : "";
-    const prefix = prefixText && !/\bREM\b/i.test(prefixText) ? basicStatements(prefixText) : [];
+    const prefix = prefixText && !/\bREM(?![$%])/i.test(prefixText) ? basicStatements(prefixText) : [];
     const conditionalChain = ifAt >= 0
       ? inlineIfElseChain(match[2].slice(ifAt), nextNumber)
       : null;
@@ -768,7 +774,7 @@ window.AcornCodeEditor = (() => {
       return { number: Number(match[1]), body: match[2], statements: [...prefix, ...shiftedChain] };
     }
     const statements = basicStatements(match[2]);
-    if (statements.length < 2 && !/^IF\b/i.test(statements[0] || "")) return null;
+    if (statements.length < 2 && !/^IF(?![$%])/i.test(statements[0] || "")) return null;
     const expanded = inlineIfExpansion(statements, nextNumber);
     if (!expanded) return null;
     if (statements.length < 2 && expanded.length === statements.length && expanded.every((statement, index) => statement === statements[index])) return null;
@@ -791,7 +797,7 @@ window.AcornCodeEditor = (() => {
       if (value[index] === '"') { quoted = !quoted; mask[index] = " "; continue; }
       if (quoted) mask[index] = " ";
     }
-    const comment = mask.join("").search(/\bREM\b/i);
+    const comment = mask.join("").search(/\bREM(?![$%])/i);
     if (comment >= 0) mask.fill(" ", comment);
     return mask.join("");
   }
@@ -805,11 +811,11 @@ window.AcornCodeEditor = (() => {
       positions.add(start);
       matches.push({ start, end: start + digits.length, target: Number(digits) });
     };
-    for (const match of mask.matchAll(/\b(?:GOTO|GOSUB|RESTORE|THEN|RUN)\s*(\d+)\b/gi)) {
+    for (const match of mask.matchAll(/\b(?:GOTO|GOSUB|RESTORE|THEN|RUN)(?![$%])\s*(\d+)\b/gi)) {
       const digits = match[1];
       add(match.index + match[0].lastIndexOf(digits), digits);
     }
-    for (const match of mask.matchAll(/\b(?:GOTO|GOSUB)\s+(\d+(?:\s*,\s*\d+)+)/gi)) {
+    for (const match of mask.matchAll(/\b(?:GOTO|GOSUB)(?![$%])\s+(\d+(?:\s*,\s*\d+)+)/gi)) {
       const listAt = match.index + match[0].indexOf(match[1]);
       for (const number of match[1].matchAll(/\d+/g)) add(listAt + number.index, number[0]);
     }
@@ -827,12 +833,12 @@ window.AcornCodeEditor = (() => {
 
   function basicHasDynamicDestination(text) {
     const mask = maskedBasicCode(text);
-    for (const match of mask.matchAll(/\b(GOTO|GOSUB|RESTORE|RUN)\b/gi)) {
+    for (const match of mask.matchAll(/\b(GOTO|GOSUB|RESTORE|RUN)(?![$%])/gi)) {
       const remainder = mask.slice(match.index + match[0].length).split(":", 1)[0].trimStart();
       if (!remainder && /^(RESTORE|RUN)$/i.test(match[1])) continue;
       if (!/^\d+\b/.test(remainder)) return true;
     }
-    for (const match of mask.matchAll(/\bTHEN\b/gi)) {
+    for (const match of mask.matchAll(/\bTHEN(?![$%])/gi)) {
       const remainder = mask.slice(match.index + match[0].length).split(/\bELSE\b|:/i, 1)[0].trim();
       if (!remainder || /^\d+\b/.test(remainder)) continue;
       if (basicStartsStatement(remainder)) continue;
@@ -844,28 +850,28 @@ window.AcornCodeEditor = (() => {
 
   function basicHasSemanticErl(text) {
     const code = maskedBasicCode(text);
-    if (!/\bERL\b/i.test(code)) return false;
+    if (!/\bERL(?![$%])/i.test(code)) return false;
     // Merely printing ERL reports the newly assigned physical line number and
     // remains correct after a refactor. Assignments, comparisons and other
     // uses can make program behaviour depend on the old number and must keep
     // the conservative safety stop.
     return basicStatements(code).some(statement => (
-      /\bERL\b/i.test(statement)
+      /\bERL(?![$%])/i.test(statement)
       && !/^\s*PRINT(?=\s|['";,(]|$)/i.test(statement)
     ));
   }
 
   function basicCondenseBoundaryBefore(body) {
-    return /^\s*(?:ELSE|WHEN|OTHERWISE|ENDIF|ENDCASE|ENDWHILE)\b/i.test(maskedBasicCode(body));
+    return /^\s*(?:ELSE|WHEN|OTHERWISE|ENDIF|ENDCASE|ENDWHILE)(?![$%])/i.test(maskedBasicCode(body));
   }
 
   function basicCondenseBoundaryAfter(body) {
     const mask = maskedBasicCode(body);
-    if (/\bIF\b/i.test(mask) || /^\s*ON\s+ERROR\b/i.test(mask)) return true;
-    if (String(body).replace(/"(?:[^"]|"")*"/g, "").match(/\bREM\b/i)) return true;
+    if (/\bIF(?![$%])/i.test(mask) || /^\s*ON\s+ERROR(?![$%])/i.test(mask)) return true;
+    if (String(body).replace(/"(?:[^"]|"")*"/g, "").match(/\bREM(?![$%])/i)) return true;
     if (/(^|:)\s*\*/.test(mask)) return true;
     const finalStatement = basicStatements(body).at(-1) || "";
-    return /^(?:GOTO|RETURN|END|STOP|ENDPROC|CHAIN|RUN|ERROR)\b/i.test(finalStatement);
+    return /^(?:GOTO|RETURN|END|STOP|ENDPROC|CHAIN|RUN|ERROR)(?![$%])/i.test(finalStatement);
   }
 
   function rebuildBasic(lines, expansions, { startAt = null, fromIndex = 0, step = 10 } = {}) {
@@ -901,7 +907,7 @@ window.AcornCodeEditor = (() => {
     // Detokenised listings often join a structural keyword directly to its
     // expression or loop variable. At statement start these forms are
     // unambiguous and a separating space materially improves readability.
-    const body = match[2].replace(/^\s*(IF|FOR|NEXT|UNTIL|WHILE|CASE|WHEN)(?=\S)/i, (_whole, keyword) => `${keyword} `);
+    const body = match[2].replace(/^\s*(IF|FOR|NEXT|UNTIL|WHILE|CASE|WHEN)(?![$%])(?=\S)/i, (_whole, keyword) => `${keyword} `);
     return `${match[1]}${body}`;
   }
 
