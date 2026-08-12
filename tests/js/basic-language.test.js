@@ -49,6 +49,27 @@ test("compact commands remain distinct from typed command-like variables", () =>
   assert.deepEqual(tokens.filter(token => token.type === "keyword").map(token => token.name), ["IF", "IF", "LEN", "PRINT"]);
 });
 
+test("compact IF branches recognise COLOUR and their following commands", () => {
+  const source = `570 IFcheck$="+" THEN text%=1
+580 IFf$="$.CHEAT" THEN COLOUR129:COLOUR0:CLS:CHAINf$
+590 IFtext%=0 THEN MODE6:VDU23;8202;0;0;0;:CHAINf$`;
+  const names = basic.scan(source).filter(token => token.type === "keyword").map(token => token.name);
+  assert.deepEqual(names, ["IF", "THEN", "IF", "THEN", "COLOUR", "COLOUR", "CLS", "CHAIN", "IF", "THEN", "MODE", "VDU", "CHAIN"]);
+});
+
+test("every BBC BASIC II token-table keyword is recognised", () => {
+  for (const keyword of basic.BBC_BASIC_II_KEYWORDS) {
+    const token = basic.scan(`10 ${keyword}`).find(item => item.start > 2);
+    assert.equal(token?.type, "keyword", `${keyword} was not recognised as a BASIC keyword`);
+    assert.equal(token?.name, keyword, `${keyword} was recognised under the wrong name`);
+  }
+});
+
+test("conditional keyword prefixes do not split ordinary identifiers", () => {
+  const names = basic.scan("10 ending%=2:page%=3:countdown%=4").filter(token => token.type === "identifier").map(token => token.text);
+  assert.deepEqual(names, ["ending%", "page%", "countdown%"]);
+});
+
 test("statement splitting respects strings comments star commands and assembler", () => {
   assert.deepEqual(basic.splitStatements('A=1:PRINT "A:B":REM C:D').map(row => row.text), ["A=1", 'PRINT "A:B"', "REM C:D"]);
   assert.deepEqual(basic.splitStatements('*FX 21:PRINT "NOT EXECUTED HERE"').map(row => row.text), ['*FX 21:PRINT "NOT EXECUTED HERE"']);

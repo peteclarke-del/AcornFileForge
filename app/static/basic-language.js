@@ -1,16 +1,35 @@
 (function initialiseAcornBasicLanguage(globalObject) {
   "use strict";
 
-  const KEYWORDS = new Set((
+  const BBC_BASIC_II_KEYWORDS = (
     "AND DIV EOR MOD OR ERROR LINE OFF STEP SPC TAB ELSE THEN OPENIN PTR PAGE TIME "
     + "LOMEM HIMEM ABS ACS ADVAL ASC ASN ATN BGET COS COUNT DEG ERL ERR EVAL EXP EXT "
     + "FALSE FN GET INKEY INSTR INT LEN LN LOG NOT OPENUP OPENOUT PI POINT POS RAD RND "
     + "SGN SIN SQR TAN TO TRUE USR VAL VPOS CHR$ GET$ INKEY$ LEFT$ MID$ RIGHT$ STR$ "
-    + "STRING$ EOF AUTO DELETE LOAD LIST NEW OLD RENUMBER SAVE EDIT BPUT CALL CHAIN CLEAR "
-    + "CLOSE CLG CLS DATA DEF DIM DRAW END ENDPROC ENDIF ENDCASE ENDWHILE ENVELOPE FOR GCOL "
-    + "GOSUB GOTO IF INPUT LET LOCAL MODE MOVE NEXT ON ORIGIN PLOT PRINT PROC READ REM "
+    + "STRING$ EOF AUTO DELETE LOAD LIST NEW OLD RENUMBER SAVE BPUT CALL CHAIN CLEAR "
+    + "CLOSE CLG CLS COLOUR DATA DEF DIM DRAW END ENDPROC ENDIF ENDCASE ENDWHILE ENVELOPE FOR GCOL "
+    + "GOSUB GOTO IF INPUT LET LOCAL MODE MOVE NEXT ON PLOT PRINT PROC READ REM "
     + "REPEAT REPORT RESTORE RETURN RUN SOUND STOP TRACE UNTIL VDU WIDTH OSCLI CASE WHEN "
     + "OTHERWISE WHILE"
+  ).split(/\s+/).filter(keyword => !["CASE", "ENDCASE", "ENDIF", "ENDWHILE", "OTHERWISE", "WHEN", "WHILE"].includes(keyword));
+  const BBC_BASIC_IV_KEYWORDS = "EDIT TIME$".split(/\s+/);
+  // ARM BASIC V/VI uses a second token table. Keep those language words in
+  // the same scanner, while dialect metadata below tells the editor whether
+  // they are valid for the current target.
+  const BASIC_V_KEYWORDS = (
+    "APPEND BEAT BEATS BY CIRCLE CRUNCH ELLIPSE EXIT FILL HELP INSTALL LIBRARY "
+    + "LISTO LVAR MOUSE OF OVERLAY PRIVATE QUIT RECTANGLE REPORT$ STEREO SUM "
+    + "SUMLEN SWAP SYS TEMPO TEXTLOAD TEXTSAVE TIME$ TINT TOP TWIN VOICE VOICES WAIT"
+  ).split(/\s+/);
+  const KEYWORDS = new Set([...BBC_BASIC_II_KEYWORDS, ...BBC_BASIC_IV_KEYWORDS, ...BASIC_V_KEYWORDS]);
+
+  // The classic ROM tokeniser suppresses these keywords when another name
+  // character follows. This is what keeps OFFSET, ENDING and PAGE% as names,
+  // while unconditional tokens still permit compact forms such as IFI=1,
+  // MODE6, COLOUR129 and T%DIV256.
+  const CONDITIONAL_KEYWORDS = new Set((
+    "BGET BPUT CLEAR CLOSE CLG CLS COUNT END ENDPROC EOF ERL ERR EXT FALSE "
+    + "HIMEM LOMEM NEW OLD PAGE PI POS PTR REPORT RETURN RND RUN STOP TIME TRUE VPOS"
   ).split(/\s+/));
 
   const DIALECTS = Object.freeze({
@@ -23,8 +42,8 @@
   });
 
   const KEYWORD_GENERATION = Object.freeze({
-    CASE: 5, WHEN: 5, OTHERWISE: 5, ENDCASE: 5,
-    WHILE: 5, ENDWHILE: 5, ENDIF: 5,
+    ...Object.fromEntries(BBC_BASIC_IV_KEYWORDS.map(keyword => [keyword, 4])),
+    ...Object.fromEntries(BASIC_V_KEYWORDS.map(keyword => [keyword, 5])),
   });
 
   const identifierPattern = /^[A-Za-z][A-Za-z0-9_]*(?:[$%])?/;
@@ -37,7 +56,7 @@
 
   function isKeywordToken(value) {
     const raw = String(value || "");
-    return !isTypedIdentifier(raw) && KEYWORDS.has(normaliseKeyword(raw));
+    return KEYWORDS.has(normaliseKeyword(raw));
   }
 
   function keywordPrefix(value, candidates) {
@@ -45,7 +64,9 @@
     const upper = source.toUpperCase();
     return [...candidates]
       .sort((left, right) => right.length - left.length)
-      .find(candidate => upper.startsWith(candidate) && compactKeywordBoundary(source[candidate.length])) || "";
+      .find(candidate => upper.startsWith(candidate)
+        && compactKeywordBoundary(source[candidate.length])
+        && !(CONDITIONAL_KEYWORDS.has(candidate) && /[A-Za-z0-9_]/.test(source[candidate.length] || ""))) || "";
   }
 
   function lexemeAt(value) {
@@ -198,6 +219,10 @@
   const api = Object.freeze({
     DIALECTS,
     KEYWORDS,
+    BBC_BASIC_II_KEYWORDS,
+    BBC_BASIC_IV_KEYWORDS,
+    BASIC_V_KEYWORDS,
+    CONDITIONAL_KEYWORDS,
     KEYWORD_GENERATION,
     compactKeywordBoundary,
     dialectProfile,

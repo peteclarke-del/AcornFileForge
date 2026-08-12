@@ -1,5 +1,6 @@
 window.AcornCodeEditor = (() => {
   const BASIC_LANGUAGE = window.AcornBasicLanguage;
+  const ASSEMBLY_LANGUAGE = window.AcornAssemblyLanguage;
   const esc = value => String(value ?? "").replace(/[&<>"']/g, character => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;",
   }[character]));
@@ -47,6 +48,7 @@ window.AcornCodeEditor = (() => {
     LOAD: help("Loads a BASIC program without starting it.", 'LOAD "filename"', "The target must be a tokenised BASIC program visible through the active filing system."),
     SAVE: help("Saves the current tokenised BASIC program.", 'SAVE "filename"', "The destination medium must be writable and the filename valid."),
     RUN: help("Starts the current BASIC program, or loads and starts a named BASIC program.", 'RUN ["filename"]', "A named target must be a tokenised BASIC program."),
+    COLOUR: help("Selects the logical text foreground or background colour.", "COLOUR logical-colour", "The available logical colours depend on the current display mode.", "Values from 128 select the text background colour; flashing and tint behaviour vary by machine and BASIC version."),
     MODE: help("Changes the display mode and normally clears the screen.", "MODE number", "The selected mode must exist on the target machine and leave enough memory for the program."),
     VDU: help("Sends one or more bytes directly to the VDU driver.", "VDU value[,value…]", "Sequences and mode capabilities vary across BBC, Electron and RISC OS targets."),
     SOUND: help("Queues a sound using the four BBC sound parameters.", "SOUND channel,amplitude,pitch,duration", "Sound hardware and envelope behaviour vary by target."),
@@ -65,11 +67,17 @@ window.AcornCodeEditor = (() => {
   };
 
   const SCRIPT_HELP = {
+    ACCESS: help("Changes a file's public and owner access attributes.", "*ACCESS filespec [letters]", "The active filing system must support access attributes and the object must be writable."),
+    BACKUP: help("Copies an entire filing-system volume or disk.", "*BACKUP source-drive destination-drive", "Requires a filing system that provides BACKUP and distinct source and destination media."),
     BASIC: help("Selects the BBC BASIC language ROM.", "*BASIC", "A compatible BASIC ROM must be installed and discoverable by the operating system."),
     CAT: help("Displays the current filing-system catalogue.", "*CAT [filespec]", "A filing system and readable medium must be active."),
+    CDIR: help("Creates a directory on filing systems that support hierarchical directories.", "*CDIR directory [size]", "ADFS or another directory-capable filing system must be active."),
+    COMPACT: help("Compacts free space on a filing-system volume.", "*COMPACT", "The filing system and medium must support compaction and be writable."),
+    COPY: help("Copies one or more filing-system objects.", "*COPY source destination", "Source objects must be readable and the destination writable."),
     DIR: help("Changes the current directory or DFS catalogue prefix.", "*DIR directory", "ADFS requires the directory to exist; DFS normally accepts a single-character catalogue prefix."),
     LIB: help("Selects the filing-system library directory.", "*LIB directory", "The filing system must support a library and the directory must exist."),
     DRIVE: help("Selects a drive or MMFS/MMB slot where supported.", "*DRIVE number", "The active filing system must implement drive selection and the target must be available."),
+    DISMOUNT: help("Dismounts the current volume so cached metadata is flushed safely.", "*DISMOUNT [drive]", "The active filing system must provide dismounting."),
     EXEC: help("Reads operating-system commands from a text file as though they were typed.", "*EXEC filename", "The file must contain command text, not tokenised BASIC.", "This is the usual action for a command-script !BOOT file."),
     RUN: help("Loads a machine-code file at its load address and calls its execution address.", "*RUN filename [parameters]", "The file needs valid load and execution metadata and compatible machine code."),
     LOAD: help("Loads a file at its catalogue load address or an explicitly supplied address.", "*LOAD filename [address]", "Enough memory must be free and the address suitable for the target machine."),
@@ -79,11 +87,16 @@ window.AcornCodeEditor = (() => {
     TYPE: help("Displays a text file without executing it.", "*TYPE filename", "The file must be readable; binary files can produce control characters."),
     DUMP: help("Displays a file as hexadecimal bytes and text.", "*DUMP filename", "The command must be provided by the active filing system or utilities ROM."),
     FX: help("Invokes OSBYTE with a decimal reason code and parameters.", "*FX number[,X[,Y]]", "The reason code must be supported by the target OS and hardware."),
+    HELP: help("Lists operating-system, filing-system and service-ROM help topics.", "*HELP [topic]", "Available topics depend on the installed ROMs."),
+    INFO: help("Displays catalogue metadata for matching filing-system objects.", "*INFO filespec", "The active filing system must provide INFO."),
     OPT: help("Changes filing-system options, including boot behaviour on many Acorn systems.", "*OPT number[,value]", "Meanings are filing-system-specific. *OPT 4 controls boot options on common DFS/ADFS systems."),
     BOOT: help("Runs the medium's boot sequence where the filing system provides this command.", "*BOOT", "A boot option and suitable !BOOT file must be present."),
     MOUNT: help("Mounts a named ADFS volume or supported device.", "*MOUNT [volume]", "ADFS or a compatible filing system must be active and the volume available."),
     MMFS: help("Selects or enters MMFS on supported hardware.", "*MMFS", "A compatible MMFS ROM and storage interface must be installed."),
+    ROMS: help("Lists installed sideways ROMs where the operating system or utility ROM provides it.", "*ROMS", "Requires a ROM-management command with this name."),
     SPOOL: help("Copies subsequent screen output to a file; *SPOOL with no name closes it.", "*SPOOL [filename]", "The destination must be writable. Close the spool before removing the medium."),
+    TITLE: help("Changes the current disk or volume title.", "*TITLE title", "The active filing system must support writable volume titles."),
+    WIPE: help("Deletes matching filing-system objects, normally after confirmation.", "*WIPE filespec", "The objects and medium must be writable; behaviour is filing-system-specific."),
   };
 
   const MOS_HELP = {
@@ -109,11 +122,8 @@ window.AcornCodeEditor = (() => {
     OSCLI: help("Executes a MOS command line at &FFF7.", "JSR OSCLI", "XY points to a carriage-return-terminated command string."),
   };
 
-  const BASIC_KEYWORDS = new Set(("AND DIV EOR MOD OR ERROR LINE OFF STEP SPC TAB ELSE THEN OPENIN PTR PAGE TIME LOMEM HIMEM ABS ACS ADVAL ASC ASN ATN BGET COS COUNT DEG ERL ERR EVAL EXP EXT FALSE FN GET INKEY INSTR INT LEN LN LOG NOT OPENUP OPENOUT PI POINT POS RAD RND SGN SIN SQR TAN TO TRUE USR VAL VPOS CHR$ GET$ INKEY$ LEFT$ MID$ RIGHT$ STR$ STRING$ EOF AUTO DELETE LOAD LIST NEW OLD RENUMBER SAVE EDIT BPUT CALL CHAIN CLEAR CLOSE CLG CLS DATA DEF DIM DRAW END ENDPROC ENDIF ENDCASE ENDWHILE ENVELOPE FOR GCOL GOSUB GOTO IF INPUT LET LOCAL MODE MOVE NEXT ON ORIGIN PLOT PRINT PROC READ REM REPEAT REPORT RESTORE RETURN RUN SOUND STOP TRACE UNTIL VDU WIDTH OSCLI CASE WHEN OTHERWISE WHILE").split(/\s+/));
-  const SCRIPT_COMMANDS = new Set([...Object.keys(SCRIPT_HELP), "PAGE", "CHAIN", "MODE", "HIMEM", "LOMEM", "VDU", "PRINT", "CALL", "OSCLI"]);
-  const MNEMONICS_6502 = new Set(("ADC AND ASL BCC BCS BEQ BIT BMI BNE BPL BRK BVC BVS CLC CLD CLI CLV CMP CPX CPY DEC DEX DEY EOR INC INX INY JMP JSR LDA LDX LDY LSR NOP ORA PHA PHP PLA PLP ROL ROR RTI RTS SBC SEC SED SEI STA STX STY TAX TAY TSX TXA TXS TYA").split(" "));
-  const MNEMONICS_ARM = new Set(("ADC ADD ADR AND ASR B BIC BL BX CMN CMP EOR LDM LDR MLA MOV MUL MVN ORR RSB RSC SBC STM STR SUB SWI TEQ TST").split(" "));
-  const MNEMONICS_M68K = new Set(("ABCD ADD ADDA ADDI ADDQ ADDX AND ANDI ASL ASR BCC BCHG BCLR BRA BSET BSR BTST CHK CLR CMP CMPA CMPI CMPM DBCC DIVS DIVU EOR EXG EXT JMP JSR LEA LINK LSL LSR MOVE MOVEA MOVEM MOVEP MOVEQ MULS MULU NBCD NEG NEGX NOP NOT OR ORI PEA RESET ROL ROR ROXL ROXR RTE RTR RTS SBCD SCC STOP SUB SUBA SUBI SUBQ SUBX SWAP TAS TRAP TRAPV TST UNLK").split(" "));
+  const BASIC_KEYWORDS = BASIC_LANGUAGE?.KEYWORDS || new Set();
+  const SCRIPT_COMMANDS = new Set([...Object.keys(SCRIPT_HELP), ...BASIC_KEYWORDS]);
   const ASM_HELP = {
     JSR: help("Calls a subroutine and places a return address on the processor stack.", "JSR address", "The destination must contain compatible code that eventually returns with RTS."),
     JMP: help("Transfers execution to another address without creating a return address.", "JMP address", "The destination must contain executable code; indirect JMP behaviour depends on the processor."),
@@ -135,7 +145,6 @@ window.AcornCodeEditor = (() => {
     ALIGN: help("Advances the assembly address to the next required alignment boundary.", "ALIGN", "Common in ARM BBC BASIC; exact alignment follows the target assembler."),
   };
 
-  const EXTENDED_6502_MNEMONICS = new Set(("BRA PHX PHY PLX PLY STZ TSB TRB WAI STP COP JML JSL MVN MVP PEA PEI PER PHB PHD PHK PLB PLD REP RTL SEP TCD TCS TDC TSC TXY TYX WDM XBA XCE BRL INA DEA RMB0 RMB1 RMB2 RMB3 RMB4 RMB5 RMB6 RMB7 SMB0 SMB1 SMB2 SMB3 SMB4 SMB5 SMB6 SMB7 BBR0 BBR1 BBR2 BBR3 BBR4 BBR5 BBR6 BBR7 BBS0 BBS1 BBS2 BBS3 BBS4 BBS5 BBS6 BBS7").split(" "));
   const MOS_ADDRESS_HELP = new Map([
     [0xFFB9, "OSRDRM"], [0xFFBC, "VDUCHR"], [0xFFBF, "OSEVEN"], [0xFFC2, "GSINIT"],
     [0xFFC5, "GSREAD"], [0xFFC8, "NVRDCH"], [0xFFCB, "NVWRCH"],
@@ -147,19 +156,24 @@ window.AcornCodeEditor = (() => {
 
   const isStarHelpKey = value => /^\s*\*/.test(String(value || ""));
   const normaliseHelpKey = value => String(value || "").trim().replace(/^\*/, "").replace(/[^A-Za-z0-9$_.]/g, "").toUpperCase();
+  const starCommandPrefix = value => {
+    const source = String(value || "").replace(/^\*/, "").toUpperCase();
+    return Object.keys(SCRIPT_HELP).sort((left, right) => right.length - left.length).find(command => source.startsWith(command)) || "";
+  };
   const COMMAND_CASE = Object.freeze({ basic: "upper", script: "upper", "6502": "upper", "65c02": "upper", "65816": "upper", arm: "lower", m68k: "upper" });
   const dictionary = language => language === "basic" ? { ...BASIC_HELP, ...INLINE_ASSEMBLER_HELP, ...ASM_HELP, ...MOS_HELP } : language === "script" ? { ...SCRIPT_HELP, ...BASIC_HELP } : { ...INLINE_ASSEMBLER_HELP, ...ASM_HELP, ...MOS_HELP };
   const lookup = (language, key) => {
     const normal = normaliseHelpKey(key);
     if (isStarHelpKey(key)) {
       const starCommand = SCRIPT_HELP[normal];
-      return starCommand ? { key: `*${normal}`, ...starCommand } : null;
+      return starCommand
+        ? { key: `*${normal}`, ...starCommand }
+        : { key: `*${normal}`, ...help("Operating-system or service-ROM star command.", `*${normal} [parameters]`, "Availability and syntax depend on the active filing system and installed ROMs.") };
     }
     const found = dictionary(language)[normal];
     if (found) return { key: normal, ...found };
     if (language === "basic" && BASIC_KEYWORDS.has(normal)) return { key: normal, ...help("BBC BASIC keyword.", normal, "Syntax and availability depend on the target BBC BASIC version.") };
-    const mnemonics = language === "arm" ? MNEMONICS_ARM : language === "m68k" ? MNEMONICS_M68K : MNEMONICS_6502;
-    if (mnemonics.has(normal) || (["6502", "65c02", "65816"].includes(language) && EXTENDED_6502_MNEMONICS.has(normal))) return { key: normal, ...help(`${language.toUpperCase()} processor instruction.`, normal, "Operands and addressing modes must be valid for the selected processor variant.") };
+    if (ASSEMBLY_LANGUAGE?.isMnemonic(language, normal)) return { key: normal, ...help(`${language.toUpperCase()} processor instruction.`, normal, "Operands and addressing modes must be valid for the selected processor variant.") };
     if (["6502", "65c02", "65816", "arm", "m68k"].includes(language) && /^[A-Z][A-Z0-9.]*$/.test(normal)) {
       return { key: normal, ...help(`${language.toUpperCase()} instruction or assembler pseudo-operation.`, normal, "The decoded operands, processor variant and execution context determine its exact effect.") };
     }
@@ -240,15 +254,15 @@ window.AcornCodeEditor = (() => {
   function inlineMnemonic(raw, architecture) {
     const key = normaliseHelpKey(raw);
     if (architecture === "arm") {
-      if (MNEMONICS_ARM.has(key)) return key;
+      if (ASSEMBLY_LANGUAGE.isMnemonic("arm", key)) return key;
       const withoutCondition = key.replace(/(?:EQ|NE|CS|HS|CC|LO|MI|PL|VS|VC|HI|LS|GE|LT|GT|LE|AL)$/, "").replace(/S$/, "");
-      return MNEMONICS_ARM.has(withoutCondition) ? withoutCondition : "";
+      return ASSEMBLY_LANGUAGE.isMnemonic("arm", withoutCondition) ? withoutCondition : "";
     }
     if (architecture === "m68k") {
       const base = key.replace(/\.(?:B|W|L|S)$/, "");
-      return MNEMONICS_M68K.has(key) || MNEMONICS_M68K.has(base) ? key : "";
+      return ASSEMBLY_LANGUAGE.isMnemonic("m68k", key) || ASSEMBLY_LANGUAGE.isMnemonic("m68k", base) ? key : "";
     }
-    return MNEMONICS_6502.has(key) || EXTENDED_6502_MNEMONICS.has(key) ? key : "";
+    return ASSEMBLY_LANGUAGE.isMnemonic(architecture, key) ? key : "";
   }
 
   function sourceTokens(text, language, inlineAssemblyLanguage = "6502") {
@@ -278,10 +292,11 @@ window.AcornCodeEditor = (() => {
           continue;
         }
         const remainder = line.slice(offset);
+        const compactStar = language === "basic" && !inlineAssembler && remainder.startsWith("*") ? starCommandPrefix(remainder) : "";
         const basicLexeme = language === "basic" && !inlineAssembler && /^[A-Za-z]/.test(remainder)
           ? BASIC_LANGUAGE?.lexemeAt(remainder)
           : "";
-        const word = basicLexeme ? [basicLexeme] : remainder.match(/^(?:\*?[A-Za-z][A-Za-z0-9_$%]*|&[0-9A-Fa-f]+|\d+(?:\.\d+)?)/);
+        const word = compactStar ? [`*${compactStar}`] : basicLexeme ? [basicLexeme] : remainder.match(/^(?:\*?[A-Za-z][A-Za-z0-9_$%]*|&[0-9A-Fa-f]+|\d+(?:\.\d+)?)/);
         if (!word) {
           if (inlineAssembler && line[offset] === ":") assemblerStatementStart = true;
           offset += 1;
@@ -309,7 +324,7 @@ window.AcornCodeEditor = (() => {
           offset += raw.length;
           continue;
         }
-        const starHelpKey = raw.startsWith("*") && SCRIPT_HELP[key] ? `*${key}` : "";
+        const starHelpKey = raw.startsWith("*") ? `*${key}` : "";
         const isKeyword = language === "basic" ? (isBasicKeywordToken(raw, key) || Boolean(starHelpKey)) : language === "script" ? (SCRIPT_COMMANDS.has(key) || (offset === (line.match(/^\s*/)?.[0].length || 0) && raw.startsWith("*"))) : false;
         if (isNumber) tokens.push(token("number", raw, lineStart + offset));
         else if (isKeyword) tokens.push(token("keyword", raw, lineStart + offset, starHelpKey || key));
