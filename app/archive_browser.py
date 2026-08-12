@@ -5,8 +5,10 @@ import gzip
 import io
 import lzma
 import posixpath
+import stat
 import tarfile
 import zipfile
+from copy import copy
 
 from .content_kind import LISTING_SNIFF_LIMIT, analyse_content, is_uef_container, metadata_kind
 from .disk_service import DiskError
@@ -177,7 +179,7 @@ def list_archive(data: bytes, filename: str, directory: str = "") -> dict:
     entries = sorted(children.values(), key=lambda row: (row["type"] != "dir", row["name"].casefold()))
     return {
         "entries": entries,
-        "description": f"Read-only {kind.upper()} {'tape container' if kind == 'uef' else 'archive'} · {len(members):,} member(s)",
+        "description": f"{'Read-only ' if kind == 'uef' else ''}{kind.upper()} {'tape container' if kind == 'uef' else 'archive'} · {len(members):,} member(s)",
         "archiveKind": kind,
         "member": current,
     }
@@ -226,3 +228,92 @@ def read_archive_member_details(data: bytes, filename: str, member_name: str) ->
 
 def read_archive_member(data: bytes, filename: str, member_name: str) -> bytes:
     return read_archive_member_details(data, filename, member_name)[0]
+
+
+def archive_member_editable(data: bytes, filename: str) -> bool:
+    """Return whether a container can be rebuilt without changing its semantics."""
+    return _archive_kind(data, filename) in {"zip", "tar", "gzip", "bz2", "xz"}
+
+
+def _tar_write_mode(data: bytes, filename: str) -> str:
+    lowered = filename.casefold()
+    if data.startswith(b"\x1f\x8b") or lowered.endswith((".tar.gz", ".tgz")):
+        return "w:gz"
+    if data.startswith(b"BZh") or lowered.endswith((".tar.bz2", ".tbz", ".tbz2")):
+        return "w:bz2"
+    if data.startswith(b"\xfd7zXZ\x00") or lowered.endswith((".tar.xz", ".txz")):
+        return "w:xz"
+    return "w:"
+
+
+def replace_archive_member(data: bytes, filename: str, member_name: str, content: bytes) -> bytes:
+    """Rebuild a supported archive with one regular member replaced.
+
+    The caller performs the outer image transaction.  This function keeps ZIP
+    metadata and TAR member metadata where the standard libraries permit it,
+    and refuses UEF because reconstructing its tape timing is not byte-neutral.
+    """
+    wanted = _safe_name(member_name)
+    kind, members = _members(data, filename)
+    match = next((row for row in members if row["name"] == wanted and not row["dir"]), None)
+    if not match:
+        raise ArchiveError("That archive member no longer exists.")
+    if len(content) > MAX_MEMBER_BYTES:
+        raise ArchiveError("The replacement member exceeds the safe 128 MiB limit.")
+
+    output = io.BytesIO()
+    if kind == "zip":
+        with zipfile.ZipFile(io.BytesIO(data), "r") as source:
+            regular = [info for info in source.infolist() if not info.is_dir()]
+            if any(info.file_size > MAX_MEMBER_BYTES for info in regular):
+                raise ArchiveError("A ZIP member exceeds the safe 128 MiB rebuilding limit.")
+            if sum(info.file_size for info in regular) > MAX_ARCHIVE_BYTES:
+                raise ArchiveError("The expanded ZIP exceeds the safe 512 MiB rebuilding limit.")
+            with zipfile.ZipFile(output, "w", allowZip64=True) as destination:
+                destination.comment = source.comment
+                for info in source.infolist():
+                    if info.flag_bits & 0x1:
+                        raise ArchiveError("Password-protected ZIP members cannot be rebuilt safely.")
+                    if stat.S_ISLNK((info.external_attr >> 16) & 0xFFFF):
+                        raise ArchiveError("ZIP symbolic links cannot be rebuilt safely.")
+                    payload = content if info.filename == match["source"] else (b"" if info.is_dir() else source.read(info))
+                    destination.writestr(copy(info), payload)
+    elif kind == "tar":
+        with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as source:
+            regular = [info for info in source.getmembers() if info.isfile()]
+            if any(info.size > MAX_MEMBER_BYTES for info in regular):
+                raise ArchiveError("A TAR member exceeds the safe 128 MiB rebuilding limit.")
+            if sum(info.size for info in regular) > MAX_ARCHIVE_BYTES:
+                raise ArchiveError("The expanded TAR exceeds the safe 512 MiB rebuilding limit.")
+            with tarfile.open(fileobj=output, mode=_tar_write_mode(data, filename)) as destination:
+                for info in source.getmembers():
+                    cloned = copy(info)
+                    if info.isfile():
+                        if info.name == match["source"]:
+                            payload = content
+                        else:
+                            extracted = source.extractfile(info)
+                            if extracted is None:
+                                raise ArchiveError(f"TAR member {info.name} could not be read while rebuilding.")
+                            payload = extracted.read(MAX_MEMBER_BYTES + 1)
+                            if len(payload) > MAX_MEMBER_BYTES:
+                                raise ArchiveError(f"TAR member {info.name} exceeds the safe rebuilding limit.")
+                        cloned.size = len(payload)
+                        destination.addfile(cloned, io.BytesIO(payload))
+                    else:
+                        destination.addfile(cloned)
+    elif kind == "gzip":
+        with gzip.GzipFile(fileobj=output, mode="wb", filename="", mtime=0) as compressed:
+            compressed.write(content)
+    elif kind == "bz2":
+        output.write(bz2.compress(content))
+    elif kind == "xz":
+        output.write(lzma.compress(content))
+    else:
+        raise ArchiveError(
+            "UEF members remain read-only because rebuilding a tape stream can alter timing and loader behaviour."
+        )
+    rebuilt = output.getvalue()
+    if len(rebuilt) > MAX_ARCHIVE_BYTES:
+        raise ArchiveError("The rebuilt archive exceeds the safe 512 MiB limit.")
+    return rebuilt

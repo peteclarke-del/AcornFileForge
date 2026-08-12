@@ -123,27 +123,43 @@ def inspect_file(service, session, path: str, slot: int | None, side: int | None
 def dependency_report(service, session, path: str, slot: int | None, side: int | None) -> dict:
     inspected = inspect_file(service, session, path, slot, side)
     parent = path.rsplit(".", 1)[0] if "." in path else "$"
-    listing = service.list_directory(session, parent, slot, side)
-    available = {str(row.get("name") or "").casefold(): row for row in listing["entries"]}
+    catalogue = [
+        (candidate_path, row)
+        for candidate_path, row in _walk(service, session, slot, side)
+        if row.get("type") not in {"dir", "directory"}
+    ]
+    by_path = {candidate_path.casefold(): (candidate_path, row) for candidate_path, row in catalogue}
+    by_leaf: dict[str, list[tuple[str, dict]]] = defaultdict(list)
+    for candidate_path, row in catalogue:
+        by_leaf[str(row.get("name") or candidate_path.rsplit(".", 1)[-1]).casefold()].append((candidate_path, row))
     dependencies = []
     for command in inspected["commands"]:
-        target = command["target"].strip().split(".")[-1]
-        found = available.get(target.casefold())
+        original_target = command["target"].strip()
+        target = original_target.split(".")[-1]
+        rooted = original_target.startswith("$")
+        relative_path = original_target if rooted else _join(parent, original_target)
+        exact = by_path.get(relative_path.casefold())
+        leaf_candidates = by_leaf.get(target.casefold(), [])
+        found = exact or (leaf_candidates[0] if len(leaf_candidates) == 1 else None)
         dependencies.append({
             **command,
             "resolved": bool(found),
-            "path": _join(parent, str(found["name"])) if found else None,
-            "rootRelative": command["target"].startswith("$"),
+            "path": found[0] if found else None,
+            "rootRelative": rooted,
+            "ambiguous": not exact and len(leaf_candidates) > 1,
+            "candidates": [candidate[0] for candidate in leaf_candidates[:20]],
         })
-    unsafe = [item for item in dependencies if not item["resolved"] or item["rootRelative"]]
+    unsafe = [item for item in dependencies if not item["resolved"] or item["rootRelative"] or item["ambiguous"]]
     return {
         "launcher": path,
         "dependencies": dependencies,
         "safeForSubdirectory": not unsafe,
         "warnings": [
-            f"{item['action']} {item['target']} is {'root-relative' if item['rootRelative'] else 'not present beside the launcher'}"
+            f"{item['action']} {item['target']} is "
+            + ("root-relative" if item["rootRelative"] else "ambiguous" if item["ambiguous"] else "not present in the image")
             for item in unsafe
         ],
+        "filesIndexed": len(catalogue),
     }
 
 

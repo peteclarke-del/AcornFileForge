@@ -20,8 +20,9 @@ from .rom import inspect_bank, parse_risc_os_extension_header, parse_sideways_he
 
 try:
     from capstone import (
-        Cs, CS_ARCH_ARM, CS_ARCH_M68K, CS_MODE_ARM, CS_MODE_BIG_ENDIAN,
-        CS_MODE_LITTLE_ENDIAN, CS_MODE_M68K_000,
+        Cs, CS_ARCH_ARM, CS_ARCH_M68K, CS_ARCH_MOS65XX, CS_MODE_ARM,
+        CS_MODE_BIG_ENDIAN, CS_MODE_LITTLE_ENDIAN, CS_MODE_M68K_000,
+        CS_MODE_MOS65XX_65C02, CS_MODE_MOS65XX_65816_LONG_MX,
     )
 except ImportError:  # Host-side lightweight tests may not install production dependencies.
     Cs = None
@@ -579,9 +580,9 @@ def _with_control_flow(report: dict, entry_points: list[int]) -> dict:
         target = row.get("target")
         size = max(1, len(str(row.get("bytes") or "").split()))
         fallthrough = address + size
-        if isinstance(target, int) and (mnemonic.startswith("B") or mnemonic in {"JSR", "JMP", "BL", "BLX", "BSR", "BRA"}):
+        if isinstance(target, int) and (mnemonic.startswith("B") or mnemonic in {"JSR", "JSL", "JMP", "JML", "BL", "BLX", "BSR", "BRA", "BRL"}):
             pending.append(target)
-        if mnemonic not in {"JMP", "BRA", "RTS", "RTI", "BRK", "RTE"} and not mnemonic.startswith("B."):
+        if mnemonic not in {"JMP", "JML", "BRA", "BRL", "RTS", "RTL", "RTI", "BRK", "RTE"} and not mnemonic.startswith("B."):
             pending.append(fallthrough)
     for row in rows:
         row["reachable"] = int(row["address"]) in reachable
@@ -598,8 +599,8 @@ def _with_control_flow(report: dict, entry_points: list[int]) -> dict:
 def _annotate_generic_control_flow(report: dict) -> dict:
     rows = report["rows"]
     by_address = {int(row["address"]): row for row in rows}
-    call_names = {"BL", "BLX", "BSR", "JSR"}
-    jump_names = {"B", "BRA", "JMP"}
+    call_names = {"BL", "BLX", "BSR", "JSR", "JSL"}
+    jump_names = {"B", "BRA", "BRL", "JMP", "JML"}
     for row in rows:
         target = row.get("target")
         mnemonic = str(row.get("mnemonic") or "").upper()
@@ -629,7 +630,7 @@ def _annotate_generic_control_flow(report: dict) -> dict:
             row["comment"] = f"Continue execution at {operand}"
         elif mnemonic.startswith("B") and isinstance(target, int):
             row["comment"] = f"Conditional branch to {operand}"
-        elif mnemonic in {"RTS", "RTE"} or (mnemonic == "BX" and operand.upper() == "LR"):
+        elif mnemonic in {"RTS", "RTL", "RTI", "RTE"} or (mnemonic == "BX" and operand.upper() == "LR"):
             row["comment"] = "Return from subroutine"
     return report
 
@@ -648,12 +649,22 @@ def disassemble_capstone(data: bytes, *, architecture: str, origin: int = 0,
         engine = Cs(CS_ARCH_ARM, CS_MODE_ARM | CS_MODE_LITTLE_ENDIAN)
     elif architecture == "m68k":
         engine = Cs(CS_ARCH_M68K, CS_MODE_M68K_000 | CS_MODE_BIG_ENDIAN)
+    elif architecture == "65c02":
+        engine = Cs(CS_ARCH_MOS65XX, CS_MODE_MOS65XX_65C02)
+    elif architecture == "65816":
+        # Static bytes do not reveal the processor's runtime M/X flags. Start
+        # with both accumulator and index registers in their 16-bit form; the
+        # explicit profile is more honest than guessing from operand lengths.
+        engine = Cs(CS_ARCH_MOS65XX, CS_MODE_MOS65XX_65816_LONG_MX)
     else:
-        raise RomWorkbenchError("Choose 6502, ARM or 68000 disassembly.")
+        raise RomWorkbenchError("Choose 6502, 65C02, 65816, ARM or 68000 disassembly.")
     engine.skipdata = True
     rows = []
     labels = _symbol_labels(symbols)
-    branch_names = {"b", "bl", "blx", "bx", "bra", "bsr", "jmp", "jsr"}
+    branch_names = {
+        "b", "bl", "blx", "bx", "bra", "brl", "bsr", "jmp", "jml",
+        "jsr", "jsl", "bcc", "bcs", "beq", "bmi", "bne", "bpl", "bvc", "bvs",
+    }
     for instruction in engine.disasm(data[start:end], origin + start):
         mnemonic = instruction.mnemonic.upper()
         operand = instruction.op_str
@@ -661,7 +672,7 @@ def disassemble_capstone(data: bytes, *, architecture: str, origin: int = 0,
         if instruction.mnemonic.lower() in branch_names:
             token = operand.split(",", 1)[0].strip().lstrip("#")
             try:
-                target = int(token, 0)
+                target = int(token[1:], 16) if token.startswith("$") else int(token, 0)
             except ValueError:
                 target = None
         rows.append({"offset": instruction.address - origin, "address": instruction.address,

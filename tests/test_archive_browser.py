@@ -6,7 +6,13 @@ import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
-from app.archive_browser import ArchiveError, list_archive, read_archive_member
+from app.archive_browser import (
+    ArchiveError,
+    archive_member_editable,
+    list_archive,
+    read_archive_member,
+    replace_archive_member,
+)
 from tests.uef_fixture import minimal_uef
 
 try:
@@ -48,6 +54,29 @@ class ArchiveBrowserTests(unittest.TestCase):
         listing = list_archive(compressed, "HELLO.bas.gz")
         self.assertEqual(listing["entries"][0]["name"], "HELLO.bas")
         self.assertEqual(read_archive_member(compressed, "HELLO.bas.gz", "HELLO.bas"), b"10 PRINT \"HELLO\"\r")
+
+    def test_editable_archives_are_rebuilt_with_only_the_selected_member_changed(self):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.comment = b"kept"
+            archive.writestr("Docs/README", b"Old")
+            archive.writestr("Docs/OTHER", b"Untouched")
+        rebuilt = replace_archive_member(stream.getvalue(), "docs.zip", "Docs/README", b"New text")
+        self.assertTrue(archive_member_editable(rebuilt, "docs.zip"))
+        with zipfile.ZipFile(io.BytesIO(rebuilt)) as archive:
+            self.assertEqual(archive.comment, b"kept")
+            self.assertEqual(archive.read("Docs/README"), b"New text")
+            self.assertEqual(archive.read("Docs/OTHER"), b"Untouched")
+
+        compressed = gzip.compress(b"Before")
+        rebuilt = replace_archive_member(compressed, "README.gz", "README", b"After")
+        self.assertEqual(gzip.decompress(rebuilt), b"After")
+
+    def test_uef_member_replacement_is_refused_without_rebuilding_tape_timing(self):
+        data = minimal_uef()
+        self.assertFalse(archive_member_editable(data, "tape.uef"))
+        with self.assertRaisesRegex(ArchiveError, "UEF members remain read-only"):
+            replace_archive_member(data, "tape.uef", "THRUST", b"replacement")
 
     def test_unsafe_parent_members_are_rejected(self):
         stream = io.BytesIO()
@@ -125,7 +154,8 @@ class ArchiveBrowserTests(unittest.TestCase):
             "/api/images/test/archive/inspect?path=$.games.zip&name=games.zip&member=Games/!BOOT"
         ).get_json()
         self.assertEqual(inspected["view"], "script")
-        self.assertTrue(inspected["readOnly"])
+        self.assertFalse(inspected["readOnly"])
+        self.assertTrue(inspected["archiveEditable"])
         self.assertIn("PAGE=&E00", inspected["text"])
         disassembly = client.get(
             "/api/images/test/archive/disassembly?path=$.games.zip&name=games.zip"
