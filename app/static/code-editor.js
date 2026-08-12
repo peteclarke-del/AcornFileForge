@@ -9,6 +9,12 @@ window.AcornCodeEditor = (() => {
   });
 
   const BASIC_HELP = {
+    AND: help("Combines two integer values bit by bit using logical AND.", "expression AND expression", "Operands are converted to BBC BASIC integers before the bitwise operation."),
+    DIV: help("Returns the integer quotient after division, discarding any remainder.", "integer DIV integer", "The divisor must not be zero."),
+    EOR: help("Combines two integer values bit by bit using exclusive OR.", "expression EOR expression", "Operands are converted to BBC BASIC integers before the bitwise operation."),
+    MOD: help("Returns the integer remainder after division.", "integer MOD integer", "The divisor must not be zero."),
+    OR: help("Combines two integer values bit by bit using logical OR.", "expression OR expression", "Inside IF conditions, zero is false and a non-zero result is true."),
+    NOT: help("Inverts every bit of an integer value.", "NOT expression", "The expression is converted to a BBC BASIC integer before inversion."),
     CHAIN: help("Loads and starts a tokenised BASIC program, replacing the current program.", 'CHAIN "filename"', "The target must be a tokenised BASIC program visible through the current filing system.", "Use *EXEC for an unnumbered command script such as a conventional !BOOT file."),
     CALL: help("Transfers control to machine code and returns when that code executes RTS.", "CALL address[,parameter…]", "The address must contain code for the current processor and machine environment.", "Incorrect addresses, PAGE or processor assumptions can crash the machine."),
     OSCLI: help("Passes a string to the current filing system or operating system command interpreter.", "OSCLI command$", "The command and filing system must be available on the target machine.", "DFS abbreviations such as R. and L. can be ambiguous after moving software to ADFS."),
@@ -272,7 +278,10 @@ window.AcornCodeEditor = (() => {
           continue;
         }
         const remainder = line.slice(offset);
-        const word = remainder.match(/^(?:\*?[A-Za-z][A-Za-z0-9_$%]*|&[0-9A-Fa-f]+|\d+(?:\.\d+)?)/);
+        const basicLexeme = language === "basic" && !inlineAssembler && /^[A-Za-z]/.test(remainder)
+          ? BASIC_LANGUAGE?.lexemeAt(remainder)
+          : "";
+        const word = basicLexeme ? [basicLexeme] : remainder.match(/^(?:\*?[A-Za-z][A-Za-z0-9_$%]*|&[0-9A-Fa-f]+|\d+(?:\.\d+)?)/);
         if (!word) {
           if (inlineAssembler && line[offset] === ":") assemblerStatementStart = true;
           offset += 1;

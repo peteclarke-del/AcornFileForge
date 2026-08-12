@@ -48,6 +48,23 @@
       .find(candidate => upper.startsWith(candidate) && compactKeywordBoundary(source[candidate.length])) || "";
   }
 
+  function lexemeAt(value) {
+    const source = String(value || "");
+    const identifier = source.match(identifierPattern)?.[0] || "";
+    if (!identifier) return "";
+    const upper = normaliseKeyword(identifier);
+    if (KEYWORDS.has(upper)) return identifier;
+    const suffix = /[$%]$/.test(identifier) ? identifier.at(-1) : "";
+    const base = suffix ? upper.slice(0, -1) : upper;
+    // PAGE%, PRINT% and similar names are variables, not compact spellings of
+    // the corresponding command. PROCname and FNname are likewise indivisible
+    // user symbols. Other joined forms follow BBC BASIC's token grammar, so
+    // MODE6, IFI, LENA$ and T%DIV256 expose their leading keyword first.
+    if ((suffix && KEYWORDS.has(base)) || /^(?:PROC|FN).+/i.test(identifier)) return identifier;
+    const prefix = keywordPrefix(identifier, KEYWORDS);
+    return prefix ? identifier.slice(0, prefix.length) : identifier;
+  }
+
   function scanLine(line, lineOffset = 0, state = {}) {
     const tokens = [];
     let offset = 0;
@@ -93,7 +110,7 @@
         offset += numeric.length;
         continue;
       }
-      const identifier = line.slice(offset).match(identifierPattern)?.[0];
+      const identifier = lexemeAt(line.slice(offset));
       if (identifier) {
         const keyword = !inlineAssembler && isKeywordToken(identifier);
         const type = keyword ? "keyword" : "identifier";
@@ -187,6 +204,7 @@
     isKeywordToken,
     isTypedIdentifier,
     keywordPrefix,
+    lexemeAt,
     maskStringsAndComments,
     scan,
     scanLine,
