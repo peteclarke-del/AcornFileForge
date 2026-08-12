@@ -525,6 +525,11 @@ dialog.editor-window-maximised .editor-resize-handle { display: none; }
 .code-highlight-layer, .code-hit-layer { position: absolute; inset: 0 0 0 28px; overflow: hidden; scrollbar-width: none; }
 .code-highlight-layer { z-index: 1; pointer-events: none; }
 .code-hit-layer { z-index: 3; pointer-events: none; }
+.code-structure-guides { position: absolute; z-index: 0; inset: 0 0 0 28px; box-sizing: border-box; overflow: hidden; padding-top: 9px; pointer-events: none; }
+.code-structure-guides[hidden] { display: none; }
+.code-structure-guides > span { position: relative; display: block; min-width: 100%; height: 17.05px; }
+.code-structure-guides > span.active { background: color-mix(in srgb, var(--teal) 7%, transparent); }
+.code-structure-guides i { position: absolute; top: 0; bottom: 0; left: calc(54px + var(--guide-index) * var(--structure-guide-step)); border-left: 1px solid color-mix(in srgb, var(--teal) 27%, transparent); }
 .code-highlight-layer pre, .code-hit-layer pre { width: max-content; min-width: 100%; min-height: 100%; margin: 0; padding: 9px 10px; white-space: pre; color: var(--hex-text); font: 11px/1.55 DM Mono, monospace; tab-size: 4; }
 .code-hit-layer pre, .code-hit-layer .code-token { color: transparent !important; }
 .code-hit-layer .code-help-token { pointer-events: auto; cursor: help; }
@@ -536,7 +541,7 @@ dialog.editor-window-maximised .editor-resize-handle { display: none; }
 .code-fold-toggle:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 1px; }
 .code-fold-view { position: absolute; z-index: 5; inset: 0; overflow: auto; background: var(--hex-background); color: var(--hex-text); font: 11px/1.55 DM Mono, monospace; }
 .code-fold-view[hidden] { display: none; }
-.code-editor-folded .code-fold-gutter, .code-editor-folded .code-highlight-layer, .code-editor-folded .code-hit-layer, .code-editor-folded .source-content { visibility: hidden; }
+.code-editor-folded .code-fold-gutter, .code-editor-folded .code-structure-guides, .code-editor-folded .code-highlight-layer, .code-editor-folded .code-hit-layer, .code-editor-folded .source-content { visibility: hidden; }
 .code-fold-row { display: grid; grid-template-columns: 28px minmax(max-content, 1fr) auto; min-height: 17.05px; }
 .code-fold-row:hover { background: color-mix(in srgb, var(--teal) 9%, transparent); }
 .code-fold-row-gutter { position: sticky; left: 0; display: grid; place-items: center; border-right: 1px solid var(--line); background: var(--surface); }

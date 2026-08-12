@@ -490,6 +490,12 @@ diagnostics. Standard MOS, DFS and ADFS star commands have specific help;
 commands supplied by other sideways ROMs remain valid hover targets with an
 explicit ROM-dependent description rather than being mistaken for BASIC.
 
+Help also interprets useful constant operands in context. `*FX200 0` and
+`OSCLI"FX 200 0"` identify OSBYTE reason 200, common VDU reason bytes are named,
+and constant MODE and COLOUR values explain what the call selects. Dynamic
+expressions retain general command help because guessing their run-time value
+would be misleading.
+
 The Edit menu can find every code reference to the symbol at the caret and can
 rename that symbol as one undoable change. Strings and comments are excluded,
 so changing a variable, procedure or function name does not rewrite user-facing
@@ -605,14 +611,15 @@ rewritten to produce the outline. Double-click a visible outline line to expand
 everything and place the caret on that line before editing. Files open with all
 blocks expanded.
 
-**View → Visual auto-indent** can display BASIC block structure using tabs or
-2, 4, or 8 spaces. This is deliberately a display option. It does not alter the
-textarea, dirty state, tokenised program or bytes saved to the image. While it
-is active the button changes to **Show original indentation**. Double-clicking a
-visible line also returns to the exact source layout and places the caret there.
+**View → Structure guidance** draws live 2, 4, or 8-character guide steps beside
+the editable BASIC source and highlights the innermost procedure, function,
+loop or structured conditional containing the caret. This is deliberately a
+display option. It does not insert indentation, replace the textarea, set the
+dirty state or alter tokenised bytes. The guidance updates as the caret and
+source move, so normal browser editing, selection and undo remain available.
 Procedures and multi-line functions are treated consistently: code after
-`DEFPROCname` or a multi-line `DEFFNname` is indented until `ENDPROC` or the
-function's leading `=` return. The scanner understands the compact spelling
+`DEFPROCname` or a multi-line `DEFFNname` receives another guide level until
+`ENDPROC` or the function's leading `=` return. The scanner understands the compact spelling
 produced by tokenised listings, including `FORI%=...`, and closers later on a
 physical line, including `]:NEXT`, `NEXT:ENDPROC` and
 `CALL address:ENDPROC`. Compact closers such as `NEXTc%` and
@@ -655,13 +662,11 @@ branches assign the same unambiguous variable, for example
 `IF condition path$="one" ELSE path$="two"`. Cases whose statement boundary
 cannot be proved remain unchanged for manual review.
 
-When Visual auto-indent is active, lines created by Refactor inherit any real
-surrounding structured block, such as a procedure, loop, multi-line `IF`, `CASE`
-or `WHILE`. A classic `IF condition THEN line` does not create a block: following
-physical lines reached by branching or fall-through therefore remain at their
-normal indentation. The proposal and accepted result both retain the active
-visual indentation. Presentation remains view-only and no tabs or spaces are
-written into the tokenised program.
+Structure guidance classifies lines created by Refactor immediately using the
+same block scanner as folding. A classic `IF condition THEN line` does not open
+a multi-line block, so later physical lines reached by branching or fall-through
+are not shown inside it. Presentation remains view-only and no tabs or spaces
+are written into the tokenised program.
 
 **Tools → Condense selection or program** performs the inverse operation. It
 packs adjacent statements onto the fewest safe physical lines with `:`, while

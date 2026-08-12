@@ -180,6 +180,63 @@ window.AcornCodeEditor = (() => {
     return null;
   };
 
+  const FX_REASON_HELP = Object.freeze({
+    4: "controls cursor-key editing behaviour",
+    5: "selects the printer destination",
+    6: "selects the character ignored by the printer driver",
+    11: "sets keyboard auto-repeat delay",
+    12: "sets keyboard auto-repeat rate",
+    15: "flushes the selected input buffer",
+    21: "flushes the selected buffer; with no extra parameter this normally clears the keyboard buffer",
+    200: "controls Escape, Break and memory-clear behaviour on common BBC MOS versions",
+  });
+  const VDU_REASON_HELP = Object.freeze({
+    2: "enable printer output", 3: "disable printer output", 4: "select the text cursor",
+    5: "select the graphics cursor", 6: "enable VDU output", 7: "sound the bell",
+    12: "clear the text area", 13: "return the cursor to the start of its line",
+    14: "enable paged scrolling", 15: "disable paged scrolling", 16: "clear the graphics area",
+    17: "select a logical text colour", 19: "define a logical colour", 22: "select a screen mode",
+    23: "send a VDU-variable, cursor-control or character-definition sequence",
+    24: "define the graphics viewport", 25: "perform a graphics plot operation",
+    26: "restore the default text and graphics windows", 28: "define the text window",
+    29: "set the graphics origin", 30: "move the text cursor home", 31: "move the text cursor",
+  });
+
+  function sourceContextHelp(source, language, start, end, key) {
+    const base = lookup(language, key);
+    if (!base || !["basic", "script"].includes(language)) return base;
+    const lineStart = source.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
+    const lineEnd = source.indexOf("\n", end);
+    const line = source.slice(lineStart, lineEnd < 0 ? source.length : lineEnd);
+    const relativeEnd = end - lineStart;
+    const tail = line.slice(relativeEnd);
+    const normal = normaliseHelpKey(key);
+    const additions = [];
+    if ((isStarHelpKey(key) && normal === "FX") || normal === "OSCLI") {
+      const fxText = normal === "OSCLI"
+        ? tail.match(/^\s*"\s*FX\s*([0-9]+)/i)?.[1]
+        : tail.match(/^\s*([0-9]+)/)?.[1];
+      const reason = fxText == null ? null : Number(fxText);
+      if (reason != null) additions.push(`This call uses OSBYTE reason ${reason}, which ${FX_REASON_HELP[reason] || "has a target-dependent purpose"}.`);
+    }
+    if (normal === "VDU") {
+      const reason = Number(tail.match(/^\s*([0-9]+)/)?.[1]);
+      if (Number.isFinite(reason)) additions.push(`The first VDU byte is ${reason}: ${VDU_REASON_HELP[reason] || "interpret it using the target machine's VDU protocol"}.`);
+    }
+    if (normal === "MODE") {
+      const mode = Number(tail.match(/^\s*([0-9]+)/)?.[1]);
+      if (Number.isFinite(mode)) additions.push(`This selects MODE ${mode}; confirm its resolution, colour depth and memory use against the active hardware profile.`);
+    }
+    if (normal === "COLOUR") {
+      const colour = Number(tail.match(/^\s*([0-9]+)/)?.[1]);
+      if (Number.isFinite(colour)) additions.push(colour >= 128
+        ? `Value ${colour} selects logical background colour ${colour - 128} on classic BBC VDU drivers.`
+        : `Value ${colour} selects logical foreground colour ${colour} on classic BBC VDU drivers.`);
+    }
+    if (!additions.length) return base;
+    return { ...base, notes: [base.notes, ...additions].filter(Boolean).join(" ") };
+  }
+
   function disassemblyInstructionHelp(row, architecture) {
     const mnemonic = normaliseHelpKey(row?.mnemonic || "DATA") || "DATA";
     const operand = String(row?.operand || "").trim();
@@ -645,42 +702,6 @@ window.AcornCodeEditor = (() => {
     return blocks.sort((left, right) => left.startLine - right.startLine || right.endLine - left.endLine);
   }
 
-  function visuallyIndentBasic(text, style = "spaces", size = 4) {
-    const unit = style === "tabs" ? "\t" : " ".repeat([2, 4, 8].includes(Number(size)) ? Number(size) : 4);
-    const stack = [];
-    const close = type => {
-      const index = stack.findLastIndex(item => item.type === type);
-      if (index >= 0) stack.splice(index);
-    };
-    return basicStructureRows(text).map(row => {
-      const numbered = row.line.match(/^(\s*\d+\s+)(.*)$/);
-      const prefix = numbered?.[1] || "";
-      const body = (numbered?.[2] ?? row.line).trimStart();
-      if (!body) return prefix.trimEnd();
-      let forcedDepth = null;
-      const consumed = new Set();
-      row.events.forEach((event, index) => {
-        if (!event.leading || !["close", "branch"].includes(event.kind)) return;
-        consumed.add(index);
-        if (event.kind === "close") close(event.type);
-        else {
-          const branchIndex = stack.findLastIndex(item => item.type === event.type);
-          if (branchIndex >= 0) {
-            stack.splice(branchIndex + 1);
-            forcedDepth = event.type === "if" ? branchIndex : branchIndex + 1;
-          }
-        }
-      });
-      const rendered = `${prefix}${unit.repeat(forcedDepth ?? stack.length)}${body}`;
-      row.events.forEach((event, index) => {
-        if (consumed.has(index) || event.kind === "branch") return;
-        if (event.kind === "open") stack.push({ type: event.type, label: event.label });
-        else if (event.kind === "close") close(event.type);
-      });
-      return rendered;
-    });
-  }
-
   function basicStatements(body) {
     const normal = String(body)
       .replace(/^IF(?![$%])(?=\S)/i, "$& ")
@@ -1074,6 +1095,9 @@ window.AcornCodeEditor = (() => {
     hit.className = "code-hit-layer";
     hit.setAttribute("aria-hidden", "true");
     hit.innerHTML = "<pre></pre>";
+    const guides = document.createElement("div");
+    guides.className = "code-structure-guides";
+    guides.setAttribute("aria-hidden", "true");
     const gutter = document.createElement("div");
     gutter.className = "code-fold-gutter";
     gutter.setAttribute("aria-label", "Code folding controls");
@@ -1082,14 +1106,14 @@ window.AcornCodeEditor = (() => {
     foldView.hidden = true;
     foldView.setAttribute("aria-label", "Collapsed code outline. Double-click a visible line to expand all blocks and edit it.");
     textarea.before(surface);
-    surface.append(gutter, visual, textarea, hit, foldView);
+    surface.append(gutter, guides, visual, textarea, hit, foldView);
     const drawer = document.createElement("section");
     drawer.className = "code-intelligence-drawer";
     drawer.hidden = true;
     root.insertBefore(drawer, root.querySelector(".editor-status"));
     let state = { tokens: [], issues: [], symbols: [], blocks: [] };
     const collapsedBlocks = new Set();
-    let visualIndent = null;
+    let structureGuides = language === "basic" ? { size: 4 } : null;
     let refactorPlan = null;
     let timer = null;
     const refactorUndo = [];
@@ -1105,7 +1129,7 @@ window.AcornCodeEditor = (() => {
     };
 
     const syncScroll = () => {
-      for (const layer of [visual, hit, gutter]) {
+      for (const layer of [visual, hit, gutter, guides]) {
         layer.scrollTop = textarea.scrollTop;
         layer.scrollLeft = textarea.scrollLeft;
       }
@@ -1124,9 +1148,7 @@ window.AcornCodeEditor = (() => {
     const renderFolds = () => {
       dismissHoverHelp(textarea.ownerDocument);
       if (refactorPlan) {
-        const rendered = visualIndent
-          ? visuallyIndentBasic(refactorPlan.preview.join("\n"), visualIndent.style, visualIndent.size)
-          : refactorPlan.preview;
+        const rendered = refactorPlan.preview;
         const renderedMarkup = highlightedSourceLines(rendered, language, inlineAssemblyLanguage);
         const original = refactorPlan.before || [];
         const originalMarkup = highlightedSourceLines(original, language, inlineAssemblyLanguage);
@@ -1155,14 +1177,14 @@ window.AcornCodeEditor = (() => {
         foldAll.disabled = !canFold;
         foldAll.querySelector("span").textContent = collapsedBlocks.size ? "Expand all blocks" : "Collapse all blocks";
       }
-      const autoIndent = root.querySelector('[data-editor-action="auto-indent-view"] span');
-      if (autoIndent) autoIndent.textContent = visualIndent ? "Show original indentation" : "Auto-indent view";
+      const guideToggle = root.querySelector('[data-editor-action="structure-guides"] span');
+      if (guideToggle) guideToggle.textContent = structureGuides ? "Hide structure guides" : "Show structure guides";
       const lines = textarea.value.split("\n");
-      const displayLines = visualIndent ? visuallyIndentBasic(textarea.value, visualIndent.style, visualIndent.size) : lines;
+      const displayLines = lines;
       const displayMarkup = highlightedSourceLines(displayLines, language, inlineAssemblyLanguage);
       gutter.innerHTML = `<div>${lines.map((_line, index) => `<span>${blockStartingOn(index) ? foldButtonMarkup(blockStartingOn(index)) : ""}</span>`).join("")}</div>`;
       bindFoldButtons(gutter);
-      const outlined = collapsedBlocks.size > 0 || Boolean(visualIndent);
+      const outlined = collapsedBlocks.size > 0;
       surface.classList.toggle("code-editor-folded", outlined);
       foldView.hidden = !outlined;
       if (!outlined) return;
@@ -1199,21 +1221,49 @@ window.AcornCodeEditor = (() => {
       renderFolds();
     };
     const toggleAll = () => collapsedBlocks.size ? expandAll() : collapseAll();
-    const toggleAutoIndent = (style = "spaces", size = 4) => {
-      visualIndent = visualIndent ? null : { style: style === "tabs" ? "tabs" : "spaces", size: Number(size) };
+    const renderStructureGuides = () => {
+      if (!structureGuides || language !== "basic") {
+        guides.replaceChildren();
+        guides.hidden = true;
+        return;
+      }
+      guides.hidden = false;
+      const lines = textarea.value.split("\n");
+      const cursorLine = textarea.value.slice(0, textarea.selectionStart).split("\n").length - 1;
+      const active = state.blocks
+        .filter(block => cursorLine >= block.startLine && cursorLine <= block.endLine)
+        .sort((left, right) => (left.endLine - left.startLine) - (right.endLine - right.startLine))[0];
+      const size = [2, 4, 8].includes(Number(structureGuides.size)) ? Number(structureGuides.size) : 4;
+      const guideWidth = Math.max(textarea.scrollWidth, textarea.clientWidth);
+      guides.style.setProperty("--structure-guide-step", `${size}ch`);
+      guides.innerHTML = lines.map((_line, lineIndex) => {
+        const depth = state.blocks.filter(block => lineIndex > block.startLine && lineIndex <= block.endLine).length;
+        const activeLine = active && lineIndex >= active.startLine && lineIndex <= active.endLine;
+        const bars = Array.from({ length: depth }, (_unused, index) => `<i style="--guide-index:${index}"></i>`).join("");
+        return `<span class="${activeLine ? "active" : ""}" style="width:${guideWidth}px">${bars}</span>`;
+      }).join("");
+      guides.scrollTop = textarea.scrollTop;
+      guides.scrollLeft = textarea.scrollLeft;
+    };
+    const toggleStructureGuides = size => {
+      structureGuides = structureGuides ? null : { size: Number(size) };
+      renderStructureGuides();
       renderFolds();
+    };
+    const setStructureGuideSize = size => {
+      if (!structureGuides) structureGuides = { size: Number(size) };
+      else structureGuides.size = Number(size);
+      renderStructureGuides();
     };
     const showOriginalView = () => {
       refactorPlan = null;
       collapsedBlocks.clear();
-      visualIndent = null;
       renderFolds();
       textarea.focus();
     };
     const goTo = offset => {
-      if (collapsedBlocks.size || visualIndent) {
+      if (collapsedBlocks.size) {
         collapsedBlocks.clear();
-        visualIndent = null;
         renderFolds();
       }
       textarea.focus();
@@ -1261,7 +1311,7 @@ window.AcornCodeEditor = (() => {
       const lineStart = textarea.value.lastIndexOf("\n", Math.max(0, offset - 1)) + 1;
       const found = state.tokens.find(item => item.start <= offset && item.end >= offset && item.helpKey)
         || state.tokens.filter(item => item.start >= lineStart && item.end <= offset && item.helpKey).at(-1);
-      const item = found ? lookup(found.helpLanguage || language, found.helpKey) : null;
+      const item = found ? sourceContextHelp(textarea.value, found.helpLanguage || language, found.start, found.end, found.helpKey) : null;
       renderDrawer(item?.key || "Help at cursor", helpMarkup(item));
     };
     const showProblems = () => renderDrawer("Problems", state.issues.length ? `<div class="code-problem-list">${state.issues.map(item => `<button type="button" data-code-offset="${item.offset}"><b class="${esc(item.severity)}">${esc(item.severity)}</b><span>Line ${item.line}: ${esc(item.message)}</span></button>`).join("")}</div>` : '<p class="code-empty-message">No problems were found by the live checks.</p>');
@@ -1737,31 +1787,37 @@ window.AcornCodeEditor = (() => {
       visual.querySelector("pre").innerHTML = html;
       hit.querySelector("pre").innerHTML = html;
       hit.querySelectorAll(".code-help-token").forEach(element => {
-        attachTooltip(root, element.dataset.helpLanguage || language, element, element.dataset.helpKey);
+        const tokenLanguage = element.dataset.helpLanguage || language;
+        const tokenStart = Number(element.dataset.tokenStart);
+        const tokenEnd = Number(element.dataset.tokenEnd);
+        const contextualHelp = sourceContextHelp(textarea.value, tokenLanguage, tokenStart, tokenEnd, element.dataset.helpKey);
+        attachTooltip(root, tokenLanguage, element, element.dataset.helpKey, contextualHelp);
         element.addEventListener("pointerdown", event => {
           event.preventDefault();
           textarea.focus();
-          textarea.setSelectionRange(Number(element.dataset.tokenStart), Number(element.dataset.tokenEnd));
+          textarea.setSelectionRange(tokenStart, tokenEnd);
           textarea.dispatchEvent(new Event("click", { bubbles: true }));
         });
       });
       syncScroll();
       updateMenus();
+      renderStructureGuides();
       renderFolds();
     };
     const schedule = () => { clearTimeout(timer); timer = setTimeout(render, 80); };
     textarea.addEventListener("input", schedule);
     textarea.addEventListener("scroll", syncScroll, { passive: true });
-    textarea.addEventListener("selectionchange", updateMenus);
-    textarea.addEventListener("select", updateMenus);
-    textarea.addEventListener("click", updateMenus);
-    textarea.addEventListener("keyup", updateMenus);
+    const updateCursorContext = () => { updateMenus(); renderStructureGuides(); };
+    textarea.addEventListener("selectionchange", updateCursorContext);
+    textarea.addEventListener("select", updateCursorContext);
+    textarea.addEventListener("click", updateCursorContext);
+    textarea.addEventListener("keyup", updateCursorContext);
     textarea.addEventListener("keydown", event => {
       if (event.key === "F1") { event.preventDefault(); helpAtCursor(); }
       else if (event.key === " " && (event.ctrlKey || event.metaKey)) { event.preventDefault(); showCompletions(); }
     });
     render();
-    return { overview, helpAtCursor, showProblems, showSymbols, showCompletions, showCustom, findReferences, renameSymbol, showOutline, showHistory, compareWith, verifyRoundTrip, reference, goToLine, normaliseCommands, toggleComment, lineOperation, formatCode, condense, refactor, undo, redo, expandAll, collapseAll, toggleAll, toggleAutoIndent, showOriginalView, closeDrawer, refresh: render, recordHistory: historyEntry, state: () => state, history: () => pendingHistory };
+    return { overview, helpAtCursor, showProblems, showSymbols, showCompletions, showCustom, findReferences, renameSymbol, showOutline, showHistory, compareWith, verifyRoundTrip, reference, goToLine, normaliseCommands, toggleComment, lineOperation, formatCode, condense, refactor, undo, redo, expandAll, collapseAll, toggleAll, toggleStructureGuides, setStructureGuideSize, showOriginalView, closeDrawer, refresh: render, recordHistory: historyEntry, state: () => state, history: () => pendingHistory };
   }
 
   function enhanceDisassembly({ root, report }) {
@@ -1851,5 +1907,5 @@ window.AcornCodeEditor = (() => {
     return { overview, reference, showSymbols, showCustom: show, expandAll, collapseAll, toggleAll, helpAtCursor: overview, showProblems: () => show("Disassembly cautions", '<p class="code-empty-message">No writable source diagnostics apply. Treat unknown opcodes, unreachable regions and embedded data as cautions rather than automatic errors.</p>') };
   }
 
-  return { enhance, enhanceDisassembly, lookup };
+  return { enhance, enhanceDisassembly, lookup, contextHelp: sourceContextHelp };
 })();
