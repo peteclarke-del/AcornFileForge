@@ -479,6 +479,11 @@ the current line and press **F1**. The editor's **Help** menu also provides:
 - document symbols for BASIC line numbers, procedures, functions and important
   script targets.
 
+Explicit star commands have their own help identity. `LOAD "PROGRAM"` is BBC
+BASIC LOAD, while `*LOAD CODE 3000` is displayed as `*LOAD` and uses the MOS
+filing-system syntax. RUN, SAVE and other overlapping names are resolved the
+same way; command normalisation preserves the leading star.
+
 The Edit menu can find every code reference to the symbol at the caret and can
 rename that symbol as one undoable change. Strings and comments are excluded,
 so changing a variable, procedure or function name does not rewrite user-facing

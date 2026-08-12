@@ -138,11 +138,16 @@ window.AcornCodeEditor = (() => {
     [0xFFF7, "OSCLI"],
   ]);
 
+  const isStarHelpKey = value => /^\s*\*/.test(String(value || ""));
   const normaliseHelpKey = value => String(value || "").trim().replace(/^\*/, "").replace(/[^A-Za-z0-9$_.]/g, "").toUpperCase();
   const COMMAND_CASE = Object.freeze({ basic: "upper", script: "upper", "6502": "upper", arm: "lower", m68k: "upper" });
-  const dictionary = language => language === "basic" ? { ...BASIC_HELP, ...INLINE_ASSEMBLER_HELP, ...ASM_HELP, ...MOS_HELP } : language === "script" ? { ...BASIC_HELP, ...SCRIPT_HELP } : { ...INLINE_ASSEMBLER_HELP, ...ASM_HELP, ...MOS_HELP };
+  const dictionary = language => language === "basic" ? { ...BASIC_HELP, ...INLINE_ASSEMBLER_HELP, ...ASM_HELP, ...MOS_HELP } : language === "script" ? { ...SCRIPT_HELP, ...BASIC_HELP } : { ...INLINE_ASSEMBLER_HELP, ...ASM_HELP, ...MOS_HELP };
   const lookup = (language, key) => {
     const normal = normaliseHelpKey(key);
+    if (isStarHelpKey(key)) {
+      const starCommand = SCRIPT_HELP[normal];
+      return starCommand ? { key: `*${normal}`, ...starCommand } : null;
+    }
     const found = dictionary(language)[normal];
     if (found) return { key: normal, ...found };
     if (language === "basic" && BASIC_KEYWORDS.has(normal)) return { key: normal, ...help("BBC BASIC keyword.", normal, "Syntax and availability depend on the target BBC BASIC version.") };
@@ -288,9 +293,10 @@ window.AcornCodeEditor = (() => {
           offset += raw.length;
           continue;
         }
-        const isKeyword = language === "basic" ? BASIC_KEYWORDS.has(key) : language === "script" ? (SCRIPT_COMMANDS.has(key) || (offset === (line.match(/^\s*/)?.[0].length || 0) && raw.startsWith("*"))) : false;
+        const starHelpKey = raw.startsWith("*") && SCRIPT_HELP[key] ? `*${key}` : "";
+        const isKeyword = language === "basic" ? (BASIC_KEYWORDS.has(key) || Boolean(starHelpKey)) : language === "script" ? (SCRIPT_COMMANDS.has(key) || (offset === (line.match(/^\s*/)?.[0].length || 0) && raw.startsWith("*"))) : false;
         if (isNumber) tokens.push(token("number", raw, lineStart + offset));
-        else if (isKeyword) tokens.push(token("keyword", raw, lineStart + offset, key));
+        else if (isKeyword) tokens.push(token("keyword", raw, lineStart + offset, starHelpKey || key));
         else if (/^(?:PROC|FN)/i.test(raw)) tokens.push(token("symbol", raw, lineStart + offset, raw.match(/^(PROC|FN)/i)?.[1]));
         offset += raw.length;
       }
