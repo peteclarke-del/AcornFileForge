@@ -80,6 +80,19 @@ MOS_CALLS = {
     0xFFEE: "OSWRCH", 0xFFF1: "OSWORD", 0xFFF4: "OSBYTE", 0xFFF7: "OSCLI",
 }
 
+
+def _symbol_labels(symbols: dict | None) -> dict[int, str]:
+    """Accept decimal or conventional hexadecimal addresses from project files."""
+    labels = {}
+    for key, value in (symbols or {}).items():
+        try:
+            address = int(str(key).strip().replace("&", "0x", 1), 0)
+        except ValueError:
+            continue
+        labels[address] = str(value)
+    return labels
+
+
 MOS_PURPOSES = {
     0xFFB9: "Read a byte from sideways ROM",
     0xFFBC: "Send a byte through the VDU system",
@@ -505,7 +518,7 @@ def disassemble_6502(data: bytes, *, origin: int = 0x8000, start: int = 0,
         raise RomWorkbenchError("The disassembly start is outside this ROM bank.")
     requested = len(data) - start if length is None else max(1, int(length))
     end = min(len(data), start + requested, start + MAX_DISASSEMBLY_BYTES)
-    labels = {int(key): str(value) for key, value in (symbols or {}).items() if str(key).isdigit()}
+    labels = _symbol_labels(symbols)
     rows, offset = [], start
     while offset < end:
         value = data[offset]
@@ -623,6 +636,7 @@ def _annotate_generic_control_flow(report: dict) -> dict:
 
 def disassemble_capstone(data: bytes, *, architecture: str, origin: int = 0,
                          start: int = 0, length: int | None = None,
+                         symbols: dict | None = None,
                          entry_points: list[int] | None = None) -> dict:
     if Cs is None:
         raise RomWorkbenchError("The production disassembly engine is not installed.")
@@ -638,6 +652,7 @@ def disassemble_capstone(data: bytes, *, architecture: str, origin: int = 0,
         raise RomWorkbenchError("Choose 6502, ARM or 68000 disassembly.")
     engine.skipdata = True
     rows = []
+    labels = _symbol_labels(symbols)
     branch_names = {"b", "bl", "blx", "bx", "bra", "bsr", "jmp", "jsr"}
     for instruction in engine.disasm(data[start:end], origin + start):
         mnemonic = instruction.mnemonic.upper()
@@ -651,7 +666,8 @@ def disassemble_capstone(data: bytes, *, architecture: str, origin: int = 0,
                 target = None
         rows.append({"offset": instruction.address - origin, "address": instruction.address,
                      "bytes": instruction.bytes.hex(" ").upper(), "mnemonic": mnemonic,
-                     "operand": operand, "target": target, "label": "", "comment": ""})
+                     "operand": operand, "target": target,
+                     "label": labels.get(instruction.address, ""), "comment": ""})
     report = {"architecture": architecture, "origin": origin, "start": start,
               "end": end, "truncated": end < start + requested, "rows": rows}
     return _annotate_generic_control_flow(_with_control_flow(report, entry_points or []))
@@ -664,7 +680,7 @@ def disassemble(data: bytes, *, architecture: str, origin: int, start: int = 0,
         report = disassemble_6502(data, origin=origin, start=start, length=length, symbols=symbols)
         return _annotate_6502(_with_control_flow(report, entry_points or []), data)
     return disassemble_capstone(data, architecture=architecture, origin=origin, start=start,
-                                length=length, entry_points=entry_points)
+                                length=length, symbols=symbols, entry_points=entry_points)
 
 
 def bank_map(data: bytes, bank_size: int, erase_byte: int = 0xFF) -> dict:

@@ -8,11 +8,11 @@ from difflib import unified_diff
 from bisect import bisect_right
 from pathlib import Path
 
-from .archive_browser import is_uef_container
 from .checksum import sha256_path
 from .content_kind import (
     analyse_content,
     format_basic_listing as _format_basic_listing,
+    is_uef_container,
 )
 from .disk_service import DiskError, DiskService, ImageSession
 from .hex_service import MAX_HEX_READ, _decode_changes, _search_pattern
@@ -21,6 +21,8 @@ from .rom_workbench import RomWorkbenchError, disassemble
 
 MAX_EDITABLE_TEXT = 64 * 1024
 MAX_DISASSEMBLY_FILE = 1024 * 1024
+
+
 def _context(
     service: DiskService,
     session: ImageSession,
@@ -321,7 +323,7 @@ def disassemble_file(
     length: int | None = None,
 ) -> dict:
     data, metadata, size, digest = _context(service, session, path, slot, side, MAX_DISASSEMBLY_FILE)
-    project = service.editor_project(session, path, slot, side) if isinstance(service, DiskService) else {}
+    project = service.editor_project(session, path, slot, side)
     return disassemble_file_data(
         data, metadata, session, path, architecture, origin, start, length,
         size=size, digest=digest, project=project,
@@ -383,7 +385,9 @@ def disassemble_file_data(
     }
 
 
-def _project_data_rows(data: bytes, origin: int, start: int, end: int, kind: str, width: int) -> list[dict]:
+def _project_data_rows(
+    data: bytes, origin: int, start: int, end: int, kind: str, width: int, byteorder: str,
+) -> list[dict]:
     """Render an explicitly classified byte range as assembler data rows."""
     rows = []
     unit = 2 if kind in {"words", "addresses"} else 1
@@ -392,7 +396,10 @@ def _project_data_rows(data: bytes, origin: int, start: int, end: int, kind: str
         block = data[offset:min(end, offset + chunk)]
         address = origin + offset
         if kind in {"words", "addresses"}:
-            values = [int.from_bytes(block[index:index + 2], "little") for index in range(0, len(block) - 1, 2)]
+            values = [
+                int.from_bytes(block[index:index + 2], byteorder)
+                for index in range(0, len(block) - 1, 2)
+            ]
             mnemonic = "EQUW"
             operand = ", ".join(f"&{value:04X}" for value in values)
             if len(block) % 2:
@@ -410,9 +417,18 @@ def _project_data_rows(data: bytes, origin: int, start: int, end: int, kind: str
     return rows
 
 
+def _row_byte_length(row: dict) -> int:
+    """Return a decoded row's byte length without trusting optional fields."""
+    try:
+        return max(1, len(bytes.fromhex(str(row.get("bytes") or ""))))
+    except ValueError:
+        return 1
+
+
 def _apply_editor_project(report: dict, project: dict, data: bytes, origin: int, strings: list[dict]) -> None:
     """Apply user symbols, range classifications, bookmarks and notes to a report."""
     rows = list(report.get("rows") or [])
+    byteorder = "big" if report.get("architecture") == "m68k" else "little"
     report_start, report_end = int(report.get("start") or 0), int(report.get("end") or len(data))
     for region in project.get("regions") or []:
         start = max(report_start, int(region.get("start") or 0))
@@ -423,14 +439,14 @@ def _apply_editor_project(report: dict, project: dict, data: bytes, origin: int,
         if kind == "code":
             for row in rows:
                 row_start = int(row.get("offset") or 0)
-                row_end = row_start + max(1, len(bytes.fromhex(str(row.get("bytes") or ""))))
+                row_end = row_start + _row_byte_length(row)
                 if row_start < end and row_end > start:
                     row["regionKind"] = "code"
             continue
         rows = [
             row for row in rows
             if not (int(row.get("offset") or 0) < end and
-                    int(row.get("offset") or 0) + max(1, len(bytes.fromhex(str(row.get("bytes") or "")))) > start)
+                    int(row.get("offset") or 0) + _row_byte_length(row) > start)
         ]
         if kind == "text":
             for offset in range(start, end, 64):
@@ -448,7 +464,9 @@ def _apply_editor_project(report: dict, project: dict, data: bytes, origin: int,
                 strings.append({"offset": start, "address": origin + start, "text": preview,
                                 "length": len(whole), "source": "project"})
         else:
-            rows.extend(_project_data_rows(data, origin, start, end, kind, int(region.get("width") or 8)))
+            rows.extend(_project_data_rows(
+                data, origin, start, end, kind, int(region.get("width") or 8), byteorder,
+            ))
         first = next((row for row in rows if int(row.get("offset") or -1) == start), None)
         if first is not None and region.get("name"):
             first["label"] = re.sub(r"[^A-Za-z0-9_.]", "_", str(region["name"]))
@@ -457,7 +475,7 @@ def _apply_editor_project(report: dict, project: dict, data: bytes, origin: int,
     for bookmark in project.get("bookmarks") or []:
         offset = int(bookmark.get("offset") or 0)
         row = next((item for item in rows if int(item.get("offset") or 0) <= offset <
-                    int(item.get("offset") or 0) + max(1, len(bytes.fromhex(str(item.get("bytes") or ""))))), None)
+                    int(item.get("offset") or 0) + _row_byte_length(item)), None)
         if row is None:
             continue
         name = str(bookmark.get("name") or f"Offset {offset}")

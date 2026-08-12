@@ -51,8 +51,12 @@ class RomWorkbenchTests(unittest.TestCase):
     def test_arm_and_68000_disassembly_use_correct_byte_order(self):
         arm = disassemble_capstone(bytes.fromhex("0000A0E31EFF2FE1"), architecture="arm", length=8)
         self.assertEqual([row["mnemonic"] for row in arm["rows"]], ["MOV", "BX"])
-        m68k = disassemble_capstone(bytes.fromhex("4E714E75"), architecture="m68k", length=4)
+        m68k = disassemble_capstone(
+            bytes.fromhex("4E714E75"), architecture="m68k", length=4,
+            symbols={"0x0": "start_here"},
+        )
         self.assertEqual([row["mnemonic"] for row in m68k["rows"]], ["NOP", "RTS"])
+        self.assertEqual(m68k["rows"][0]["label"], "start_here")
 
     def test_comparison_and_patch_are_checksum_guarded(self):
         left, right = b"hello ROM", b"hello rom!"
