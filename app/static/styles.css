@@ -699,7 +699,8 @@ dialog.editor-window-maximised .editor-resize-handle { display: none; }
 .disassembly-controls select { min-width: 112px; }
 .disassembly-source { --disassembly-bytes-width: 18ch; --disassembly-instruction-width: 28ch; --disassembly-columns: 24px 8ch var(--disassembly-bytes-width) var(--disassembly-instruction-width) minmax(24ch,1fr); min-height: 190px; max-height: min(50vh, 560px); overflow: auto; padding: 0 0 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--hex-background); color: var(--hex-text); font: 11px/1.55 DM Mono, monospace; user-select: text; }
 .disassembly-source-head, .disassembly-source-line, .disassembly-label { display: grid; grid-template-columns: var(--disassembly-columns); gap: 8px; padding-inline: 9px; }
-.disassembly-source-head { position: sticky; z-index: 2; top: 0; padding-block: 5px; border-bottom: 1px solid var(--line); background: var(--hex-background); color: var(--muted); font-size: 8px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.disassembly-source-head { position: sticky; z-index: 2; top: 0; padding-block: 5px; border-bottom: 1px solid var(--line); background: var(--hex-background); color: var(--muted); font-size: 11px; font-weight: 700; }
+.disassembly-source-head > span { font-size: 8px; letter-spacing: .08em; text-transform: uppercase; }
 .disassembly-source-line { min-height: 19px; padding-block: 1px; outline: none; font-weight: 400; white-space: pre; }
 .disassembly-source-line[hidden] { display: none; }
 .disassembly-source-line:hover, .disassembly-source-line:focus, .disassembly-source-line.found { background: color-mix(in srgb, var(--teal) 16%, transparent); }
