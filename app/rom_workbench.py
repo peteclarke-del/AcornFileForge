@@ -80,6 +80,113 @@ MOS_CALLS = {
     0xFFEE: "OSWRCH", 0xFFF1: "OSWORD", 0xFFF4: "OSBYTE", 0xFFF7: "OSCLI",
 }
 
+MOS_PURPOSES = {
+    0xFFB9: "Read a byte from sideways ROM",
+    0xFFBC: "Send a byte through the VDU system",
+    0xFFBF: "Generate an event",
+    0xFFC2: "Start parsing the command-line string",
+    0xFFC5: "Read the next command-line item",
+    0xFFC8: "Read from the currently selected input stream",
+    0xFFCB: "Write to the currently selected output stream",
+    0xFFCE: "Open or close a file",
+    0xFFD1: "Transfer a block through the filing system",
+    0xFFD4: "Write one byte to an open file",
+    0xFFD7: "Read one byte from an open file",
+    0xFFDA: "Read or change filing-system information for an open file",
+    0xFFDD: "Perform a whole-file filing-system operation",
+    0xFFE0: "Read a character from the current input stream",
+    0xFFE3: "Write a character, expanding carriage return to a newline",
+    0xFFE7: "Write a newline",
+    0xFFEE: "Write a character or VDU control byte",
+    0xFFF1: "Perform an OSWORD parameter-block operation",
+    0xFFF4: "Perform an OSBYTE operation",
+    0xFFF7: "Execute a MOS command string",
+}
+
+OSBYTE_REASONS = {
+    0x00: "identify the operating-system version",
+    0x7C: "clear the Escape condition",
+    0x7D: "set the Escape condition",
+    0x7E: "acknowledge the Escape condition",
+    0x7F: "check for end of file",
+    0x80: "read ADC or buffer status",
+    0x81: "read a key with a time limit",
+    0x82: "read the machine's high-order address",
+    0x83: "read the bottom of user memory (OSHWM)",
+    0x84: "read the top of user memory",
+    0x86: "read the text cursor position",
+    0x87: "read the character at the text cursor",
+    0x8F: "issue a sideways-ROM service call",
+}
+
+OSWORD_REASONS = {
+    0x00: "read an edited line",
+    0x01: "read the system clock",
+    0x02: "write the system clock",
+    0x03: "read the interval timer",
+    0x04: "write the interval timer",
+    0x05: "read a byte from I/O memory",
+    0x06: "write a byte to I/O memory",
+    0x07: "perform a SOUND command",
+    0x08: "define an ENVELOPE",
+    0x09: "read a pixel colour",
+    0x0A: "read a character definition",
+}
+
+OSFILE_ACTIONS = {
+    0x00: "save a complete file", 0x01: "write catalogue information",
+    0x02: "write the load address", 0x03: "write the execution address",
+    0x04: "write file attributes", 0x05: "read catalogue information",
+    0x06: "delete a file", 0x07: "create a file", 0xFF: "load a complete file",
+}
+
+OSFIND_ACTIONS = {
+    0x00: "close a file", 0x40: "open a file for input",
+    0x80: "open a file for output", 0xC0: "open a file for update",
+}
+
+BRANCH_MEANINGS = {
+    "BPL": "Branch if the result is positive", "BMI": "Branch if the result is negative",
+    "BVC": "Branch if overflow is clear", "BVS": "Branch if overflow is set",
+    "BCC": "Branch if carry is clear", "BCS": "Branch if carry is set",
+    "BNE": "Branch if the comparison was not equal", "BEQ": "Branch if the comparison was equal",
+}
+
+HARDWARE_REGIONS = (
+    (0xFC00, 0xFCFF, "FRED expansion I/O"), (0xFD00, 0xFDFF, "JIM expansion I/O"),
+    (0xFE00, 0xFE07, "6845 display controller"), (0xFE08, 0xFE0F, "serial ACIA"),
+    (0xFE10, 0xFE17, "serial ULA"), (0xFE20, 0xFE2F, "video ULA"),
+    (0xFE30, 0xFE3F, "ROM and memory paging latch"), (0xFE40, 0xFE5F, "system VIA"),
+    (0xFE60, 0xFE7F, "user VIA"), (0xFE80, 0xFE9F, "filing-system hardware area"),
+    (0xFEA0, 0xFEBF, "Econet hardware area"), (0xFEC0, 0xFEDF, "analogue converter"),
+    (0xFEE0, 0xFEFF, "Tube interface"),
+)
+
+MOS_VECTORS = {
+    0x0200: "USERV", 0x0202: "BRKV", 0x0204: "IRQ1V", 0x0206: "IRQ2V",
+    0x0208: "CLIV", 0x020A: "BYTEV", 0x020C: "WORDV", 0x020E: "WRCHV",
+    0x0210: "RDCHV", 0x0212: "FILEV", 0x0214: "ARGSV", 0x0216: "BGETV",
+    0x0218: "BPUTV", 0x021A: "GBPBV", 0x021C: "FINDV", 0x021E: "FSCV",
+    0x0220: "EVNTV", 0x0222: "UPTV", 0x0224: "NETV", 0x0226: "VDUV",
+    0x0228: "KEYV", 0x022A: "INSV", 0x022C: "REMV", 0x022E: "CNPV",
+    0x0230: "IND1V", 0x0232: "IND2V", 0x0234: "IND3V",
+}
+
+VDU_CONTROLS = {
+    0: "no operation", 1: "send next byte to printer", 2: "enable printer output",
+    3: "disable printer output", 4: "write text at the text cursor",
+    5: "write text at the graphics cursor", 6: "enable VDU drivers", 7: "bell",
+    8: "cursor left", 9: "cursor right", 10: "cursor down", 11: "cursor up",
+    12: "clear the text area", 13: "carriage return", 14: "enable paged mode",
+    15: "disable paged mode", 16: "clear the graphics area", 17: "set text colour",
+    18: "set graphics colour and action", 19: "define a logical colour",
+    20: "restore default colours", 21: "disable VDU output", 22: "select screen mode",
+    23: "program a VDU character or system variable", 24: "define graphics window",
+    25: "plot graphics", 26: "restore default windows", 27: "send escape",
+    28: "define text window", 29: "set graphics origin", 30: "home text cursor",
+    31: "position text cursor",
+}
+
 
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -110,6 +217,288 @@ def _operand(data: bytes, offset: int, opcode: Opcode, address: int) -> tuple[st
     return "", None
 
 
+def _hex_value(operand: str) -> int | None:
+    text = str(operand or "").strip()
+    if text.startswith("#&"):
+        text = text[2:]
+    elif text.startswith("&"):
+        text = text[1:].split(",", 1)[0]
+    else:
+        return None
+    try:
+        return int(text, 16)
+    except ValueError:
+        return None
+
+
+def _character(value: int | None) -> str:
+    if value is None:
+        return ""
+    names = {7: "bell", 8: "backspace", 9: "tab", 10: "line feed", 12: "clear screen", 13: "carriage return", 27: "escape", 127: "delete"}
+    if value in names:
+        return names[value]
+    if 32 <= value < 127:
+        return repr(chr(value))
+    return ""
+
+
+def _vdu_value(value: int | None) -> str:
+    display = _character(value)
+    if value in VDU_CONTROLS:
+        return f"VDU {value}: {VDU_CONTROLS[value]}"
+    return display
+
+
+def _cstring(data: bytes, origin: int, address: int | None) -> str:
+    if address is None or not origin <= address < origin + len(data):
+        return ""
+    offset = address - origin
+    end = offset
+    while end < len(data) and 32 <= data[end] < 127 and end - offset < 80:
+        end += 1
+    if end - offset < 3:
+        return ""
+    text = data[offset:end].decode("ascii", "replace")
+    return text if any(character.isalpha() for character in text) else ""
+
+
+def _hardware_region(address: int | None) -> str:
+    if address is None:
+        return ""
+    return next((name for start, end, name in HARDWARE_REGIONS if start <= address <= end), "")
+
+
+def _semantic_6502_labels(report: dict) -> None:
+    """Assign stable labels from proved control flow and routine behaviour."""
+    rows = report["rows"]
+    by_address = {int(row["address"]): row for row in rows}
+    index_by_address = {int(row["address"]): index for index, row in enumerate(rows)}
+    call_targets = {
+        int(row["target"])
+        for row in rows
+        if row.get("mnemonic") == "JSR" and isinstance(row.get("target"), int)
+        and int(row["target"]) in by_address
+    }
+
+    def routine_rows(target: int) -> list[dict]:
+        start = index_by_address.get(target)
+        if start is None:
+            return []
+        block = []
+        for row in rows[start:start + 96]:
+            if block and int(row["address"]) in call_targets:
+                break
+            block.append(row)
+            if str(row.get("mnemonic") or "").upper() in {"RTS", "RTI", "BRK", "JMP"}:
+                break
+        return block
+
+    purpose_names = {
+        0xFFF7: "execute_command", 0xFFDD: "file_operation",
+        0xFFCE: "open_close_file", 0xFFD1: "transfer_file_block",
+        0xFFD7: "read_file_byte", 0xFFD4: "write_file_byte",
+        0xFFF1: "osword_operation", 0xFFF4: "osbyte_operation",
+        0xFFE0: "read_character", 0xFFE7: "write_newline",
+        0xFFC2: "start_command_parser", 0xFFC5: "read_command_item",
+        0xFFC8: "read_input_stream", 0xFFCB: "write_output_stream",
+        0xFFBF: "generate_event", 0xFFB9: "read_sideways_rom",
+    }
+    character_calls = {0xFFBC, 0xFFE3, 0xFFEE}
+    for target in sorted(call_targets):
+        target_row = by_address[target]
+        existing = str(target_row.get("label") or "")
+        if existing and not existing.startswith(("sub_", "loc_", "subroutine_")):
+            continue
+        block = routine_rows(target)
+        calls = [
+            int(row["target"]) for row in block
+            if row.get("mnemonic") == "JSR" and isinstance(row.get("target"), int)
+        ]
+        endings = {str(row.get("mnemonic") or "").upper() for row in block}
+        backwards_branch = any(
+            isinstance(row.get("target"), int) and int(row["target"]) <= int(row["address"])
+            for row in block if str(row.get("mnemonic") or "").upper() in BRANCH_MEANINGS
+        )
+        if "RTI" in endings:
+            purpose = "interrupt_handler"
+        elif "BRK" in endings:
+            purpose = "raise_error"
+        elif any(call in character_calls for call in calls):
+            purpose = "write_text" if backwards_branch or sum(call in character_calls for call in calls) > 1 else "write_character"
+        else:
+            purpose = next((purpose_names[call] for call in calls if call in purpose_names), "")
+        if not purpose:
+            hardware = next((
+                _hardware_region(int(row["target"]))
+                for row in block if isinstance(row.get("target"), int) and _hardware_region(int(row["target"]))
+            ), "")
+            purpose = "access_hardware" if hardware else "subroutine"
+        target_row["label"] = f"{purpose}_{target:04X}"
+
+    branch_names = {
+        "BEQ": "equal", "BNE": "not_equal", "BCC": "carry_clear",
+        "BCS": "carry_set", "BMI": "negative", "BPL": "positive",
+        "BVC": "overflow_clear", "BVS": "overflow_set",
+    }
+    flow_references: dict[int, list[dict]] = {}
+    for source in rows:
+        target = source.get("target")
+        if source.get("mnemonic") in {*BRANCH_MEANINGS, "JMP"} and isinstance(target, int):
+            flow_references.setdefault(target, []).append(source)
+    for target, references in flow_references.items():
+        target_row = by_address.get(target)
+        if target_row is None or target in call_targets or target_row.get("label"):
+            continue
+        if any(target <= int(source["address"]) for source in references):
+            purpose = "loop"
+        else:
+            mnemonics = {str(source.get("mnemonic") or "").upper() for source in references}
+            if len(mnemonics) == 1:
+                mnemonic = next(iter(mnemonics))
+                purpose = branch_names.get(mnemonic, "dispatch" if mnemonic == "JMP" else "continue")
+            else:
+                purpose = "continue"
+        target_row["label"] = f"{purpose}_{target:04X}"
+
+
+def _mos_comment(target: int, registers: dict[str, int | None], data: bytes, origin: int) -> str:
+    name = MOS_CALLS[target]
+    base = MOS_PURPOSES[target]
+    a, x, y = registers["A"], registers["X"], registers["Y"]
+    xy = f"&{(y << 8 | x):04X}" if x is not None and y is not None else "unknown"
+    if target in {0xFFBC, 0xFFE3, 0xFFEE} and a is not None:
+        display = _vdu_value(a)
+        action = display or f"byte &{a:02X}"
+        verb = "write" if target != 0xFFBC else "send"
+        suffix = ", expanding carriage return to a newline" if target == 0xFFE3 else ""
+        return f"{name}: {verb} {action} through the VDU system{suffix}"
+    if target == 0xFFF4 and a is not None:
+        action = OSBYTE_REASONS.get(a, "use an undocumented or machine-specific reason code")
+        return f"OSBYTE &{a:02X}: {action}; X={f'&{x:02X}' if x is not None else 'unknown'}; Y={f'&{y:02X}' if y is not None else 'unknown'}"
+    if target == 0xFFF1 and a is not None:
+        action = OSWORD_REASONS.get(a, "use a filing-system or machine-specific reason code")
+        return f"OSWORD &{a:02X}: {action}; parameter block at XY={xy}"
+    if target == 0xFFDD and a is not None:
+        action = OSFILE_ACTIONS.get(a, "perform a filing-system-specific whole-file action")
+        return f"OSFILE &{a:02X}: {action}; control block at XY={xy}"
+    if target == 0xFFCE and a is not None:
+        argument = (
+            f"file handle Y=&{y:02X}" if a == 0 and y is not None
+            else f"filename at XY={xy}"
+        )
+        action = OSFIND_ACTIONS.get(a, "perform a filing-system-specific open or close action")
+        return f"OSFIND &{a:02X}: {action}; {argument}"
+    if target == 0xFFF7 and x is not None and y is not None:
+        pointer = y << 8 | x
+        command = _cstring(data, origin, pointer)
+        return f"OSCLI: execute {command!r} from XY=&{pointer:04X}" if command else f"OSCLI: execute the command string at XY=&{pointer:04X}"
+    if target == 0xFFD4 and y is not None:
+        return f"OSBPUT: write A to file handle Y=&{y:02X}"
+    if target == 0xFFD7 and y is not None:
+        return f"OSBGET: read the next byte from file handle Y=&{y:02X}"
+    if target == 0xFFD1 and a is not None:
+        return f"OSGBPB &{a:02X}: transfer a filing-system block; control block at XY={xy}"
+    if target == 0xFFF4:
+        return "OSBYTE: the reason code in A could not be proved on this code path"
+    if target == 0xFFF1:
+        return "OSWORD: the reason code in A could not be proved on this code path"
+    return f"{name}: {base}"
+
+
+def _annotate_6502(report: dict, data: bytes) -> dict:
+    rows = report["rows"]
+    by_address = {int(row["address"]): row for row in rows}
+    _semantic_6502_labels(report)
+    call_targets = {int(row["target"]) for row in rows if row.get("mnemonic") == "JSR" and isinstance(row.get("target"), int)}
+    flow_targets = {int(row["target"]) for row in rows if str(row.get("mnemonic") or "") in set(BRANCH_MEANINGS) | {"JMP"} and isinstance(row.get("target"), int)}
+    for target in call_targets | flow_targets:
+        target_row = by_address.get(target)
+        if target_row is not None and not target_row.get("label"):
+            target_row["label"] = f"{'sub' if target in call_targets else 'loc'}_{target:04X}"
+    for row in rows:
+        target = row.get("target")
+        if isinstance(target, int) and target in by_address and row.get("mnemonic") in {"JSR", "JMP", *BRANCH_MEANINGS}:
+            row["operand"] = by_address[target].get("label") or row["operand"]
+
+    registers: dict[str, int | None] = {"A": None, "X": None, "Y": None}
+    previous_address = None
+    for row in rows:
+        address = int(row["address"])
+        size = max(1, len(str(row.get("bytes") or "").split()))
+        if previous_address is not None and any(source != previous_address for source in row.get("references", [])):
+            registers = {"A": None, "X": None, "Y": None}
+        mnemonic = str(row.get("mnemonic") or "").upper()
+        operand = str(row.get("operand") or "")
+        target = row.get("target")
+        comment = ""
+        value = _hex_value(operand)
+        if mnemonic in {"LDA", "LDX", "LDY"} and operand.startswith("#"):
+            register = mnemonic[-1]
+            registers[register] = value
+            display = _character(value)
+            comment = f"{register} = &{value:02X}{f' ({display})' if display else ''}" if value is not None else ""
+        elif mnemonic in {"LDA", "LDX", "LDY"}:
+            registers[mnemonic[-1]] = None
+        elif mnemonic == "TAX": registers["X"], comment = registers["A"], "Copy A to X"
+        elif mnemonic == "TAY": registers["Y"], comment = registers["A"], "Copy A to Y"
+        elif mnemonic == "TXA": registers["A"], comment = registers["X"], "Copy X to A"
+        elif mnemonic == "TYA": registers["A"], comment = registers["Y"], "Copy Y to A"
+        elif mnemonic in {"CMP", "CPX", "CPY"} and operand.startswith("#") and value is not None:
+            register = {"CMP": "A", "CPX": "X", "CPY": "Y"}[mnemonic]
+            display = _character(value)
+            comment = f"Compare {register} with &{value:02X}{f' ({display})' if display else ''}"
+        elif mnemonic in BRANCH_MEANINGS:
+            comment = f"{BRANCH_MEANINGS[mnemonic]} to {operand}"
+        elif mnemonic == "JSR" and isinstance(target, int):
+            comment = _mos_comment(target, registers, data, int(report["origin"])) if target in MOS_CALLS else f"Call subroutine {operand}"
+            registers = {"A": None, "X": None, "Y": None}
+        elif mnemonic == "JMP":
+            comment = (
+                f"Dispatch through MOS {MOS_VECTORS[target]} vector"
+                if isinstance(target, int) and target in MOS_VECTORS and operand.startswith("(")
+                else f"Continue execution at {operand}"
+            )
+        elif mnemonic == "RTS": comment = "Return from subroutine"
+        elif mnemonic == "RTI": comment = "Return from interrupt"
+        elif mnemonic == "BRK":
+            offset = int(row["offset"])
+            if offset + 2 < len(data):
+                message = _cstring(data, int(report["origin"]), int(report["origin"]) + offset + 2)
+                comment = f"Raise error {data[offset + 1]}{f': {message!r}' if message else ''}"
+            else: comment = "Raise a software error"
+        elif mnemonic in {"PHA", "PHP"}: comment = f"Push {'A' if mnemonic == 'PHA' else 'processor flags'} onto the stack"
+        elif mnemonic in {"PLA", "PLP"}:
+            comment = f"Pull {'A' if mnemonic == 'PLA' else 'processor flags'} from the stack"
+            if mnemonic == "PLA": registers["A"] = None
+        elif mnemonic in {"STA", "STX", "STY", "LDA", "LDX", "LDY", "BIT"}:
+            vector = MOS_VECTORS.get(target) if isinstance(target, int) else None
+            hardware = _hardware_region(target)
+            if vector:
+                action = "Write" if mnemonic.startswith("ST") else "Read or test"
+                comment = f"{action} MOS {vector} vector at &{int(target):04X}"
+            elif hardware:
+                action = "Write to" if mnemonic.startswith("ST") else "Read or test"
+                comment = f"{action} {hardware} register &{int(target):04X}"
+        elif mnemonic == "CLC": comment = "Clear carry before arithmetic or to signal success"
+        elif mnemonic == "SEC": comment = "Set carry before subtraction or to signal a condition"
+        elif mnemonic == "CLI": comment = "Enable maskable interrupts"
+        elif mnemonic == "SEI": comment = "Disable maskable interrupts"
+        elif mnemonic == "CLD": comment = "Use binary arithmetic"
+        elif mnemonic == "SED": comment = "Use binary-coded decimal arithmetic"
+        elif mnemonic == "CLV": comment = "Clear the overflow flag"
+        elif mnemonic in {"INX", "DEX"}:
+            registers["X"] = None
+        elif mnemonic in {"INY", "DEY"}:
+            registers["Y"] = None
+        elif mnemonic in {"ADC", "SBC", "AND", "ORA", "EOR", "ASL", "LSR", "ROL", "ROR"}:
+            registers["A"] = None
+        row["comment"] = comment or str(row.get("comment") or "")
+        previous_address = address + size
+        if mnemonic in {"JMP", "RTS", "RTI", "BRK"} or mnemonic in BRANCH_MEANINGS:
+            registers = {"A": None, "X": None, "Y": None}
+    return report
+
+
 def disassemble_6502(data: bytes, *, origin: int = 0x8000, start: int = 0,
                      length: int | None = None, symbols: dict | None = None) -> dict:
     if start < 0 or start >= len(data):
@@ -122,6 +511,20 @@ def disassemble_6502(data: bytes, *, origin: int = 0x8000, start: int = 0,
         value = data[offset]
         opcode = OPCODES[value]
         address = origin + offset
+        if value == 0x00 and offset + 3 < end:
+            message_end = offset + 2
+            while message_end < end and 32 <= data[message_end] < 127 and message_end - offset <= 82:
+                message_end += 1
+            if message_end > offset + 4 and message_end < end and data[message_end] == 0:
+                message = data[offset + 2:message_end].decode("ascii")
+                rows.extend([
+                    {"offset": offset, "address": address, "bytes": "00", "mnemonic": "BRK", "operand": "", "target": None, "label": "", "comment": ""},
+                    {"offset": offset + 1, "address": address + 1, "bytes": f"{data[offset + 1]:02X}", "mnemonic": "EQUB", "operand": f"&{data[offset + 1]:02X}", "target": None, "label": "", "comment": f"Error number {data[offset + 1]}"},
+                    {"offset": offset + 2, "address": address + 2, "bytes": " ".join(f"{byte:02X}" for byte in data[offset + 2:message_end]), "mnemonic": "EQUS", "operand": json.dumps(message), "target": None, "label": "", "comment": "Error message"},
+                    {"offset": message_end, "address": origin + message_end, "bytes": "00", "mnemonic": "EQUB", "operand": "&00", "target": None, "label": "", "comment": "End of error message"},
+                ])
+                offset = message_end + 1
+                continue
         if opcode.mnemonic == "???" or offset + opcode.size > end:
             rows.append({"offset": offset, "address": address, "bytes": f"{value:02X}",
                          "mnemonic": "EQUB", "operand": f"&{value:02X}", "comment": ""})
@@ -136,8 +539,9 @@ def disassemble_6502(data: bytes, *, origin: int = 0x8000, start: int = 0,
             "target": target, "label": labels.get(address, ""), "comment": comment,
         })
         offset += opcode.size
-    return _with_control_flow({"architecture": "6502", "origin": origin, "start": start,
+    report = _with_control_flow({"architecture": "6502", "origin": origin, "start": start,
             "end": offset, "truncated": offset < start + requested, "rows": rows}, [])
+    return _annotate_6502(report, data)
 
 
 def _with_control_flow(report: dict, entry_points: list[int]) -> dict:
@@ -178,6 +582,45 @@ def _with_control_flow(report: dict, entry_points: list[int]) -> dict:
     return report
 
 
+def _annotate_generic_control_flow(report: dict) -> dict:
+    rows = report["rows"]
+    by_address = {int(row["address"]): row for row in rows}
+    call_names = {"BL", "BLX", "BSR", "JSR"}
+    jump_names = {"B", "BRA", "JMP"}
+    for row in rows:
+        target = row.get("target")
+        mnemonic = str(row.get("mnemonic") or "").upper()
+        target_row = by_address.get(target) if isinstance(target, int) else None
+        if target_row is not None and not target_row.get("label"):
+            if mnemonic in call_names:
+                purpose = "subroutine"
+            elif int(target) <= int(row["address"]):
+                purpose = "loop"
+            elif mnemonic in jump_names:
+                purpose = "dispatch"
+            else:
+                purpose = "continue"
+            target_row["label"] = f"{purpose}_{int(target):X}"
+    for row in rows:
+        mnemonic = str(row.get("mnemonic") or "").upper()
+        operand = str(row.get("operand") or "")
+        target = row.get("target")
+        target_row = by_address.get(target) if isinstance(target, int) else None
+        if target_row is not None:
+            operand = row["operand"] = target_row.get("label") or operand
+        if row.get("comment"):
+            continue
+        if mnemonic in call_names:
+            row["comment"] = f"Call subroutine {operand}"
+        elif mnemonic in jump_names:
+            row["comment"] = f"Continue execution at {operand}"
+        elif mnemonic.startswith("B") and isinstance(target, int):
+            row["comment"] = f"Conditional branch to {operand}"
+        elif mnemonic in {"RTS", "RTE"} or (mnemonic == "BX" and operand.upper() == "LR"):
+            row["comment"] = "Return from subroutine"
+    return report
+
+
 def disassemble_capstone(data: bytes, *, architecture: str, origin: int = 0,
                          start: int = 0, length: int | None = None,
                          entry_points: list[int] | None = None) -> dict:
@@ -211,7 +654,7 @@ def disassemble_capstone(data: bytes, *, architecture: str, origin: int = 0,
                      "operand": operand, "target": target, "label": "", "comment": ""})
     report = {"architecture": architecture, "origin": origin, "start": start,
               "end": end, "truncated": end < start + requested, "rows": rows}
-    return _with_control_flow(report, entry_points or [])
+    return _annotate_generic_control_flow(_with_control_flow(report, entry_points or []))
 
 
 def disassemble(data: bytes, *, architecture: str, origin: int, start: int = 0,
@@ -219,7 +662,7 @@ def disassemble(data: bytes, *, architecture: str, origin: int, start: int = 0,
                 entry_points: list[int] | None = None) -> dict:
     if architecture == "6502":
         report = disassemble_6502(data, origin=origin, start=start, length=length, symbols=symbols)
-        return _with_control_flow(report, entry_points or [])
+        return _annotate_6502(_with_control_flow(report, entry_points or []), data)
     return disassemble_capstone(data, architecture=architecture, origin=origin, start=start,
                                 length=length, entry_points=entry_points)
 

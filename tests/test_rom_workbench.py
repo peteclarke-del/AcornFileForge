@@ -15,9 +15,33 @@ class RomWorkbenchTests(unittest.TestCase):
     def test_disassembly_labels_mos_calls_and_branches(self):
         data = bytes.fromhex("20F4FFD0FB60")
         report = disassemble_6502(data, origin=0x8000)
-        self.assertEqual(report["rows"][0]["comment"], "OSBYTE")
+        self.assertEqual(report["rows"][0]["comment"], "OSBYTE: the reason code in A could not be proved on this code path")
         self.assertEqual(report["rows"][1]["target"], 0x8000)
+        self.assertEqual(report["rows"][1]["operand"], "loop_8000")
+        self.assertIn("comparison was not equal", report["rows"][1]["comment"])
         self.assertEqual(report["rows"][2]["mnemonic"], "RTS")
+        self.assertEqual(report["rows"][2]["comment"], "Return from subroutine")
+
+    def test_disassembly_explains_proven_mos_parameters_and_hardware(self):
+        data = bytes.fromhex("A94120EEFFA983A200A00020F4FF8D20FE60")
+        rows = disassemble_6502(data, origin=0x8000)["rows"]
+        self.assertEqual(rows[0]["comment"], "A = &41 ('A')")
+        self.assertEqual(rows[1]["comment"], "OSWRCH: write 'A' through the VDU system")
+        self.assertIn("OSBYTE &83: read the bottom of user memory", rows[5]["comment"])
+        self.assertIn("video ULA register &FE20", rows[6]["comment"])
+
+    def test_disassembly_names_vdu_and_osbyte_operations(self):
+        data = bytes.fromhex("A91620EEFFA900A201A00220F4FF60")
+        rows = disassemble_6502(data, origin=0x8000)["rows"]
+        self.assertEqual(rows[1]["comment"], "OSWRCH: write VDU 22: select screen mode through the VDU system")
+        self.assertEqual(rows[5]["comment"], "OSBYTE &00: identify the operating-system version; X=&01; Y=&02")
+
+    def test_bbc_brk_error_block_is_decoded_as_data_and_message(self):
+        rows = disassemble_6502(b"\x00\xCCBad file\x00\x60", origin=0x8000)["rows"]
+        self.assertEqual([row["mnemonic"] for row in rows[:4]], ["BRK", "EQUB", "EQUS", "EQUB"])
+        self.assertEqual(rows[0]["comment"], "Raise error 204: 'Bad file'")
+        self.assertEqual(rows[2]["operand"], '"Bad file"')
+        self.assertEqual(rows[2]["comment"], "Error message")
 
     def test_unknown_opcode_is_data_not_invented_code(self):
         row = disassemble_6502(b"\x02", origin=0x8000)["rows"][0]
