@@ -129,6 +129,12 @@ command and press F1 for the keyboard equivalent. Inline assembler between `[`
 and `]` uses the same 6502 or ARM instruction, MOS entry-point and directive
 help as the disassembly editor.
 
+The leading star is part of the command context. `LOAD "PROGRAM"` receives
+BBC BASIC LOAD help, while `*LOAD CODE 3000` receives MOS `*LOAD` help and is
+shown as `*LOAD` in the tooltip and command summary. The same distinction
+applies to overlapping commands such as RUN and SAVE. Normalising command case
+never removes the star.
+
 ### Visual indentation and folding
 
 Visual indentation understands procedures, multi-line functions, `FOR`,
