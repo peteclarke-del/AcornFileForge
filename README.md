@@ -85,6 +85,9 @@ this guide, including one to three rearrangeable panes, undo and named
 checkpoints, browser-private recovery, background job tracking, MMB and ADFS
 menu maintenance, HFE handling, UEF extraction, an Online Library and
 hardware-aware ADFS checks.
+Raw and banked ROM analysis, editable Acorn ROMFS data images, content-aware
+file editors, archive and UEF browsing, guarded BASIC transformations, annotated
+6502/ARM/68000 disassembly and optional emulator hand-off are also included.
 The application is useful today, but Acorn media images can contain unusual loaders,
 copy protection and filesystem variants. Keep a known-good source image and
 test important downloads before putting them onto real hardware.
@@ -97,6 +100,9 @@ Bug reports and proposed improvements can be raised in the
 - This README is the complete installation, workflow and format guide.
 - The [ROM image handbook](docs/ROM-GUIDE.md) is the deeper technical reference
   for bank layouts, decoded structures, ROM Workbench, patches and programmers.
+- The [file editor and code analysis handbook](docs/FILE-EDITOR-GUIDE.md) covers
+  content detection, BASIC and script editing, source transformations,
+  disassembly projects, archives, synchronized bytes and emulator hand-off.
 - **Help** in the application contains illustrated, task-based instructions and
   stays with the running version of the frontend.
 - Every saved image ZIP contains its own generated `README.md` describing that
@@ -442,7 +448,15 @@ title-bar square to maximise and
 restore it. Double-clicking the title bar performs the same maximise or restore
 action. Movement and sizing remain constrained to the visible browser window.
 
+![A real DFS !BOOT file in the command-script editor](app/static/help/file-editor-script.png)
+
+Command files remain unnumbered and retain their execution order. The editor
+shown here was opened directly from the current Docker build, not recreated as
+host text.
+
 ### Code-aware editing and help
+
+![Tokenised BBC BASIC II opened from an ADFS image](app/static/help/file-editor-basic.png)
 
 Source editors highlight BBC BASIC keywords, command-script operations,
 strings, numbers, comments, symbols and line numbers using colours owned by the
@@ -636,6 +650,11 @@ plausible instructions.
 Labelled disassembly regions have the same left-gutter controls and one
 state-aware **View** command. Folding only hides rendered rows, so double-clicking any visible
 instruction still opens its bytes at the matching Hex offset.
+
+![Annotated 6502 disassembly with byte, instruction and comment columns](app/static/help/file-editor-disassembly.png)
+
+The complete operational and technical reference is in the
+[file editor and code analysis handbook](docs/FILE-EDITOR-GUIDE.md).
 
 The BASIC editor accepts complete numbered lines, so you can insert a line by
 typing its number or remove it by deleting the line. Every displayed line has
@@ -1886,7 +1905,7 @@ a completed save.
   DAT still has its original logical size and exact SHA-256 checksum.
 - ZIPs are built with bounded memory and real byte progress before the browser
   handoff. The completed archive is served as an ordinary file with a known
-  length, so “ready” means no hidden checksum or ZIP-building work remains.
+  length, so "ready" means no hidden checksum or ZIP-building work remains.
 - Opening or creating ADFS media offers a target-hardware profile. The 8-bit
   profiles validate matching old `Hugo` directory headers, footers, parent
   links and sequence copies. A saved BeebSCSI volume also receives a new
@@ -1927,9 +1946,10 @@ This one-time bridge stops the upgrade itself returning active work to the
 empty start screen.
 
 The recovery dialog can permanently clear the selected previous session or all
-previous sessions shown there. Images currently open in any pane are omitted
-from those clearing controls. Clearing removes only Docker-side working copies,
-never the source files selected from the host.
+Use **Recover previous session** to remove individual retained sessions or clear
+the previous sessions shown there. Images currently open in any pane are
+omitted from those clearing controls. Clearing removes only Docker-side working
+copies, never the source files selected from the host.
 
 Each recovered session includes its named checkpoints and automatic undo
 history. Recovery ownership therefore protects both the active working image
@@ -2072,7 +2092,8 @@ Backend routes are split by responsibility:
 - `app/routes/catalog.py` handles Online Library search, source settings, and
   installation.
 - `app/routes/tools.py` handles health checks, manifests, duplicate analysis,
-  file inspection, and dependency reports.
+  file inspection, editor projects, BASIC verification, disassembly, emulator
+  hand-off and dependency reports.
 - `app/disk_service.py` owns image sessions and calls the disk engine.
 - `app/menu_service.py` owns metadata analysis and Universal, SPI and ADFS menu databases.
 - `app/catalog_service.py` runs the configurable catalogue pipeline and retains
@@ -2083,6 +2104,16 @@ Backend routes are split by responsibility:
   timestamped ZIP downloads with progress reporting.
 - `app/analysis_service.py` builds health, manifest, duplicate, inspection, and
   loader-dependency reports.
+- `app/content_kind.py` owns bounded content classification and BASIC, script,
+  text, binary and UEF recognition.
+- `app/archive_browser.py` owns safe read-only UEF and compressed archive
+  traversal, path validation and expansion limits.
+- `app/file_editor.py` owns editable-file inspection, checked source writes,
+  BASIC round trips, byte ranges and annotated file disassembly.
+- `app/editor_project.py` validates and bounds per-file notes, symbols,
+  regions, bookmarks, history and emulator results.
+- `app/rom_workbench.py` owns raw ROM decoding, 6502/ARM/68000 disassembly,
+  guarded patches, builds, programmer transforms and ROM project metadata.
 - `app/checksum.py` provides the shared sparse-aware image checksum implementation.
 - `app/uef.py` parses cassette blocks.
 - `app/hfe.py` validates HFE headers and classifies HFE versions safely.
@@ -2090,6 +2121,13 @@ Backend routes are split by responsibility:
 Frontend format declarations live in `app/static/formats.js`, and backend
 extension declarations live in `app/formats.py`. This keeps accepted
 Archimedes and raw-image names in one place on each side of the API.
+
+Frontend behaviour is split by responsibility. `app/static/core.js` contains
+shared request and formatting primitives, `hex-editor.js` owns raw fixed-range
+editing, `code-editor.js` owns language intelligence and source presentation,
+and `app.js` coordinates panes and workflows. The content classifier remains a
+backend authority so a filename or browser hint cannot bypass filesystem-aware
+validation.
 
 The frontend palette lives entirely in `app/static/theme.css`. Its light and
 dark sections define semantic tokens for surfaces, text, state, media icons,
