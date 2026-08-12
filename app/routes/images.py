@@ -109,6 +109,18 @@ def create_images_blueprint(
         service.rename_session(session, data.get("name", ""))
         return jsonify(image=service.summary(session))
 
+    @blueprint.patch("/api/images/<image_id>/romfs")
+    def configure_romfs(image_id):
+        data = payload()
+        session = service.get(image_id)
+        service.set_romfs_properties(
+            session,
+            title=data.get("title", ""),
+            version=data.get("version", 1),
+            copyright_text=data.get("copyright", ""),
+        )
+        return jsonify(image=service.summary(session))
+
     @blueprint.patch("/api/images/<image_id>/rom-layout")
     def configure_rom_layout(image_id):
         data = payload()

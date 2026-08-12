@@ -62,21 +62,47 @@ window.AcornHexEditor = (() => {
     });
   }
 
-  function editorMarkup(image, initialPageSize) {
+  function editorMarkup(image, initialPageSize, scope, kicker, title, exportUrl) {
     const descriptorOption = image.hasDescriptor
       ? `<option value="descriptor">${image.descriptorName || "DSC geometry descriptor"}</option>`
       : "";
-    return `<section class="hex-editor" tabindex="-1" aria-label="Raw image hex editor">
+    return `<section class="hex-editor" tabindex="-1" aria-label="${scope === "file" ? "File" : "Raw image"} hex editor">
       <header class="hex-editor-head">
-        <div><small>RAW IMAGE TOOLS</small><h2>Hex editor</h2><span class="hex-target-name"></span></div>
+        <div><small>${kicker}</small><h2>${title}</h2><span class="hex-target-name"></span></div>
         <div class="hex-head-actions">
           <span class="hex-change-count">No staged changes</span>
           <button type="button" class="button small hex-save" disabled>Write changes</button>
           <button type="button" class="icon-button hex-close" title="Close hex editor" aria-label="Close hex editor">×</button>
         </div>
       </header>
+      <nav class="editor-menubar hex-editor-menubar" aria-label="Hex editor menus">
+        <details class="editor-menu"><summary>File</summary><div class="editor-menu-panel">
+          <button type="button" class="hex-menu-save" disabled><span>Write Changes</span><kbd>Ctrl+S</kbd></button>
+          ${exportUrl ? `<a href="${String(exportUrl).replaceAll("&", "&amp;")}"><span>Export original binary…</span></a>` : ""}
+          <span class="editor-menu-separator" role="separator"></span>
+          <button type="button" class="hex-menu-close"><span>Close</span><kbd>Esc</kbd></button>
+        </div></details>
+        <details class="editor-menu"><summary>Edit</summary><div class="editor-menu-panel">
+          <button type="button" class="hex-menu-undo" disabled><span>Undo</span><kbd>Ctrl+Z</kbd></button>
+          <button type="button" class="hex-menu-redo" disabled><span>Redo</span><kbd>Ctrl+Y</kbd></button>
+          <span class="editor-menu-separator" role="separator"></span>
+          <button type="button" class="hex-menu-copy-hex"><span>Copy Hex</span><kbd>Ctrl+C</kbd></button>
+          <button type="button" class="hex-menu-copy-text"><span>Copy Text</span></button>
+          <button type="button" class="hex-menu-paste"><span>Paste</span><kbd>Ctrl+V</kbd></button>
+          <button type="button" class="hex-menu-fill"><span>Fill Selection…</span></button>
+          <button type="button" class="hex-menu-revert-selection"><span>Revert Selection</span></button>
+          <button type="button" class="hex-menu-revert-all"><span>Revert All</span></button>
+        </div></details>
+        <details class="editor-menu"><summary>Search</summary><div class="editor-menu-panel">
+          <button type="button" class="hex-menu-find"><span>Find…</span><kbd>Ctrl+F</kbd></button>
+          <button type="button" class="hex-menu-replace" ${image.readOnly ? "disabled" : ""}><span>Find and Replace…</span><kbd>Ctrl+H</kbd></button>
+          <button type="button" class="hex-menu-find-previous"><span>Find Previous</span><kbd>Shift+Enter</kbd></button>
+          <button type="button" class="hex-menu-find-next"><span>Find Next</span><kbd>Enter</kbd></button>
+          <button type="button" class="hex-menu-goto"><span>Go to Offset…</span><kbd>Ctrl+G</kbd></button>
+        </div></details>
+      </nav>
       <div class="hex-toolbar">
-        <label>Component<select class="hex-target"><option value="image">${image.name}</option>${descriptorOption}</select></label>
+        <label ${scope === "file" ? "hidden" : ""}>Component<select class="hex-target"><option value="image">${image.name}</option>${descriptorOption}</select></label>
         <label>Go to offset<input class="hex-goto" spellcheck="false" placeholder="00000000"></label>
         <button type="button" class="button small hex-go">Go</button>
         <span class="hex-separator"></span>
@@ -94,6 +120,8 @@ window.AcornHexEditor = (() => {
         <input class="hex-search-query" spellcheck="false" placeholder="44 69 73 63" aria-label="Hex editor search value">
         <button type="button" class="button small hex-find-previous">Find previous</button>
         <button type="button" class="button small hex-find-next">Find next</button>
+        <label>Replace<input class="hex-replace-query" spellcheck="false" placeholder="00 00 00 00" aria-label="Hex editor replacement value" ${image.readOnly ? "disabled" : ""}></label>
+        <button type="button" class="button small hex-replace-next" ${image.readOnly ? "disabled" : ""}>Replace next</button>
         <label class="hex-check"><input class="hex-search-wrap" type="checkbox" checked> Wrap</label>
         <span class="hex-search-status" aria-live="polite"></span>
       </div>
@@ -115,11 +143,17 @@ window.AcornHexEditor = (() => {
     </section>`;
   }
 
-  async function open({ host, image, request, notify, onSaved, initialOffset = 0, initialPageSize = 256 }) {
+  async function open({ host, image, request, notify, onSaved, initialOffset = 0, initialPageSize = 256,
+    endpoint = null, context = {}, scope = "image", kicker = null, title = "Hex editor", exportUrl = null }) {
     const pageSize = PAGE_SIZES.includes(Number(initialPageSize)) ? Number(initialPageSize) : 256;
+    const apiEndpoint = endpoint || `/api/images/${image.id}/hex`;
+    const endpointUrl = (suffix = "", params = {}) => {
+      const query = new URLSearchParams({ ...context, ...params });
+      return `${apiEndpoint}${suffix}${query.size ? `?${query}` : ""}`;
+    };
     const overlay = document.createElement("div");
     overlay.className = "hex-editor-overlay";
-    overlay.innerHTML = editorMarkup(image, pageSize);
+    overlay.innerHTML = editorMarkup(image, pageSize, scope, kicker || (scope === "file" ? "RAW FILE TOOLS" : "RAW IMAGE TOOLS"), title, exportUrl);
     host.append(overlay);
     const editor = overlay.querySelector(".hex-editor");
     const state = {
@@ -220,11 +254,17 @@ window.AcornHexEditor = (() => {
       const changes = [...state.changes.entries()].sort((a, b) => a[0] - b[0]);
       $(".hex-change-count").textContent = changes.length ? `${changes.length.toLocaleString()} changed byte${changes.length === 1 ? "" : "s"}` : "No staged changes";
       $(".hex-save").disabled = !changes.length || image.readOnly;
+      $(".hex-menu-save").disabled = !changes.length || image.readOnly;
       $(".hex-revert-all").disabled = !changes.length;
       $(".hex-paste").disabled = image.readOnly;
       $(".hex-fill").disabled = image.readOnly;
       $(".hex-undo").disabled = !state.history.length;
       $(".hex-redo").disabled = !state.future.length;
+      $(".hex-menu-undo").disabled = !state.history.length;
+      $(".hex-menu-redo").disabled = !state.future.length;
+      $(".hex-menu-paste").disabled = image.readOnly;
+      $(".hex-menu-fill").disabled = image.readOnly;
+      $(".hex-menu-revert-all").disabled = !changes.length;
       $(".hex-change-list").innerHTML = changes.length
         ? changes.slice(-80).reverse().map(([offset, value]) => `<button type="button" data-change-offset="${offset}"><b>&${hex(offset, Math.max(6, state.size.toString(16).length))}</b><span>${hex(state.originals.get(offset))} → ${hex(value)}</span></button>`).join("")
         : "<em>None</em>";
@@ -303,8 +343,7 @@ window.AcornHexEditor = (() => {
       $(".hex-loading").hidden = false;
       try {
         const aligned = Math.floor(clamp(offset, 0, Math.max(0, state.size - 1)) / state.pageSize) * state.pageSize;
-        const query = new URLSearchParams({ offset: aligned, length: state.pageSize, target: state.target });
-        const data = await request(`/api/images/${image.id}/hex?${query}`);
+        const data = await request(endpointUrl("", { offset: aligned, length: state.pageSize, target: state.target }));
         if (!resetVersion && state.version && state.changes.size && data.version !== state.version) {
           throw new Error("The image changed outside the hex editor. Close it and reopen before continuing.");
         }
@@ -352,7 +391,7 @@ window.AcornHexEditor = (() => {
       if (!state.changes.size) return true;
       const choice = await decision({
         title: "This is dangerous. Are you sure?",
-        message: `You are about to overwrite ${state.changes.size.toLocaleString()} raw byte${state.changes.size === 1 ? "" : "s"} in ${$(".hex-target-name").textContent}. Raw edits bypass filesystem rules and can make the image unbootable or destroy its catalogue.`,
+        message: `You are about to overwrite ${state.changes.size.toLocaleString()} raw byte${state.changes.size === 1 ? "" : "s"} in ${$(".hex-target-name").textContent}. ${scope === "file" ? "Raw edits can corrupt tokenised programs, loaders and executable code." : "Raw edits bypass filesystem rules and can make the image unbootable or destroy its catalogue."}`,
         warning: "An automatic undo checkpoint will be created first. Keep the image open and run Analyse → Image health dashboard after writing.",
         actions: [
           { value: "cancel", label: "Cancel", className: "ghost" },
@@ -364,11 +403,12 @@ window.AcornHexEditor = (() => {
       button.disabled = true;
       button.textContent = "Writing…";
       try {
-        const result = await request(`/api/images/${image.id}/hex`, {
+        const result = await request(endpointUrl(), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             target: state.target,
+            ...context,
             version: state.version,
             confirmed: true,
             changes: serialiseChanges(),
@@ -440,30 +480,65 @@ window.AcornHexEditor = (() => {
       await loadPage(0, { resetVersion: true });
     }
 
+    function searchBytes(selector) {
+      const value = $(selector).value;
+      return value ? parsePaste(value, $(".hex-search-mode").value === "text" ? "ascii" : "hex") : [];
+    }
+
+    async function selectMatch(offset, length) {
+      await goTo(offset);
+      if (length > 1) await goTo(Math.min(state.size - 1, offset + length - 1), true);
+    }
+
     async function find(direction) {
       const queryText = $(".hex-search-query").value;
       if (!queryText) return $(".hex-search-query").focus();
       const start = direction === "forward" ? state.active + 1 : state.active - 1;
-      const query = new URLSearchParams({
+      const query = {
         query: queryText,
         mode: $(".hex-search-mode").value,
         start,
         direction,
         wrap: $(".hex-search-wrap").checked,
         target: state.target,
-      });
+      };
       $(".hex-search-status").textContent = "Searching…";
       try {
-        const result = await request(`/api/images/${image.id}/hex/search?${query}`);
+        const result = await request(endpointUrl("/search", query));
         if (result.offset == null) {
           $(".hex-search-status").textContent = "Not found";
           return;
         }
-        await goTo(result.offset);
+        await selectMatch(result.offset, Math.max(1, searchBytes(".hex-search-query").length));
         $(".hex-search-status").textContent = `${result.wrapped ? "Wrapped · " : ""}found at &${hex(result.offset)}`;
+        return result.offset;
       } catch (error) {
         $(".hex-search-status").textContent = error.message;
       }
+    }
+
+    async function replaceNext() {
+      if (image.readOnly) return;
+      const findValues = searchBytes(".hex-search-query");
+      const replacement = searchBytes(".hex-replace-query");
+      if (!findValues.length) return $(".hex-search-query").focus();
+      if (!replacement.length) return $(".hex-replace-query").focus();
+      if (replacement.length !== findValues.length) {
+        $(".hex-search-status").textContent = "Replacement must contain the same number of bytes";
+        return;
+      }
+      await ensureRange(...selectedRange());
+      let offsets = selectedOffsets();
+      const selectionMatches = offsets.length === findValues.length
+        && offsets.every((offset, index) => effectiveByte(offset) === findValues[index]);
+      if (!selectionMatches) {
+        const found = await find("forward");
+        if (found == null) return;
+        await ensureRange(...selectedRange());
+        offsets = selectedOffsets();
+      }
+      applyEdit(offsets.map((offset, index) => ({ offset, after: replacement[index] })));
+      $(".hex-search-status").textContent = `Replaced ${replacement.length.toLocaleString()} byte${replacement.length === 1 ? "" : "s"} at &${hex(offsets[0])}`;
     }
 
     async function copySelection(asText) {
@@ -496,8 +571,7 @@ window.AcornHexEditor = (() => {
       for (let offset = start; offset <= end;) {
         if (state.bytes.has(offset)) { offset += 1; continue; }
         const length = Math.min(4096, end - offset + 1);
-        const query = new URLSearchParams({ offset, length, target: state.target });
-        const data = await request(`/api/images/${image.id}/hex?${query}`);
+        const data = await request(endpointUrl("", { offset, length, target: state.target }));
         if (state.version && data.version !== state.version) {
           throw new Error("The image changed outside the hex editor. Close it and reopen before continuing.");
         }
@@ -537,6 +611,7 @@ window.AcornHexEditor = (() => {
       if (control && event.key.toLowerCase() === "v") { event.preventDefault(); await pasteSelection(); return; }
       if (control && event.key.toLowerCase() === "g") { event.preventDefault(); $(".hex-goto").focus(); return; }
       if (control && event.key.toLowerCase() === "f") { event.preventDefault(); $(".hex-search-query").focus(); return; }
+      if (control && event.key.toLowerCase() === "h" && !image.readOnly) { event.preventDefault(); $(".hex-replace-query").focus(); return; }
       const moves = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -16, ArrowDown: 16, PageUp: -state.pageSize, PageDown: state.pageSize };
       if (event.key in moves) { event.preventDefault(); await moveCursor(moves[event.key], event.shiftKey); return; }
       if (event.key === "Home") { event.preventDefault(); await goTo(event.ctrlKey ? 0 : state.active - state.active % 16, event.shiftKey); return; }
@@ -566,6 +641,30 @@ window.AcornHexEditor = (() => {
 
     $(".hex-close").onclick = closeEditor;
     $(".hex-save").onclick = save;
+    $(".hex-menu-close").onclick = closeEditor;
+    $(".hex-menu-save").onclick = save;
+    $(".hex-menu-undo").onclick = undo;
+    $(".hex-menu-redo").onclick = redo;
+    $(".hex-menu-copy-hex").onclick = () => copySelection(false);
+    $(".hex-menu-copy-text").onclick = () => copySelection(true);
+    $(".hex-menu-paste").onclick = pasteSelection;
+    $(".hex-menu-fill").onclick = fillSelection;
+    $(".hex-menu-revert-selection").onclick = () => revertSelection(false);
+    $(".hex-menu-revert-all").onclick = () => revertSelection(true);
+    $(".hex-menu-find").onclick = () => $(".hex-search-query").focus();
+    $(".hex-menu-replace").onclick = () => $(".hex-replace-query").focus();
+    $(".hex-menu-find-previous").onclick = () => find("backward");
+    $(".hex-menu-find-next").onclick = () => find("forward");
+    $(".hex-menu-goto").onclick = () => $(".hex-goto").focus();
+    overlay.querySelectorAll(".editor-menu").forEach(menu => menu.addEventListener("toggle", () => {
+      if (!menu.open) return;
+      overlay.querySelectorAll(".editor-menu[open]").forEach(other => {
+        if (other !== menu) other.removeAttribute("open");
+      });
+    }));
+    overlay.querySelectorAll(".editor-menu-panel button, .editor-menu-panel a").forEach(control => {
+      control.addEventListener("click", () => control.closest("details")?.removeAttribute("open"));
+    });
     $(".hex-go").onclick = () => goTo(parseAddress($(".hex-goto").value));
     $(".hex-goto").onkeydown = event => { if (event.key === "Enter") { event.preventDefault(); $(".hex-go").click(); } };
     $(".hex-first").onclick = () => goTo(0);
@@ -576,7 +675,9 @@ window.AcornHexEditor = (() => {
     $(".hex-target").onchange = event => changeTarget(event.target.value);
     $(".hex-find-next").onclick = () => find("forward");
     $(".hex-find-previous").onclick = () => find("backward");
+    $(".hex-replace-next").onclick = replaceNext;
     $(".hex-search-query").onkeydown = event => { if (event.key === "Enter") { event.preventDefault(); find(event.shiftKey ? "backward" : "forward"); } };
+    $(".hex-replace-query").onkeydown = event => { if (event.key === "Enter") { event.preventDefault(); replaceNext(); } };
     $(".hex-undo").onclick = undo;
     $(".hex-redo").onclick = redo;
     $(".hex-copy-hex").onclick = () => copySelection(false);

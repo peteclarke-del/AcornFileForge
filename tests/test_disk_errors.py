@@ -98,6 +98,24 @@ class DiskErrorTests(unittest.TestCase):
             self.assertEqual(root["path"], "")
             self.assertEqual([row["name"] for row in prefix["entries"]], ["MyFile"])
 
+    def test_dfs_pane_browse_starts_with_dollar_and_groups_other_prefixes_below(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            service = DiskService(folder)
+            session = service.create_blank("ssd", "CATALOGUE")
+            host = Path(folder) / "payload"
+            host.write_bytes(b"*RUN GAME\r")
+            service.put(session, None, "$.!BOOT", host, None, None, None)
+            service.put(session, None, "R.GAME", host, None, None, None)
+            service.put(session, None, "R.EXTRA", host, None, None, None)
+
+            listing = service.browse_directory(session, "$", None)
+
+            self.assertEqual([row["name"] for row in listing["entries"]], ["!BOOT", "R.EXTRA", "R.GAME"])
+            self.assertEqual([row["path"] for row in listing["entries"]], ["$.!BOOT", "R.EXTRA", "R.GAME"])
+            self.assertTrue(listing["entries"][1]["catalogueBreak"])
+            self.assertFalse(listing["entries"][2]["catalogueBreak"])
+            self.assertTrue(all(row["contentKind"] == "script" for row in listing["entries"]))
+
     def test_dfs_prefix_validation_rejects_hierarchical_paths(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             service = DiskService(folder)
@@ -839,6 +857,20 @@ ValueError: A concise engine failure"""
             service.insert_slot_from_session(target, 236, source, None)
 
             self.assertEqual(service.list_slots(target)[236]["name"], "GHOULS")
+
+    def test_formatted_mmb_slot_exports_as_a_named_ssd(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            service = DiskService(Path(temporary) / "work")
+            target = service.create_blank("mmb", "")
+            source = service.create_blank("ssd", "ARCADIANS")
+            service.insert_slot_from_session(target, 12, source, None)
+
+            data, filename = service.slot_download(target, 12)
+
+            self.assertEqual(filename, "ARCADIANS.ssd")
+            self.assertEqual(data, source.path.read_bytes())
+            with self.assertRaisesRegex(DiskError, "empty"):
+                service.slot_download(target, 13)
 
 
 if __name__ == "__main__":

@@ -4,7 +4,11 @@ function newPaneState(image = null) {
     slot: null,
     side: image?.doubleSided ? 0 : null,
     slotName: "",
-    path: image?.kind === "dfs" ? "" : "$",
+    path: "$",
+    archivePath: null,
+    archiveName: "",
+    archiveMember: "",
+    archiveKind: "",
     entries: [],
     capacity: null,
     selected: null,
@@ -13,6 +17,7 @@ function newPaneState(image = null) {
     loading: Boolean(image),
     requestToken: 0,
     menuDetected: false,
+    fileKinds: {},
     menuDetectionPending: Boolean(image?.kind === "mmb")
   };
 }
@@ -22,8 +27,8 @@ function isDfsPane(pane) {
 }
 
 function restoredDfsPath(saved) {
-  if (saved?.pathModel === "dfs-prefixes") return typeof saved.path === "string" ? saved.path : "";
-  return saved?.path === "$" || typeof saved?.path !== "string" ? "" : saved.path;
+  if (typeof saved?.path !== "string" || saved.path === "") return "$";
+  return saved.path;
 }
 
 const MAX_PANES = 3;
@@ -77,6 +82,60 @@ const PANE_ICONS = {
   refreshView: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 8.5A8 8 0 1 0 20 15"/><path d="M19.5 3.5v5h-5"/></svg>',
   closePane: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6.5 6.5 11 11M17.5 6.5l-11 11"/></svg>',
 };
+
+const FILE_ICONS = {
+  folder: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 6.5h6l2 2h9v10h-17z"/><path d="M3.5 9.5h17"/></svg>',
+  folderUp: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 6.5h6l2 2h9v10h-17z"/><path d="M12 16v-5m-2 2 2-2 2 2"/></svg>',
+  catalogue: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 6.5h6l2 2h9v10h-17z"/><path d="M7 12h2m2 0h2m2 0h2M7 15h2m2 0h2m2 0h2"/></svg>',
+  disk: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3.5h12l2 2v15H5z"/><path d="M8 3.5v6h8v-6M8 20.5v-7h8v7"/></svg>',
+  rom: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"/><path d="M9 2.5v3m3-3v3m3-3v3M9 18.5v3m3-3v3m3-3v3M2.5 9h3m-3 3h3m-3 3h3m13-6h3m-3 3h3m-3 3h3"/></svg>',
+  archive: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h12v17H6z"/><path d="M10 3.5v3h4v3h-4v3h4v3h-4v3h4"/></svg>',
+  basic: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8l4 4v13H6z"/><path d="M14 3.5v4h4"/><text x="12" y="16.5" text-anchor="middle">B</text></svg>',
+  script: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8l4 4v13H6z"/><path d="M14 3.5v4h4M9 12l2 2-2 2m3.5 0H16"/></svg>',
+  text: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8l4 4v13H6z"/><path d="M14 3.5v4h4M9 11h6m-6 3h6m-6 3h4"/></svg>',
+  binary: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8l4 4v13H6z"/><path d="M14 3.5v4h4"/><text x="12" y="16.5" text-anchor="middle">01</text></svg>',
+  file: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8l4 4v13H6z"/><path d="M14 3.5v4h4"/></svg>',
+};
+
+const ARCHIVE_NAME_RE = /\.(?:uef|zip|tar|tgz|tbz2?|txz|gz|gzip|bz2|xz)$/i;
+const SCRIPT_NAME_RE = /^(?:!boot|boot|startup|start|loader|menu)(?:\.|$)/i;
+
+function fileKindKey(pane, name) {
+  return [pane.slot ?? "image", pane.side ?? "side", pane.path, pane.archivePath || "", pane.archiveMember || "", name].join("|").toLocaleLowerCase();
+}
+
+function entryIcon(pane, entry, entryType, isArchiveFile, isVirtual) {
+  let kind = "binary";
+  let label = "Binary file";
+  const name = String(entry.name || "");
+  const cached = entry.contentKind || pane.fileKinds?.[fileKindKey(pane, name)];
+  const filetype = String(entry.filetype ?? "").replace(/^0x|^&/i, "").toUpperCase();
+  if (entryType === "disk") [kind, label] = ["disk", "Disk image"];
+  else if (entryType === "rom-bank") [kind, label] = ["rom", "ROM bank"];
+  else if (isVirtual) [kind, label] = ["catalogue", "DFS catalogue group"];
+  else if (entryType === "dir") [kind, label] = ["folder", pane.archivePath ? "Container folder" : "Directory"];
+  else if (isArchiveFile || cached === "container" || ARCHIVE_NAME_RE.test(name)) [kind, label] = ["archive", "Archive or tape container"];
+  else if (cached === "basic" || filetype === "FFB" || /\.(?:bas|basic)$/i.test(name)) [kind, label] = ["basic", "BBC BASIC program"];
+  else if (cached === "script" || filetype === "FEB" || SCRIPT_NAME_RE.test(name)) [kind, label] = ["script", "Command script"];
+  else if (cached === "text" || filetype === "FFF" || /\.(?:txt|text|md)$/i.test(name) || /^(?:readme|license|copying)(?:\.|$)/i.test(name)) [kind, label] = ["text", "Text file"];
+  else if (entry.length === 0) [kind, label] = ["file", "Empty file"];
+  return { kind, label, markup: FILE_ICONS[kind] };
+}
+
+function fitPaneMenus(host) {
+  const menus = [...host.querySelectorAll(".tool-menu")];
+  menus.forEach(menu => menu.addEventListener("toggle", () => {
+    if (!menu.open) return;
+    menus.forEach(other => { if (other !== menu) other.open = false; });
+    requestAnimationFrame(() => {
+      const panel = menu.querySelector(":scope > .tool-menu-panel");
+      if (!panel) return;
+      const available = Math.max(140, window.innerHeight - panel.getBoundingClientRect().top - 10);
+      panel.style.setProperty("--menu-available-height", `${available}px`);
+      panel.classList.toggle("tool-menu-panel-right", panel.getBoundingClientRect().right > window.innerWidth - 8);
+    });
+  }));
+}
 
 function normalisePage(value) {
   const cleaned = String(value || "").trim().replace(/^&/, "").toUpperCase();
@@ -178,6 +237,9 @@ function rememberOpenPanes() {
     slot: pane.slot,
     side: pane.side,
     path: pane.path,
+    archivePath: pane.archivePath,
+    archiveName: pane.archiveName,
+    archiveMember: pane.archiveMember,
     pathModel: isDfsPane(pane) ? "dfs-prefixes" : "hierarchical",
   } : null);
   try {
@@ -248,6 +310,12 @@ async function restoreOpenPanes() {
         pane.path = data.image.kind === "dfs" ? restoredDfsPath(saved) : saved.path;
         await loadDirectory(index);
       }
+      if (typeof saved.archivePath === "string" && saved.archivePath) {
+        pane.archivePath = saved.archivePath;
+        pane.archiveName = String(saved.archiveName || "Archive");
+        pane.archiveMember = String(saved.archiveMember || "");
+        await loadDirectory(index);
+      }
     } catch (error) {
       panes[index] = newPaneState();
       renderPane(index);
@@ -296,6 +364,25 @@ function preferredDestinationPane(index) {
 
 function paneLabel(index) {
   return `Pane ${index + 1}${panes[index].image ? ` · ${panes[index].image.name}` : " · Empty"}`;
+}
+
+function matchingBlankImageFormat(pane) {
+  const image = pane.image;
+  if (!image) return { value: "ssd", label: "DFS SSD" };
+  if (image.kind === "mmb") return { value: "mmb", label: "MMB" };
+  if (image.kind === "rom") return { value: "rom", label: "ROM" };
+  if (image.kind === "romfs") return { value: "romfs", label: "Acorn ROMFS" };
+  if (image.kind === "dfs") {
+    const suffix = image.doubleSided ? "dsd" : "ssd";
+    return { value: image.containerFormat === "hfe" ? `hfe-${suffix}` : suffix, label: image.containerFormat === "hfe" ? `HFE DFS ${suffix.toUpperCase()}` : `DFS ${suffix.toUpperCase()}` };
+  }
+  if (image.kind === "adfs") {
+    if (image.hasDescriptor) return { value: "beebscsi", label: "BeebSCSI DAT + DSC" };
+    if (image.targetHardware === "risc-os") return { value: "adfs-hard", label: "RISC OS HDF" };
+    const floppy = image.size <= 170 * 1024 ? "s" : image.size <= 340 * 1024 ? "m" : "l";
+    return { value: image.containerFormat === "hfe" ? `hfe-adfs-${floppy}` : `adfs-${floppy}`, label: `${image.containerFormat === "hfe" ? "HFE " : ""}ADFS ${floppy.toUpperCase()}` };
+  }
+  return { value: "ssd", label: "DFS SSD" };
 }
 
 function openDiskPaneSource(index) {
@@ -583,6 +670,7 @@ function paneFormat(image) {
   if (image.kind === "mmb") return "MMB";
   if (image.kind === "tape") return "UEF";
   if (image.kind === "rom") return "ROM";
+  if (image.kind === "romfs") return "RFS";
   if (image.kind === "dfs") return image.name.toLowerCase().endsWith(".dsd") ? "DSD" : "SSD";
   return "ADFS";
 }
@@ -619,6 +707,18 @@ function fullPath(directory, name) {
 
 function targetNameRule(pane, original) {
   if (pane.image?.kind === "rom") return { valid: true, suggested: original, limit: 180, label: "ROM bank", adjusted: false, truncated: false };
+  if (pane.image?.kind === "romfs") {
+    const raw = String(original || "");
+    let suggested = raw.normalize("NFKD").replace(/[^\x20-\xff]/g, "_").slice(0, 10) || "FILE";
+    return {
+      valid: raw.length > 0 && raw.length <= 10 && !/[\x00-\x1f]/.test(raw),
+      suggested,
+      limit: 10,
+      label: "ROMFS",
+      adjusted: raw !== suggested,
+      truncated: raw.length > 10,
+    };
+  }
   const isDfs = pane.image?.kind === "dfs" || (pane.image?.kind === "mmb" && pane.slot !== null);
   const limit = isDfs ? 7 : 10;
   const label = isDfs ? "DFS" : "ADFS";
@@ -658,6 +758,17 @@ function crumbs(path, dfs = false) {
   }).join("");
 }
 
+function archiveCrumbs(pane) {
+  const parts = String(pane.archiveMember || "").split("/").filter(Boolean);
+  let member = "";
+  const children = parts.map((part, index) => {
+    member = member ? `${member}/${part}` : part;
+    const current = index === parts.length - 1;
+    return `${current ? "<span class=\"crumb current\">" : `<button class="crumb" data-archive-member="${esc(member)}">`}› ${esc(part)}${current ? "</span>" : "</button>"}`;
+  }).join("");
+  return `<button class="crumb archive-exit" title="Return to the containing filing system">${esc(pane.archiveName || "Archive")}</button>${children}`;
+}
+
 function selectionKeys(pane) {
   if (Array.isArray(pane.selection) && pane.selection.length) return pane.selection.map(String);
   return pane.selected == null ? [] : [String(pane.selected)];
@@ -672,7 +783,15 @@ function setSelection(pane, keys, anchor = null) {
 function selectedEntries(index) {
   const pane = panes[index];
   const keys = new Set(selectionKeys(pane));
-  return pane.entries.filter(entry => keys.has(String(entry.slot ?? entry.name)));
+  return pane.entries.filter(entry => keys.has(entrySelectionKey(entry)));
+}
+
+function entrySelectionKey(entry) {
+  return String(entry.slot ?? entry.path ?? entry.name);
+}
+
+function entryImagePath(pane, entry) {
+  return entry.path || fullPath(pane.path, entry.name);
 }
 
 function selectedEntry(index) {
@@ -714,7 +833,7 @@ function clipboardItemsForPane(index) {
       image: pane.image.id,
       slot: pane.slot,
       side: pane.side,
-      path: fullPath(pane.path, entry.name),
+      path: entryImagePath(pane, entry),
       name: entry.name,
       length: Number(entry.length || 0),
       recursive: entry.type === "dir" || entry.type === "directory",
@@ -729,7 +848,7 @@ function rowIsPendingCut(pane, entry) {
         item.image === pane.image.id && Number(item.slot) === Number(entry.slot)
       );
   }
-  const path = fullPath(pane.path, entry.name).toLowerCase();
+  const path = entryImagePath(pane, entry).toLowerCase();
   return workspaceClipboard.kind === "files"
     && workspaceClipboard.items.some(item =>
       item.image === pane.image.id
@@ -749,7 +868,7 @@ function canPasteIntoPane(pane) {
 
 function selectRow(index, key, { toggle = false, range = false } = {}) {
   const pane = panes[index];
-  const rowKeys = pane.entries.map(entry => String(entry.slot ?? entry.name));
+  const rowKeys = pane.entries.map(entrySelectionKey);
   const current = new Set(selectionKeys(pane));
   if (range && pane.selectionAnchor != null && rowKeys.includes(String(pane.selectionAnchor))) {
     const start = rowKeys.indexOf(String(pane.selectionAnchor));
@@ -809,20 +928,26 @@ function renderPane(index, preserveScroll = false) {
   const isSlots = pane.image.kind === "mmb" && pane.slot === null;
   const isTape = pane.image.kind === "tape";
   const isRom = pane.image.kind === "rom";
+  const isRomfs = pane.image.kind === "romfs";
+  const isArchive = Boolean(pane.archivePath);
   const isDfs = isDfsPane(pane);
   const isDfsRoot = isDfs && pane.path === "";
-  const supportsFolders = pane.image.kind === "adfs" && !isSlots && !isTape;
+  const supportsFolders = pane.image.kind === "adfs" && !isSlots && !isTape && !isArchive;
   const canFolder = supportsFolders && !pane.image.readOnly;
-  const canEdit = !isSlots && !isTape && !pane.image.readOnly;
+  const canEdit = !isSlots && !isTape && !isArchive && !pane.image.readOnly;
   const canEditFiles = canEdit && (!isDfsRoot || isRom);
   const isDsd = pane.image.doubleSided;
   const kind = pane.image.kind === "mmb" && pane.slot !== null ? "dfs" : pane.image.kind;
-  const location = isSlots
+  const location = isArchive
+    ? `${pane.archiveName} · /${pane.archiveMember || ""}`
+    : isSlots
     ? "MMB disk index"
     : isTape
       ? "Cassette tape"
       : isRom
         ? `${pane.image.rom?.platform || "Acorn"} · ${pane.image.rom?.bankCount || 0} bank(s)`
+      : isRomfs
+        ? `${pane.image.romfs?.title || "ROMFS"} · version ${pane.image.romfs?.version ?? 0} · flat data ROM`
       : pane.slot !== null
         ? `Slot ${pane.slot} · ${pane.slotName}${isDfsRoot ? " · DFS catalogues" : ` · ${pane.path}`}`
         : isDsd
@@ -830,11 +955,11 @@ function renderPane(index, preserveScroll = false) {
           : isDfs
             ? isDfsRoot ? "DFS catalogues" : `DFS catalogue ${pane.path}`
             : "Root filing system";
-  const hasParentEntry = !isSlots && !isTape && !isRom && (
+  const hasParentEntry = isArchive || (!isSlots && !isTape && !isRom && (
     pane.slot !== null || (isDfs ? pane.path !== "" : pane.path !== "$")
-  );
+  ));
   const parentRow = hasParentEntry ? `<tr class="file-row parent-row" aria-label="Parent directory" tabindex="0" draggable="false" data-parent="1" data-key=".." data-name=".." data-type="dir" data-slot="" data-empty="0">
-    <td class="file-name-cell"><div class="file-name-wrap"><span class="file-icon dir">↰</span><strong>..</strong></div></td>
+    <td class="file-name-cell"><div class="file-name-wrap"><span class="file-icon dir" title="Parent directory">${FILE_ICONS.folderUp}</span><strong>..</strong></div></td>
     <td class="meta">Parent directory</td>
     <td class="meta">-</td>
     <td><span class="pill">-</span></td>
@@ -843,7 +968,9 @@ function renderPane(index, preserveScroll = false) {
     const entryType = entry.type === "directory" ? "dir" : entry.type;
     const isDir = entryType === "dir";
     const isVirtual = Boolean(entry.virtual);
-    const icon = entryType === "disk" ? "▣" : entryType === "rom-bank" ? "▥" : isDir ? "↳" : "F";
+    const isArchiveFile = Boolean(entry.archive);
+    const visual = entryIcon(pane, entry, entryType, isArchiveFile, isVirtual);
+    const icon = visual.markup;
     const size = entryType === "disk" ? `#${entry.slot}` : isVirtual ? "Catalogue group" : isDir ? `${entry.length || 0} items` : humanSize(entry.length);
     const detail = entryType === "disk"
       ? entry.formatted ? (entry.writable ? "Read/write" : "Protected") : "Unformatted"
@@ -851,20 +978,23 @@ function renderPane(index, preserveScroll = false) {
     const attr = entryType === "disk"
       ? (entry.formatted ? (entry.writable ? "RW" : "RO") : "-")
       : entry.attr || "";
-    const entryKey = String(entry.slot ?? entry.name);
-    const rowActionable = !isVirtual && !pane.image.readOnly && !isTape && (isSlots ? entry.formatted : canEdit);
+    const entryKey = entrySelectionKey(entry);
+    const rowActionable = !isArchive && !isVirtual && !pane.image.readOnly && !isTape && (isSlots ? entry.formatted : canEdit);
     const accessActionable = rowActionable;
+    const downloadable = (isSlots && entry.formatted) || (!isSlots && !isDir && !isVirtual && !isRom);
+    const openHint = isArchiveFile ? ' title="Double-click to browse this archive"' : downloadable ? ' title="Double-click to open"' : "";
     const multiSelection = selectedKeys.size > 1;
     const hideGroupAction = multiSelection && !selectedKeys.has(entryKey);
     const actionName = isSlots ? `disk ${entry.slot} · ${entry.name}` : isRom ? `bank ${entry.bank} · ${entry.name}` : entry.name;
+    const downloadAction = downloadable ? `<button class="row-action row-download" type="button" draggable="false" title="${isArchive ? "Export archive member" : `Download ${esc(actionName)} with its metadata`}" aria-label="${isArchive ? `Export ${esc(actionName)}` : `Download ${esc(actionName)}`}">⇩</button>` : "";
     const rowActions = rowActionable || isRom ? `<span class="row-actions">
       ${isRom ? `<button class="row-action row-rom-inspect" type="button" draggable="false" title="Decode ${esc(actionName)}" aria-label="Decode ${esc(actionName)}">ⓘ</button>` : ""}
       ${!isRom || entry.header ? `<button class="row-action row-rename" type="button" draggable="false" title="Rename ${esc(actionName)}" aria-label="Rename ${esc(actionName)}" ${multiSelection ? "hidden" : ""}>✎</button>` : ""}
       ${rowActionable ? `<button class="row-action delete row-delete" type="button" draggable="false" title="${isSlots ? "Eject" : "Delete"} ${esc(actionName)}" aria-label="${isSlots ? "Eject" : "Delete"} ${esc(actionName)}" ${hideGroupAction ? "hidden" : ""}>×</button>` : ""}
     </span>` : "";
-    const accessCell = `<td class="access-cell"><span class="pill">${esc(attr || detail)}</span>${accessActionable && !isRom ? `<span class="access-actions" ${hideGroupAction ? "hidden" : ""}>
-      <button class="row-action row-read-write" type="button" draggable="false" title="Mark ${esc(actionName)} read / write" aria-label="Mark ${esc(actionName)} read / write">◇</button>
-      <button class="row-action row-read-only" type="button" draggable="false" title="Mark ${esc(actionName)} read-only" aria-label="Mark ${esc(actionName)} read-only">◆</button>
+  const accessCell = `<td class="access-cell"><span class="pill">${esc(attr || detail)}</span>${accessActionable && !isRom ? `<span class="access-actions" ${hideGroupAction ? "hidden" : ""}>
+      <button class="row-action row-read-write" type="button" draggable="false" title="${isRomfs ? "Make loadable" : "Mark read / write"} · ${esc(actionName)}" aria-label="${isRomfs ? "Make loadable" : "Mark read / write"} ${esc(actionName)}">◇</button>
+      <button class="row-action row-read-only" type="button" draggable="false" title="${isRomfs ? "Mark *RUN-only" : "Mark read-only"} · ${esc(actionName)}" aria-label="${isRomfs ? "Mark run-only" : "Mark read-only"} ${esc(actionName)}">◆</button>
     </span>` : ""}</td>`;
     const romHeader = entry.header || null;
     const romOffset = Number.isFinite(Number(entry.fileOffset)) ? Number(entry.fileOffset) : Number(entry.bank || 0) * Number(pane.image.rom?.bankSize || entry.length || 0);
@@ -892,33 +1022,41 @@ function renderPane(index, preserveScroll = false) {
     const romMatches = entry.matchingBanks?.length ? `Identical to bank${entry.matchingBanks.length === 1 ? "" : "s"} ${entry.matchingBanks.join(", ")}` : "Unique bank contents";
     const cells = isSlots
       ? `<td class="meta slot-number">${entry.slot}</td>
-      <td class="file-name-cell"><div class="file-name-wrap"><span class="file-icon ${entryType}">${icon}</span><strong>${esc(entry.name)}</strong>${rowActions}</div></td>
+      <td class="file-name-cell"><div class="file-name-wrap"><span class="file-icon ${visual.kind}" title="${esc(visual.label)}">${icon}</span><strong>${esc(entry.name)}</strong>${downloadAction}${rowActions}</div></td>
       <td class="meta">${esc(entry.formatted ? "DFS disk" : "Empty")}</td>
       ${accessCell}`
       : isRom ? `<td class="rom-bank-cell" data-label="Bank and address"><strong>Bank ${String(entry.bank).padStart(3, "0")}</strong><small>File &amp;${romOffset.toString(16).toUpperCase().padStart(6, "0")}</small><small>${romMapped}</small></td>
-        <td class="file-name-cell rom-identity-cell" data-label="Identity"><div class="file-name-wrap"><span class="file-icon ${entryType}">${icon}</span><strong>${esc(entry.name)}</strong>${rowActions}</div><small>${romIdentityDetail}</small></td>
+        <td class="file-name-cell rom-identity-cell" data-label="Identity"><div class="file-name-wrap"><span class="file-icon ${visual.kind}" title="${esc(visual.label)}">${icon}</span><strong>${esc(entry.name)}</strong>${rowActions}</div><small>${romIdentityDetail}</small></td>
         <td class="rom-purpose-cell" data-label="Purpose and entry points"><strong>${romPurpose}</strong><small>${romEntries || esc(entry.filetype || "No decoded entry points")}</small></td>
         <td class="rom-usage-cell" data-label="Contents"><strong>${romUsage}</strong><small>${romMatches}</small><small class="rom-hash" title="SHA-256 ${esc(entry.diagnostics?.sha256 || "Unavailable")}">${entry.diagnostics?.sha256 ? `SHA-256 ${esc(entry.diagnostics.sha256.slice(0, 12))}…` : ""}</small></td>`
-      : `<td class="file-name-cell"><div class="file-name-wrap"><span class="file-icon ${entryType}">${icon}</span><strong>${esc(entry.name)}</strong>
-        ${rowActions}
+      : `<td class="file-name-cell"><div class="file-name-wrap"><span class="file-icon ${visual.kind}" title="${esc(visual.label)}">${icon}</span><strong>${esc(entry.name)}</strong>
+        ${downloadAction}${rowActions}
       </div></td>
-      <td class="meta">${esc(isVirtual ? "DFS catalogue" : isDir ? "Directory" : "File")}</td>
+      <td class="meta">${esc(isVirtual ? "DFS catalogue" : isDir ? (isArchive ? (pane.archiveKind === "uef" ? "Tape folder" : "Archive folder") : "Directory") : isArchiveFile ? "Archive" : isArchive ? (pane.archiveKind === "uef" ? "Tape file" : "Archive file") : "File")}</td>
       <td class="meta">${esc(size)}</td>
       ${accessCell}`;
-    return `<tr class="file-row${selectedKeys.has(entryKey) ? " selected" : ""}${entry.empty ? " empty-slot" : ""}${isVirtual ? " virtual-catalogue-row" : ""}${rowIsPendingCut(pane, entry) ? " clipboard-cut" : ""}"
+    return `<tr class="file-row${selectedKeys.has(entryKey) ? " selected" : ""}${entry.empty ? " empty-slot" : ""}${isVirtual ? " virtual-catalogue-row" : ""}${entry.catalogueBreak ? " catalogue-break" : ""}${rowIsPendingCut(pane, entry) ? " clipboard-cut" : ""}"${openHint}
       aria-selected="${selectedKeys.has(entryKey)}"
-      tabindex="0" draggable="${!isVirtual && entry.formatted !== false}" data-key="${esc(entryKey)}" data-name="${esc(entry.name)}" data-type="${entryType}" data-slot="${entry.slot ?? ""}" data-bank="${entry.bank ?? ""}" data-empty="${entry.empty ? "1" : "0"}" data-virtual="${isVirtual ? "1" : "0"}">
+      tabindex="0" draggable="${!isArchive && !isVirtual && entry.formatted !== false}" data-key="${esc(entryKey)}" data-name="${esc(entry.name)}" data-path="${esc(entry.path || "")}" data-type="${entryType}" data-archive="${isArchiveFile ? "1" : "0"}" data-slot="${entry.slot ?? ""}" data-bank="${entry.bank ?? ""}" data-empty="${entry.empty ? "1" : "0"}" data-virtual="${isVirtual ? "1" : "0"}">
       ${cells}
     </tr>`;
   }).join("");
   const selectedEmptySlot = Boolean(selected && selected.type === "disk" && selected.empty);
+  const matchingFormat = matchingBlankImageFormat(pane);
+  const canNewFile = canEditFiles && !isArchive;
+  const newSubmenu = `<details class="menu-submenu"><summary><b>＋</b><span>New</span><small>›</small></summary><div class="menu-submenu-panel">
+    <button class="menu-command menu-new-matching-image" data-format="${matchingFormat.value}"><b>▤</b><span>New Image (${esc(matchingFormat.label)})…</span></button>
+    ${canNewFile ? '<button class="menu-command new-empty-file"><b>F</b><span>New file…</span></button>' : ""}
+    ${canFolder ? '<button class="menu-command new-folder"><b>▢</b><span>New folder…</span></button>' : ""}
+    ${isSlots ? `<button class="menu-command insert-new-disc" ${selectedEmptySlot ? "" : "disabled"}><b>◎</b><span>Insert new disc image…</span></button>` : ""}
+  </div></details>`;
   const clipboardSelection = clipboardItemsForPane(index);
   const clipboardTools = `<details class="tool-menu edit-tools">
     <summary class="tool"><b>✎</b><span>Edit</span></summary>
     <div class="tool-menu-panel">
-      <button class="menu-command clipboard-cut-action" ${clipboardSelection.length && !pane.image.readOnly && !isTape ? "" : "disabled"} title="Cut selected items"><b>✂</b><span>Cut <small>Ctrl/Cmd+X</small></span></button>
-      <button class="menu-command clipboard-copy-action" ${clipboardSelection.length ? "" : "disabled"} title="Copy selected items"><b>⧉</b><span>Copy <small>Ctrl/Cmd+C</small></span></button>
-      <button class="menu-command clipboard-paste-action" ${canPasteIntoPane(pane) ? "" : "disabled"} title="Paste once into this location"><b>▣</b><span>Paste <small>Ctrl/Cmd+V</small></span></button>
+      <button class="menu-command clipboard-cut-action" ${!isArchive && clipboardSelection.length && !pane.image.readOnly && !isTape ? "" : "disabled"} title="Cut selected items"><b>✂</b><span>Cut <small>Ctrl/Cmd+X</small></span></button>
+      <button class="menu-command clipboard-copy-action" ${!isArchive && clipboardSelection.length ? "" : "disabled"} title="Copy selected items"><b>⧉</b><span>Copy <small>Ctrl/Cmd+C</small></span></button>
+      <button class="menu-command clipboard-paste-action" ${!isArchive && canPasteIntoPane(pane) ? "" : "disabled"} title="Paste once into this location"><b>▣</b><span>Paste <small>Ctrl/Cmd+V</small></span></button>
       ${pane.image.readOnly || isTape ? "" : `<span class="menu-separator" role="separator"></span>
         <button class="menu-command undo-image" ${pane.image.checkpoints?.canUndo ? "" : "disabled"}><b>↶</b><span>Undo last change</span></button>
         <button class="menu-command manage-checkpoints"><b>◉</b><span>Checkpoints…</span></button>`}
@@ -927,22 +1065,21 @@ function renderPane(index, preserveScroll = false) {
   const fileTools = `<details class="tool-menu file-tools${isSlots ? " add-disk-tools" : ""}">
     <summary class="tool"><b>▤</b><span>File</span></summary>
     <div class="tool-menu-panel">
-      <button class="menu-command menu-new-image"><b>＋</b><span>New blank image…</span></button>
+      ${newSubmenu}
       <button class="menu-command menu-load-image"><b>▤</b><span>Open image…</span></button>
       <button class="menu-command menu-save-image"><b>⇩</b><span>Save image</span></button>
       ${isTape || pane.image.readOnly ? "" : `<span class="menu-separator" role="separator"></span>`}
       ${isSlots ? `<div class="open-disk-imports">${openDiskImportMarkup(index)}</div>
-        <button class="menu-command insert-disk" ${selectedEmptySlot ? "" : "disabled"}><b>↥</b><span>Insert SSD / DSD / HFE / ZIP…</span></button>
+        <button class="menu-command insert-disk" ${selectedEmptySlot ? "" : "disabled"}><b>↥</b><span>Insert existing SSD / DSD / HFE / ZIP…</span></button>
         <button class="menu-command import-folder" ${pane.entries.some(entry => entry.empty) ? "" : "disabled"}><b>▣</b><span>Insert folder of disk images…</span></button>
-        <button class="menu-command create-blank-ssd" ${selectedEmptySlot ? "" : "disabled"}><b>○</b><span>Create blank SSD here</span></button>
-        <button class="menu-command create-blank-dsd" ${selectedEmptySlot ? "" : "disabled"}><b>◎</b><span>Create blank DSD here</span></button>`
-        : !isTape && !pane.image.readOnly ? `<button class="menu-command import-file" ${canEditFiles ? "" : 'disabled title="Open $ or another DFS catalogue group before adding files."'}><b>＋</b><span>${isRom ? "Add ROM bank(s)…" : "Add file…"}</span></button>
-          <button class="menu-command import-folder" ${canEditFiles ? "" : 'disabled title="Open $ or another DFS catalogue group before adding files."'}><b>▣</b><span>Add folder…</span></button>
+        `
+        : !isTape && !pane.image.readOnly ? `<button class="menu-command import-file" ${canEditFiles ? "" : 'disabled title="Open $ or another DFS catalogue group before inserting files."'}><b>＋</b><span>${isRom ? "Insert ROM bank(s)…" : "Insert File…"}</span></button>
+          <button class="menu-command import-folder" ${canEditFiles ? "" : 'disabled title="Open $ or another DFS catalogue group before inserting files."'}><b>▣</b><span>Insert Folder &amp; Contents…</span></button>
           ${isRom
             ? `<button class="menu-command append-rom-bank"><b>▥</b><span>Append empty bank</span></button>`
             : isDfs
             ? `<button class="menu-command new-dfs-catalogue"><b>▢</b><span>New catalogue group…</span></button>`
-            : `<button class="menu-command new-folder" ${canFolder ? "" : 'disabled title="This format cannot store directories."'}><b>▢</b><span>New folder…</span></button>`}` : ""}
+            : ""}` : ""}
       <span class="menu-separator" role="separator"></span>
       <button class="menu-command menu-close-pane"><b>×</b><span>Close pane</span></button>
     </div>
@@ -955,13 +1092,13 @@ function renderPane(index, preserveScroll = false) {
       ${isDsd ? `<button class="menu-command switch-side"><b>⇄</b><span>Switch to side ${pane.side === 2 ? "0" : "2"}</span></button>` : ""}
     </div>
   </details>`;
-  const libraryTools = isTape || isRom || pane.image.readOnly ? "" : `<details class="tool-menu library-tools">
+  const libraryTools = isArchive || isTape || isRom || pane.image.readOnly ? "" : `<details class="tool-menu library-tools">
     <summary class="tool"><b>⌕</b><span>Library</span></summary>
     <div class="tool-menu-panel">
       <button class="menu-command online-library" ${!isSlots && isDfsRoot ? 'disabled title="Open a DFS catalogue group before installing files."' : ""}><b>⌕</b><span>${isSlots ? "Find disks online…" : "Find software online…"}</span></button>
     </div>
   </details>`;
-  const menuTools = pane.image.kind === "mmb"
+  const menuTools = isArchive ? "" : pane.image.kind === "mmb"
     ? `<details class="tool-menu">
         <summary class="tool"><b>☰</b><span>Menu</span></summary>
         <div class="tool-menu-panel">
@@ -987,8 +1124,8 @@ function renderPane(index, preserveScroll = false) {
     <summary class="tool"><b>⌁</b><span>Analyse</span></summary>
     <div class="tool-menu-panel tool-menu-panel-right">
       <button class="menu-command health-dashboard"><b>♥</b><span>Image health dashboard</span></button>
-      ${isRom ? "" : '<button class="menu-command preflight-selection"><b>◫</b><span>Dry-run selected items</span></button>'}
-      ${!isRom && !isSlots && selected && selected.type !== "dir" && selected.type !== "directory" ? '<button class="menu-command inspect-file"><b>⌕</b><span>Inspect selected file</span></button><button class="menu-command inspect-dependencies"><b>⛓</b><span>Check loader dependencies</span></button>' : ""}
+      ${isRom || isArchive ? "" : '<button class="menu-command preflight-selection"><b>◫</b><span>Dry-run selected items</span></button>'}
+      ${!isArchive && !isRom && !isSlots && selected && selected.type !== "dir" && selected.type !== "directory" ? '<button class="menu-command inspect-file"><b>⌕</b><span>Open selected file</span></button><button class="menu-command inspect-dependencies"><b>⛓</b><span>Check loader dependencies</span></button>' : ""}
       ${["mmb", "adfs"].includes(pane.image.kind) ? `<button class="menu-command test-menu-entries" ${(
         pane.image.kind === "mmb"
           ? pane.menuDetected && !pane.menuDetectionPending
@@ -1003,7 +1140,7 @@ function renderPane(index, preserveScroll = false) {
     <div class="tool-menu-panel tool-menu-panel-right">
       <button class="menu-command open-hex-editor"><b>0x</b><span>Hex editor…</span></button>
       ${isSlots ? "" : `<button class="menu-command validate-image"><b>✓</b><span>${isRom ? "Check ROM structure" : "Check filesystem"}</span></button>`}
-      ${isRom ? '<button class="menu-command rom-workbench"><b>⌬</b><span>ROM Workbench…</span></button><button class="menu-command configure-rom"><b>▥</b><span>ROM layout…</span></button>' : isSlots || isTape ? (isTape ? '<button class="menu-command convert-tape"><b>⇥</b><span>Convert tape to disk</span></button>' : "") : pane.image.readOnly ? "" : '<button class="menu-command compact-image"><b>≋</b><span>Compact filesystem</span></button>'}
+      ${isArchive ? "" : isRom ? '<button class="menu-command rom-workbench"><b>⌬</b><span>ROM Workbench…</span></button><button class="menu-command configure-rom"><b>▥</b><span>ROM layout…</span></button>' : isRomfs ? `${pane.image.readOnly ? "" : '<button class="menu-command configure-romfs"><b>▥</b><span>ROMFS properties…</span></button>'}` : isSlots || isTape ? (isTape ? '<button class="menu-command convert-tape"><b>⇥</b><span>Convert tape to disk</span></button>' : "") : pane.image.readOnly ? "" : '<button class="menu-command compact-image"><b>≋</b><span>Compact filesystem</span></button>'}
     </div>
   </details>`;
   const toolbarMarkup = `${fileTools}${clipboardTools}${viewTools}${libraryTools}
@@ -1031,13 +1168,16 @@ function renderPane(index, preserveScroll = false) {
     <nav class="toolbar" aria-label="Pane menus">
       ${toolbarMarkup}
     </nav>
-    <div class="breadcrumbs">${isSlots ? '<span class="crumb current">All disks</span>' : isRom ? '<span class="crumb current">ROM bank inventory</span>' : pane.slot !== null ? `<button class="crumb mmb-home">All disks</button><span>›</span>${crumbs(pane.path, isDfs)}` : crumbs(pane.path, isDfs)}</div>
+    <div class="breadcrumbs">${isArchive ? archiveCrumbs(pane) : isSlots ? '<span class="crumb current">All disks</span>' : isRom ? '<span class="crumb current">ROM bank inventory</span>' : pane.slot !== null ? `<button class="crumb mmb-home">All disks</button><span>›</span>${crumbs(pane.path, isDfs)}` : crumbs(pane.path, isDfs)}</div>
     ${isRom ? `<aside class="rom-pane-guide" aria-label="ROM pane guidance"><span><b>ⓘ Info</b> decodes headers, commands, strings and modules</span><span><b>Double-click</b> opens the bank in Hex</span><span><b>Tools → ROM Workbench</b> analyses code, revisions and hardware</span><span><b>ROM layout</b> changes bank interpretation without rewriting bytes</span></aside>` : ""}
+    ${isRomfs ? `<aside class="rom-pane-guide" aria-label="ROMFS pane guidance"><span><b>Flat catalogue</b> · case-sensitive names, maximum 10 characters</span><span><b>Access</b> switches between loadable and *RUN-only</span><span><b>ROMFS properties</b> edits title, version and copyright</span><span><b>Check filesystem</b> verifies every block CRC</span></aside>` : ""}
     <div class="list-wrap">
       ${loadingMarkup(pane)}
       ${(parentRow || rows) ? `<table class="file-list${isSlots ? " mmb-slot-list" : ""}${isRom ? " rom-bank-list" : ""}" role="grid" aria-label="${isSlots ? "MMB disk slots" : isRom ? "ROM bank inventory" : "Files in " + esc(location)}"><thead><tr>${isSlots ? "<th>Slot</th><th>Name</th><th>Kind</th><th>Access</th>" : isRom ? "<th>Bank and address</th><th>Identity</th><th>Purpose and entry points</th><th>Contents</th>" : "<th>Name</th><th>Kind</th><th>Size</th><th>Access</th>"}</tr></thead><tbody>${parentRow}${rows}</tbody></table>` : '<div class="empty-list">Nothing here yet.<br>Drop a host file into this pane to add it.</div>'}
     </div>
     <footer class="pane-foot"><span>${pane.image.readOnly ? "Read-only safe view · " : ""}${selectedKeys.size ? `${selectedKeys.size} selected · ` : ""}${pane.entries.length} ${isSlots ? "formatted or named slots" : isRom ? `bank${pane.entries.length === 1 ? "" : "s"}` : "objects"} · ${esc(pane.description || "")}</span>${capacityMarkup(pane.capacity)}</footer>`;
+
+  fitPaneMenus(host);
 
   if (pane.loading || pane.actionPending) {
     host.querySelectorAll("button").forEach(button => {
@@ -1055,7 +1195,7 @@ function renderPane(index, preserveScroll = false) {
     }
   };
   host.querySelector(".refresh-image").onclick = () => refreshCurrentView(index);
-  host.querySelector(".menu-new-image")?.addEventListener("click", () => guardedPaneAction(index, () => showCreateImageModal(index)));
+  host.querySelector(".menu-new-matching-image")?.addEventListener("click", event => guardedPaneAction(index, () => newImageFromFileMenu(index, event.currentTarget.dataset.format)));
   host.querySelector(".menu-load-image")?.addEventListener("click", () => chooseImage(index));
   host.querySelector(".menu-save-image")?.addEventListener("click", () => guardedPaneAction(index, () => saveImage(index)));
   host.querySelector(".menu-close-pane")?.addEventListener("click", () => closePane(index));
@@ -1066,18 +1206,20 @@ function renderPane(index, preserveScroll = false) {
   host.querySelector(".clipboard-paste-action")?.addEventListener("click", () => pasteWorkspaceClipboard(index));
   host.querySelector(".close-image").onclick = () => closePane(index);
   host.querySelector(".mmb-home")?.addEventListener("click", () => returnToMmb(index));
+  host.querySelector(".archive-exit")?.addEventListener("click", () => leaveArchive(index));
   host.querySelector(".import-file")?.addEventListener("click", () => guardedPaneAction(index, () => chooseHostFile(index)));
   host.querySelector(".import-folder")?.addEventListener("click", () => guardedPaneAction(index, () => chooseHostFolder(index)));
   host.querySelector(".new-folder")?.addEventListener("click", () => guardedPaneAction(index, () => createFolder(index)));
+  host.querySelector(".new-empty-file")?.addEventListener("click", () => guardedPaneAction(index, () => createEmptyFile(index)));
+  host.querySelector(".insert-new-disc")?.addEventListener("click", () => guardedPaneAction(index, () => showCreateImageModal(index, { insertMmb: true })));
   host.querySelector(".append-rom-bank")?.addEventListener("click", () => guardedPaneAction(index, () => appendBlankRomBank(index)));
   host.querySelector(".configure-rom")?.addEventListener("click", () => guardedPaneAction(index, () => configureRomLayout(index)));
+  host.querySelector(".configure-romfs")?.addEventListener("click", () => guardedPaneAction(index, () => configureRomfs(index)));
   host.querySelector(".rom-workbench")?.addEventListener("click", () => guardedPaneAction(index, () => showRomWorkbench(index)));
   host.querySelector(".new-dfs-catalogue")?.addEventListener("click", () => guardedPaneAction(index, () => createDfsCatalogue(index)));
   host.querySelector(".switch-side")?.addEventListener("click", () => switchDsdSide(index));
   host.querySelector(".insert-disk")?.addEventListener("click", () => guardedPaneAction(index, () => chooseSlotImage(index)));
   host.querySelector(".online-library")?.addEventListener("click", () => guardedPaneAction(index, () => showOnlineLibrary(index)));
-  host.querySelector(".create-blank-ssd")?.addEventListener("click", () => guardedPaneAction(index, () => createBlankMmbDisk(index, "ssd")));
-  host.querySelector(".create-blank-dsd")?.addEventListener("click", () => guardedPaneAction(index, () => createBlankMmbDisk(index, "dsd")));
   host.querySelector(".menu-entry")?.addEventListener("click", () => guardedPaneAction(index, () => scanMenuEntry(index)));
   host.querySelector(".setup-menu")?.addEventListener("click", () => guardedPaneAction(index, () => setupMmbMenu(index)));
   host.querySelector(".validate-image")?.addEventListener("click", () => guardedPaneAction(index, () => validateImage(index)));
@@ -1117,6 +1259,7 @@ function renderPane(index, preserveScroll = false) {
     });
   });
   host.querySelectorAll(".crumb[data-path]").forEach(button => button.onclick = () => navigate(index, button.dataset.path));
+  host.querySelectorAll(".crumb[data-archive-member]").forEach(button => button.onclick = () => navigateArchive(index, button.dataset.archiveMember));
   host.querySelectorAll(".file-row").forEach(row => wireRow(row, index));
   if ((pane.image.kind === "dfs") || (pane.image.kind === "mmb" && pane.slot !== null)) {
     const header = host.querySelector(".pane-head");
@@ -1202,6 +1345,14 @@ function wireRow(row, index) {
       toast(`Could not decode that ROM bank: ${error.message}`, true);
     });
   });
+  row.querySelector(".row-download")?.addEventListener("click", event => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (row.dataset.type === "disk") {
+      window.location.href = `/api/images/${panes[index].image.id}/slots/${row.dataset.slot}/download`;
+    } else if (panes[index].archivePath) window.location.href = archiveMemberUrl(panes[index], row.dataset.name);
+    else downloadFile(index, row.dataset.name, row.dataset.path || null);
+  });
   row.querySelector(".row-rename")?.addEventListener("click", event => {
     event.preventDefault();
     event.stopPropagation();
@@ -1243,7 +1394,7 @@ function wireRow(row, index) {
       event.preventDefault();
       const keys = panes[index].entries
         .filter(entry => entry.type !== "disk" || entry.formatted)
-        .map(entry => String(entry.slot ?? entry.name));
+        .map(entrySelectionKey);
       setSelection(panes[index], keys, row.dataset.key);
       refreshSelectionDisplay(index);
       return;
@@ -1290,7 +1441,7 @@ function wireRow(row, index) {
         image: pane.image.id,
         slot: pane.slot,
         side: pane.side,
-        path: pane.image.kind === "rom" ? `bank:${entry.bank}` : fullPath(pane.path, entry.name),
+        path: pane.image.kind === "rom" ? `bank:${entry.bank}` : entryImagePath(pane, entry),
         name: pane.image.kind === "rom" ? `BANK${String(entry.bank).padStart(3, "0")}` : entry.name,
         length: Number(entry.length || 0),
         romBank: pane.image.kind === "rom" ? Number(entry.bank) : undefined,
@@ -1422,8 +1573,7 @@ function refreshSelectionDisplay(index) {
     if (control) control.disabled = disabled;
   };
   disable(".insert-disk", !selected?.empty);
-  disable(".create-blank-ssd", !selected?.empty);
-  disable(".create-blank-dsd", !selected?.empty);
+  disable(".insert-new-disc", !selected?.empty);
   disable(".menu-entry", !selected?.formatted);
   const clipboardSelection = clipboardItemsForPane(index);
   disable(".clipboard-cut-action", !clipboardSelection.length || pane.image.readOnly || pane.image.kind === "tape");
@@ -2274,7 +2424,10 @@ async function performDiskImageToAdfsCopy(index, source, plan) {
 async function openEntry(index, row) {
   const pane = panes[index];
   if (row.dataset.parent === "1") {
-    if (pane.slot !== null && pane.path === "") await returnToMmb(index);
+    if (pane.archivePath) {
+      if (pane.archiveMember) await navigateArchive(index, pane.archiveMember.split("/").slice(0, -1).join("/"));
+      else await leaveArchive(index);
+    } else if (pane.slot !== null && pane.path === "$") await returnToMmb(index);
     else await navigate(index, isDfsPane(pane) && pane.path.length === 1 ? "" : parentPath(pane.path));
   } else if (row.dataset.type === "rom-bank") {
     await openHexEditor(index, Number(row.dataset.bank) * (pane.image.rom?.bankSize || 16384));
@@ -2283,13 +2436,74 @@ async function openEntry(index, row) {
     if (!entry?.formatted) return toast("That MMB slot is not formatted.", true);
     pane.slot = Number(row.dataset.slot);
     pane.slotName = entry.name;
-    pane.path = "";
+    pane.path = "$";
     await loadDirectory(index);
+  } else if (row.dataset.archive === "1") {
+    await enterArchive(index, row.dataset.name);
   } else if (row.dataset.type === "dir") {
-    await navigate(index, fullPath(pane.path, row.dataset.name));
+    if (pane.archivePath) await navigateArchive(index, [pane.archiveMember, row.dataset.name].filter(Boolean).join("/"));
+    else await navigate(index, row.dataset.path || fullPath(pane.path, row.dataset.name));
+  } else if (pane.archivePath) {
+    await openFileEditor(index, row.dataset.name, archiveMemberTarget(pane, row.dataset.name));
   } else {
-    downloadFile(index, row.dataset.name);
+    await openFileEditor(index, row.dataset.name, null, row.dataset.path || null);
   }
+}
+
+async function enterArchive(index, name) {
+  const pane = panes[index];
+  pane.archivePath = fullPath(pane.path, name);
+  pane.archiveName = name;
+  pane.archiveMember = "";
+  pane.archiveKind = "";
+  await loadDirectory(index);
+}
+
+async function navigateArchive(index, member) {
+  panes[index].archiveMember = String(member || "");
+  await loadDirectory(index);
+}
+
+async function leaveArchive(index) {
+  const pane = panes[index];
+  pane.archivePath = null;
+  pane.archiveName = "";
+  pane.archiveMember = "";
+  pane.archiveKind = "";
+  await loadDirectory(index);
+}
+
+function archiveMemberUrl(pane, name) {
+  const query = new URLSearchParams({
+    path: pane.archivePath,
+    name: pane.archiveName,
+    member: [pane.archiveMember, name].filter(Boolean).join("/"),
+  });
+  if (pane.slot !== null) query.set("slot", pane.slot);
+  if (pane.side !== null) query.set("side", pane.side);
+  return `/api/images/${pane.image.id}/archive/file?${query}`;
+}
+
+function archiveMemberTarget(pane, name) {
+  const member = [pane.archiveMember, name].filter(Boolean).join("/");
+  const context = {
+    path: pane.archivePath,
+    name: pane.archiveName,
+    member,
+    ...(pane.slot != null ? { slot: pane.slot } : {}),
+    ...(pane.side != null ? { side: pane.side } : {}),
+  };
+  const downloadUrl = `/api/images/${pane.image.id}/archive/file?${new URLSearchParams(context)}`;
+  return {
+    context,
+    displayPath: `${pane.archiveName}/${member}`,
+    inspectEndpoint: `/api/images/${pane.image.id}/archive/inspect`,
+    disassemblyEndpoint: `/api/images/${pane.image.id}/archive/disassembly`,
+    hexEndpoint: `/api/images/${pane.image.id}/archive-hex`,
+    downloadUrl,
+    exportUrl: downloadUrl,
+    readOnly: true,
+  };
 }
 
 async function returnToMmb(index) {
@@ -2851,7 +3065,9 @@ async function loadDirectory(index, preserveSelection = false) {
     image: pane.image.id,
     slot: pane.slot,
     side: pane.side,
-    path: pane.path
+    path: pane.path,
+    archivePath: pane.archivePath,
+    archiveMember: pane.archiveMember,
   };
   const selected = selectionKeys(pane);
   const selectionAnchor = pane.selectionAnchor;
@@ -2860,18 +3076,24 @@ async function loadDirectory(index, preserveSelection = false) {
   if (!preserveSelection) setSelection(pane, []);
   renderPane(index);
   try {
-    const query = new URLSearchParams({ path: pane.path });
+    const query = new URLSearchParams(pane.archivePath ? {
+      path: pane.archivePath,
+      name: pane.archiveName,
+      member: pane.archiveMember || "",
+    } : { path: pane.path });
     if (pane.slot !== null) query.set("slot", pane.slot);
     if (pane.side !== null) query.set("side", pane.side);
-    const data = await api(`/api/images/${pane.image.id}/tree?${query}`);
+    const data = await api(`/api/images/${pane.image.id}/${pane.archivePath ? "archive/tree" : "tree"}?${query}`);
     if (
       panes[index] !== pane || pane.requestToken !== requestToken ||
       pane.image.id !== requested.image || pane.slot !== requested.slot ||
       pane.side !== requested.side || pane.path !== requested.path
+      || pane.archivePath !== requested.archivePath || pane.archiveMember !== requested.archiveMember
     ) return;
     pane.entries = data.entries;
     pane.capacity = data.capacity || pane.capacity;
     pane.description = data.description;
+    if (pane.archivePath) pane.archiveKind = data.archiveKind || "archive";
     if (preserveSelection) setSelection(pane, selected, selectionAnchor);
   } catch (error) {
     if (panes[index] === pane && pane.requestToken === requestToken) toast(error.message, true);
@@ -3165,13 +3387,13 @@ function renameSelected(index) {
   if (!entry) return;
   const isSlot = pane.image.kind === "mmb" && pane.slot === null;
   const isRom = pane.image.kind === "rom";
-  const oldPath = isSlot ? entry.name : fullPath(pane.path, entry.name);
-  const nameLimit = isRom ? Number(entry.header?.titleCapacity || 24) : pane.image.kind === "adfs" ? 10 : isDfsPane(pane) ? 7 : 12;
+  const oldPath = isSlot ? entry.name : entryImagePath(pane, entry);
+  const nameLimit = isRom ? Number(entry.header?.titleCapacity || 24) : ["adfs", "romfs"].includes(pane.image.kind) ? 10 : isDfsPane(pane) ? 7 : 12;
   showModal(`
     <h2>${isSlot ? "Rename MMB disk" : isRom ? `Edit ROM bank ${entry.bank} title` : `Rename ${esc(entry.name)}`}</h2>
     <p>${isSlot ? "The slot number and disk contents stay unchanged." : isRom ? "This changes the title in the recognised sideways-ROM header. The code and bank position stay unchanged." : "The item stays in its current directory. Drag it onto another directory to move it."}</p>
     <div class="field"><label>${isSlot ? "Disk title" : "New name"} · max ${nameLimit} characters</label>
-      <input name="destination" maxlength="${nameLimit}" value="${esc(entry.name)}" required></div>
+      <input name="destination" maxlength="${nameLimit}" value="${esc(entry.leafName || entry.name)}" required></div>
     <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="ok">Rename</button></div>`,
   async form => {
     const body = { slot: isSlot ? entry.slot : pane.slot, side: pane.side };
@@ -3179,7 +3401,11 @@ function renameSelected(index) {
     else if (isRom) { body.bank = entry.bank; body.title = form.get("destination"); }
     else {
       body.source = oldPath;
-      body.destination = fullPath(pane.path, form.get("destination"));
+      body.destination = entry.cataloguePrefix
+        ? `${entry.cataloguePrefix}.${form.get("destination")}`
+        : pane.image.kind === "romfs"
+          ? form.get("destination")
+          : fullPath(pane.path, form.get("destination"));
     }
     const data = await api(`/api/images/${pane.image.id}/rename`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body)
@@ -3231,7 +3457,7 @@ function deleteSelected(index) {
           slot: pane.slot,
           side: pane.side,
           items: entries.map(item => ({
-            path: isRom ? `bank:${item.bank}` : fullPath(pane.path, item.name),
+            path: isRom ? `bank:${item.bank}` : entryImagePath(pane, item),
             bank: isRom ? item.bank : undefined,
             recursive: item.type === "dir" || item.type === "directory",
           })),
@@ -3270,8 +3496,8 @@ function deleteSelected(index) {
 function createDfsCatalogue(index) {
   const pane = panes[index];
   const existing = new Set(
-    pane.path === ""
-      ? pane.entries.filter(entry => entry.virtual).map(entry => String(entry.name).toUpperCase())
+    isDfsPane(pane)
+      ? pane.entries.map(entry => String(entry.cataloguePrefix || pane.path || "$").toUpperCase())
       : [],
   );
   const prefixes = ["$", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"];
@@ -3305,6 +3531,36 @@ function createFolder(index) {
     pane.image = data.image;
     await loadDirectory(index);
     toast("Folder created");
+  });
+}
+
+function createEmptyFile(index) {
+  const pane = panes[index];
+  const rule = targetNameRule(pane, "NEWFILE");
+  showModal(`
+    <h2>New file</h2>
+    <p>Create an empty file in <code>${esc(pane.path)}</code>. ${esc(rule.label)} names can contain up to ${rule.limit} characters.</p>
+    <div class="field"><label>Filename</label><input name="name" maxlength="${rule.limit}" value="${esc(rule.suggested || "NEWFILE")}" required></div>
+    <div class="field-grid two"><div class="field"><label>Load address</label><input name="load" value="00000000" pattern="(?:&|0x)?[0-9A-Fa-f]{1,8}"></div><div class="field"><label>Execution address</label><input name="execute" value="00000000" pattern="(?:&|0x)?[0-9A-Fa-f]{1,8}"></div></div>
+    <div class="help-note">The file starts at zero bytes. Its load and execution addresses are stored in the target filing system and can be changed later in the file editor.</div>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="create">Create file</button></div>`,
+  async form => {
+    const data = await paneOperation(index, "Creating empty file…", () => api(`/api/images/${pane.image.id}/empty-file`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        slot: pane.slot,
+        side: pane.side,
+        destination: pane.path,
+        name: form.get("name"),
+        load: form.get("load"),
+        execute: form.get("execute"),
+      }),
+    }));
+    pane.image = data.image;
+    await loadDirectory(index);
+    setSelection(pane, [String(form.get("name"))], String(form.get("name")));
+    renderPane(index);
+    toast(`${form.get("name")} created`);
   });
 }
 
@@ -3649,6 +3905,33 @@ function configureRomLayout(index) {
   });
 }
 
+function configureRomfs(index) {
+  const pane = panes[index];
+  const details = pane.image.romfs || {};
+  showModal(`
+    <h2>ROMFS properties</h2>
+    <p>Edit the filesystem title and standard paged-ROM identity. File CRCs and the ROM header checksum are rebuilt automatically.</p>
+    <div class="field"><label>Filesystem title · max 8 characters</label><input name="title" maxlength="8" value="${esc(details.title || "ROMFS")}" required></div>
+    <div class="field"><label>ROM version byte · 0 to 255</label><input name="version" type="number" min="0" max="255" value="${Number(details.version ?? 1)}" required></div>
+    <div class="field"><label>Copyright string</label><input name="copyright" maxlength="120" value="${esc(details.copyright || `(C) ${new Date().getFullYear()} Acorn File Forge`)}" required><small>Standard Acorn paged-ROM headers require this to begin with <code>(C)</code>.</small></div>
+    <div class="help-note">ROMFS is a flat, CRC-protected data filesystem. Its title is stored in the catalogue and is separate from the downloaded image filename.</div>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="save">Save properties</button></div>`,
+  async form => {
+    const data = await paneOperation(index, "Updating ROMFS properties…", () => api(`/api/images/${pane.image.id}/romfs`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: form.get("title"),
+        version: Number(form.get("version")),
+        copyright: form.get("copyright"),
+      }),
+    }));
+    pane.image = data.image;
+    await loadDirectory(index);
+    toast("ROMFS properties updated and checksums rebuilt");
+  });
+}
+
 async function showRomWorkbench(index) {
   const pane = panes[index];
   if (pane?.image?.kind !== "rom") return;
@@ -3825,14 +4108,14 @@ async function importHostFile(index, file, forceRaw = false, batch = null) {
     : "";
   const canApplyAll = batch?.total > batch?.current;
   const closed = showModal(`
-    <h2>Add ${esc(file.name)}</h2>${batchLabel}<p>${nameRule.valid ? "Choose the target filename and optional Acorn metadata." : `${esc(file.name)} is not a legal ${nameRule.label} filename, so a safe replacement has been suggested.`}</p>
+    <h2>Insert ${esc(file.name)}</h2>${batchLabel}<p>${nameRule.valid ? "Choose the target filename and optional Acorn metadata." : `${esc(file.name)} is not a legal ${nameRule.label} filename, so a safe replacement has been suggested.`}</p>
     <div class="field"><label>Target filename · max ${nameRule.limit} characters</label>
       <input name="targetName" maxlength="${nameRule.limit}" value="${esc(nameRule.suggested)}" required></div>
     <div class="field"><label>Load address (for example 0x1900)</label><input name="load" value="${esc(detected.load || "")}" placeholder="0xFFFF"></div>
     <div class="field"><label>Execute address</label><input name="execute" value="${esc(detected.execute || "")}" placeholder="0xFFFF"></div>
     ${pane.image.kind === "adfs" ? '<div class="field"><label>RISC OS filetype</label><input name="filetype" placeholder="Text or 0xFFF"></div>' : ""}
     <input type="hidden" name="applyRemaining" value="no">
-    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button>${canApplyAll ? '<button class="button ghost apply-import-all" value="add">Add and apply to all remaining</button>' : ""}<button class="button primary" value="add">Add file</button></div>`,
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button>${canApplyAll ? '<button class="button ghost apply-import-all" value="add">Insert and apply to all remaining</button>' : ""}<button class="button primary" value="add">Insert File</button></div>`,
   async formValues => {
     const plan = Object.fromEntries(["targetName", "load", "execute", "filetype"]
       .map(key => [key, formValues.get(key)]));
@@ -4818,7 +5101,9 @@ async function performTransfers(targetIndex, transfers, destination = null) {
         : null;
       const targetPath = target.image.kind === "rom"
         ? (romStart == null ? "$" : `bank:${romStart + index}`)
-        : fullPath(targetDirectory, transfer.targetName);
+        : target.image.kind === "romfs"
+          ? transfer.targetName
+          : fullPath(targetDirectory, transfer.targetName);
       const data = await api("/api/transfer", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -4856,15 +5141,18 @@ async function setSelectedAccess(index, writable) {
   }
   const entries = selectedEntries(index);
   if (!entries.length) return toast("Select one or more files or directories.", true);
-  const paths = entries.map(entry => fullPath(pane.path, entry.name));
+  const paths = entries.map(entry => entryImagePath(pane, entry));
+  const accessLabel = pane.image.kind === "romfs"
+    ? (writable ? "loadable" : "*RUN-only")
+    : (writable ? "read / write" : "read-only");
   try {
-    const data = await paneOperation(index, `Marking ${entries.length} item${entries.length === 1 ? "" : "s"} ${writable ? "read / write" : "read-only"}…`, () => api(`/api/images/${pane.image.id}/lock`, {
+    const data = await paneOperation(index, `Marking ${entries.length} item${entries.length === 1 ? "" : "s"} ${accessLabel}…`, () => api(`/api/images/${pane.image.id}/lock`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ slot: pane.slot, side: pane.side, paths, unlock: writable })
     }));
     pane.image = data.image;
     await loadDirectory(index, true);
-    toast(`${entries.length} item${entries.length === 1 ? "" : "s"} marked ${writable ? "read / write" : "read-only"}`);
+    toast(`${entries.length} item${entries.length === 1 ? "" : "s"} marked ${accessLabel}`);
   } catch (error) { toast(error.message, true); }
 }
 
@@ -5042,9 +5330,13 @@ async function recoverPreviousSession(index) {
   }
 }
 
-function downloadFile(index, name) {
+function downloadFile(index, name, pathOverride = null) {
   const pane = panes[index];
-  const query = new URLSearchParams({ path: fullPath(pane.path, name), bundle: "metadata" });
+  if (pane.archivePath) {
+    window.location.href = archiveMemberUrl(pane, name);
+    return;
+  }
+  const query = new URLSearchParams({ path: pathOverride || fullPath(pane.path, name), bundle: "metadata" });
   if (pane.slot !== null) query.set("slot", pane.slot);
   if (pane.side !== null) query.set("side", pane.side);
   window.location.href = `/api/images/${pane.image.id}/file?${query}`;
@@ -5053,7 +5345,7 @@ function downloadFile(index, name) {
 async function switchDsdSide(index) {
   const pane = panes[index];
   pane.side = pane.side === 2 ? 0 : 2;
-  pane.path = "";
+  pane.path = "$";
   await loadDirectory(index);
 }
 
@@ -5066,44 +5358,6 @@ function chooseSlotImage(index) {
   input.accept = ".ssd,.dsd,.zip";
   input.onchange = () => input.files.length && insertFilesIntoSlots(index, entry.slot, [...input.files]);
   input.click();
-}
-
-function createBlankMmbDisk(index, diskFormat) {
-  const pane = panes[index];
-  const entry = selectedEntry(index);
-  if (!entry?.empty) return toast("Select an empty MMB slot first.", true);
-  const sideDescription = diskFormat === "dsd"
-    ? "A DSD occupies this slot and the next adjacent slot."
-    : "An SSD occupies one MMB slot.";
-  showModal(`
-    <h2>Create blank ${diskFormat.toUpperCase()} in slot ${entry.slot}</h2>
-    <p>${sideDescription} The disk is formatted immediately and can be left writable for software that saves progress or user data.</p>
-    <div class="field"><label>Disk title</label><input name="title" maxlength="12" value="BLANK" required></div>
-    <label class="check-row"><input name="writable" type="checkbox" checked> Mark the inserted disk read / write</label>
-    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="create">Create and insert</button></div>`,
-  async form => {
-    const data = await api(`/api/images/${pane.image.id}/slots/create-blank`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        targetSlot: entry.slot,
-        format: diskFormat,
-        title: form.get("title"),
-        writable: form.has("writable")
-      })
-    });
-    pane.image = data.image;
-    await acceptImage(index, pane.image);
-    setSelection(
-      panes[index],
-      data.slots.map(String),
-      String(data.slots[0])
-    );
-    refreshSelectionDisplay(index);
-    toast(`Blank ${diskFormat.toUpperCase()} inserted into slot${data.slots.length > 1 ? "s" : ""} ${data.slots.join(" and ")}`);
-    (data.warnings || []).forEach(message => toast(message, true));
-    if (data.metadata) maybeReviewInsertedMenu(index, data.metadata);
-  });
 }
 
 async function setSelectedSlotsWritable(index, writable) {
@@ -6737,13 +6991,36 @@ function convertTape(index) {
   });
 }
 
-function showCreateImageModal(preferredIndex = null) {
+async function newImageFromFileMenu(index, initialFormat) {
+  let targetIndex = panes.findIndex(pane => !pane.image);
+  if (targetIndex < 0 && panes.length < MAX_PANES) {
+    addPane();
+    targetIndex = panes.length - 1;
+  }
+  if (targetIndex >= 0) {
+    showCreateImageModal(targetIndex, { initialFormat, lockTarget: true });
+    return;
+  }
+  const pane = panes[index];
+  if (!confirm(`All three panes are in use. Save ${pane.image.name} and replace this pane with the new image?`)) return;
+  if (!await saveImage(index)) return;
+  if (modal.open) modal.close();
+  showCreateImageModal(index, { initialFormat, lockTarget: true });
+}
+
+function showCreateImageModal(preferredIndex = null, options = {}) {
   const firstEmpty = panes.findIndex(pane => !pane.image);
   const defaultTarget = preferredIndex ?? (firstEmpty < 0 ? 0 : firstEmpty);
+  const insertMmb = Boolean(options.insertMmb);
+  const insertEntry = insertMmb ? selectedEntry(defaultTarget) : null;
+  const currentProfile = panes[defaultTarget]?.image?.hardwareProfile || {};
+  const currentMachine = `${currentProfile.machine || ""} ${panes[defaultTarget]?.image?.targetHardware || ""}`.toLowerCase();
+  const romfsHardwareDefault = currentMachine.includes("electron") ? "electron-plus3" : currentMachine.match(/bbc|master/) ? "bbc-master" : "auto";
+  if (insertMmb && !insertEntry?.empty) return toast("Select an empty MMB slot first.", true);
   showModal(`
-    <h2>Create a blank image</h2>
-    <p>The new image opens as an editable working copy and can be downloaded when ready.</p>
-    <div class="field"><label>Open new image in</label><select name="targetPane">
+    <h2>${insertMmb ? `Insert new disc image in slot ${insertEntry.slot}` : "Create a blank image"}</h2>
+    <p>${insertMmb ? "Choose SSD or DSD, then format and insert it directly into the selected MMB slot." : "The new image opens as an editable working copy and can be downloaded when ready."}</p>
+    <div class="field" ${insertMmb || options.lockTarget ? "hidden" : ""}><label>Open new image in</label><select name="targetPane">
       ${panes.map((_pane, index) => `<option value="${index}" ${index === defaultTarget ? "selected" : ""}>${esc(paneLabel(index))}</option>`).join("")}
     </select><small>An empty pane is preferred. Replacing an edited pane requires confirmation.</small></div>
     <div class="field"><label>Format</label><select name="format">
@@ -6762,6 +7039,7 @@ function showCreateImageModal(preferredIndex = null) {
       <option value="adfs-physical">Raw physical HDD image · RAW</option>
       <option value="mmb">MMB bank · 511 empty slots</option>
       <option value="rom">Acorn ROM image · banked or custom</option>
+      <option value="romfs">Acorn ROMFS data ROM · 8 or 16 KiB</option>
     </select></div>
     <div class="field"><label>Image title</label><input name="title" maxlength="12" value="BLANK" required><small data-title-help></small></div>
     <div class="field"><label>Image size</label><input name="capacity" value="200 KiB" readonly></div>
@@ -6780,10 +7058,42 @@ function showCreateImageModal(preferredIndex = null) {
       <div class="field"><label>Erased byte</label><select name="romEraseByte"><option value="255">&FF</option><option value="0">&00</option></select></div>
       <div class="field"><label>Byte layout</label><select name="romLayout"><option value="linear">Linear / banked</option><option value="byte-interleaved-2">Two byte-wide chips</option><option value="byte-interleaved-4">Four byte-wide chips</option></select></div>
     </div>
-    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="create">Create image</button></div>`,
+    <div class="romfs-create-options" hidden>
+      <div class="field"><label>Target platform</label><select name="romfsPlatform">
+        <option value="auto" ${romfsHardwareDefault === "auto" ? "selected" : ""}>Choose automatically / portable data ROM</option>
+        <option value="bbc-master" ${romfsHardwareDefault === "bbc-master" ? "selected" : ""}>BBC Micro / BBC Master</option>
+        <option value="electron-plus3" ${romfsHardwareDefault === "electron-plus3" ? "selected" : ""}>Acorn Electron</option>
+      </select><small>${romfsHardwareDefault === "auto" ? "No workbench machine could be inferred, so choose the intended platform." : "Preselected from the workbench profile. You can change it here."}</small></div>
+      <div class="field"><label>ROM capacity</label><select name="romfsGeometry"><option value="16k" selected>16 KiB · standard full sideways ROM</option><option value="8k">8 KiB · compact data ROM</option></select></div>
+      <div class="field"><label>ROM version byte</label><input name="romfsVersion" type="number" min="0" max="255" value="1" required></div>
+      <div class="field"><label>Copyright string</label><input name="romfsCopyright" maxlength="120" value="(C) ${new Date().getFullYear()} Acorn File Forge" required></div>
+      <div class="help-note">Creates a standard <code>*ROM</code> data filesystem with a paged-ROM service header, CRC-protected file blocks and a flat catalogue. It does not create an autostarting language ROM.</div>
+    </div>
+    ${insertMmb ? '<label class="check-row"><input name="writable" type="checkbox" checked> Mark the inserted disk read / write</label>' : ""}
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="create">${insertMmb ? "Create and insert" : "Create image"}</button></div>`,
   async form => {
-    const targetIndex = Number(form.get("targetPane"));
+    const targetIndex = options.lockTarget || insertMmb ? defaultTarget : Number(form.get("targetPane"));
     if (!panes[targetIndex]) throw new Error("Choose a valid destination pane.");
+    if (insertMmb) {
+      const pane = panes[targetIndex];
+      const data = await api(`/api/images/${pane.image.id}/slots/create-blank`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetSlot: insertEntry.slot,
+          format: form.get("format"),
+          title: form.get("title") || "BLANK",
+          writable: form.has("writable"),
+        }),
+      });
+      pane.image = data.image;
+      await acceptImage(targetIndex, pane.image);
+      setSelection(panes[targetIndex], data.slots.map(String), String(data.slots[0]));
+      refreshSelectionDisplay(targetIndex);
+      toast(`${String(form.get("format")).toUpperCase()} inserted into slot${data.slots.length > 1 ? "s" : ""} ${data.slots.join(" and ")}`);
+      (data.warnings || []).forEach(message => toast(message, true));
+      if (data.metadata) maybeReviewInsertedMenu(targetIndex, data.metadata);
+      return;
+    }
     if (panes[targetIndex].image?.dirty && !confirm(`Replace ${paneLabel(targetIndex)} without downloading its edited image?`)) return false;
     const data = await api("/api/images/create", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -6791,7 +7101,7 @@ function showCreateImageModal(preferredIndex = null) {
         format: form.get("format"),
         title: form.get("title") || "BLANK",
         capacity: form.get("capacity"),
-        targetHardware: modalContent.querySelector('select[name="targetHardware"]').value || "auto",
+        targetHardware: form.get("format") === "romfs" ? form.get("romfsPlatform") : (modalContent.querySelector('select[name="targetHardware"]').value || "auto"),
         rom: form.get("format") === "rom" ? {
           platform: form.get("romPlatform"),
           totalSize: Number(form.get("romTotalSize")),
@@ -6799,6 +7109,10 @@ function showCreateImageModal(preferredIndex = null) {
           template: form.get("romTemplate"),
           eraseByte: Number(form.get("romEraseByte")),
           layout: form.get("romLayout"),
+        } : form.get("format") === "romfs" ? {
+          geometry: form.get("romfsGeometry"),
+          version: Number(form.get("romfsVersion")),
+          copyright: form.get("romfsCopyright"),
         } : undefined,
       })
     });
@@ -6806,6 +7120,10 @@ function showCreateImageModal(preferredIndex = null) {
     toast(`${data.image.name} created`);
   });
   const format = modalContent.querySelector('select[name="format"]');
+  if (insertMmb) {
+    [...format.options].forEach(option => { if (!['ssd', 'dsd'].includes(option.value)) option.remove(); });
+  }
+  if (options.initialFormat && [...format.options].some(option => option.value === options.initialFormat)) format.value = options.initialFormat;
   const capacity = modalContent.querySelector('input[name="capacity"]');
   const capacityLabel = capacity.closest(".field").querySelector("label");
   const title = modalContent.querySelector('input[name="title"]');
@@ -6828,7 +7146,8 @@ function showCreateImageModal(preferredIndex = null) {
     "adfs-hard": { size: null, defaultCapacity: "20MB", hardware: "risc-os" },
     "adfs-physical": { size: null, defaultCapacity: "20MB", hardware: "risc-os" },
     mmb: { size: "99.8 MiB (511 × 200 KiB)", hardware: null, hasTitle: false },
-    rom: { size: "Set below", hardware: null, chooseHardware: false }
+    rom: { size: "Set below", hardware: null, chooseHardware: false },
+    romfs: { size: "Set below", hardware: null, chooseHardware: false }
   };
   const capacities = new Map();
   let diskTitle = title.value;
@@ -6848,7 +7167,7 @@ function showCreateImageModal(preferredIndex = null) {
     title.disabled = !hasTitle;
     title.required = hasTitle;
     title.value = hasTitle ? diskTitle : "Not applicable to an MMB bank";
-    titleLabel.textContent = format.value === "rom"
+    titleLabel.textContent = ["rom", "romfs"].includes(format.value)
       ? "ROM filename and title"
       : format.value === "mmb"
         ? "Image title"
@@ -6869,16 +7188,23 @@ function showCreateImageModal(preferredIndex = null) {
           ? "Fixed because this is an Archimedes / RISC OS hard-drive format."
           : "Not applicable to this format.";
     modalContent.querySelector(".rom-create-options").hidden = format.value !== "rom";
+    modalContent.querySelector(".romfs-create-options").hidden = format.value !== "romfs";
     if (format.value === "rom") {
       capacityLabel.textContent = "ROM capacity";
       title.maxLength = 24;
       titleHelp.textContent = "Used as the filename and, for the header template, its initial ROM title.";
+    } else if (format.value === "romfs") {
+      capacityLabel.textContent = "ROM capacity";
+      capacity.value = modalContent.querySelector('[name="romfsGeometry"]').value === "8k" ? "8 KiB" : "16 KiB";
+      title.maxLength = 8;
+      titleHelp.textContent = "Stored as both the ROMFS catalogue title and the .rom filename.";
     } else {
       title.maxLength = 12;
     }
     previousFormat = format.value;
   };
   format.addEventListener("change", updateFormatControls);
+  modalContent.querySelector('[name="romfsGeometry"]').addEventListener("change", updateFormatControls);
   updateFormatControls();
 }
 
@@ -6900,6 +7226,7 @@ function showHelp() {
           <a href="#help-dfs">SSD and DSD</a>
           <a href="#help-hfe">HFE floppy images</a>
           <a href="#help-rom">ROM images</a>
+          <a href="#help-romfs">ROMFS data ROMs</a>
           <a href="#help-mmb">MMB disk banks</a>
           <a href="#help-adfs">ADFS and RISC OS</a>
           <a href="#help-beebscsi">BeebSCSI DAT/DSC</a>
@@ -6941,7 +7268,8 @@ function showHelp() {
             <div class="help-task">
               <h4>Create a new image</h4>
               <ol>
-                <li>Select <strong>Create new image</strong> in an empty pane.</li>
+                <li>Open <strong>File → New → New Image (current format)</strong>. The current pane format is preselected.</li>
+                <li>An existing empty pane is used first. If fewer than three panes are displayed, another is added automatically. When all three are occupied, confirm the current-image download before that pane can be replaced; cancelling leaves it open.</li>
                 <li>Choose DFS SSD or DSD, an HFE-wrapped DFS/ADFS floppy, ADFS S/M/L floppy, BeebSCSI DAT/DSC hard drive, HDF virtual HDD, RAW physical-drive image, or an MMB bank.</li>
                 <li>Enter a disk title. For DAT, HDF and RAW images, enter a capacity such as <code>20MB</code> or <code>512MB</code>.</li>
                 <li>The size field is read-only for fixed SSD, DSD, ADFS floppy, HFE and MMB formats. It becomes editable for BeebSCSI, HDF and RAW hard drives and remembers the last HDD capacity you entered.</li>
@@ -6963,6 +7291,8 @@ function showHelp() {
                 <tr><td>DAT + DSC</td><td>BeebSCSI ADFS hard drives</td><td>Downloads as a ZIP containing the required pair</td></tr>
                 <tr><td>HDF / RAW</td><td>Archimedes, RISC OS or emulated hard drives</td><td>Choose enough capacity before creating</td></tr>
                 <tr><td>MMB</td><td>A library of BBC DFS disks</td><td>511 SSD-sized physical slots</td></tr>
+                <tr><td>ROM</td><td>Raw code, banked firmware and physical chip sets</td><td>Bytes are not assumed to be files</td></tr>
+                <tr><td>ROMFS</td><td>BBC/Master/Electron files in a data ROM</td><td>Flat, case-sensitive, 10-character names; 8 or 16 KiB</td></tr>
               </tbody>
             </table></div>
           </section>
@@ -6983,7 +7313,7 @@ function showHelp() {
             <div class="help-note"><strong>Free-space meter:</strong> the lower-right bar uses the image filesystem's real allocation data. Green means under 70% used, orange means 70% or more, and red means 90% or more. Hover over it for used, free and total values. An MMB root counts disk slots; opening one of its disks switches the meter to that slot's DFS bytes. UEF tapes have no fixed free-space capacity and show a neutral striped meter.</div>
             <h4>Navigate an image</h4>
             <ol>
-              <li>Double-click a directory to enter it. Double-click a file to download a ZIP containing the file and its <code>.inf</code> metadata.</li>
+              <li>Double-click a directory to enter it. Double-click a file to open the BASIC, script, text, disassembly or hex editor selected from its contents.</li>
               <li>Double-click <strong>..</strong> to move to the parent directory, or select any breadcrumb to jump directly to that location.</li>
               <li>Inside an MMB disk, use <strong>All disks</strong> to return to the slot list. The disk you left remains selected and is scrolled back into view.</li>
               <li>Select ↻ in the pane heading to reread the current directory or slot list without closing the image.</li>
@@ -7033,18 +7363,18 @@ function showHelp() {
               <h4>Add one or more host files</h4>
               <ol>
                 <li>Navigate the destination pane to the required DFS catalogue or ADFS directory.</li>
-                <li>Open <strong>File → Add file</strong> and choose one or more files.</li>
+                <li>Open <strong>File → Insert File</strong> and choose one or more files.</li>
                 <li>For each file, review the target name, load address, execute address and, on ADFS, its RISC OS filetype.</li>
                 <li>If a name is illegal for the target filing system, accept the safe suggestion or type a valid replacement.</li>
-                <li>Select <strong>Add file</strong> in the dialog. Each successful addition appears in the current view.</li>
-                <li>For a multiple selection, choose <strong>Add and apply to all remaining</strong> to accept each later file's own detected name and metadata without reopening the same review.</li>
+                <li>Select <strong>Insert File</strong> in the dialog. Each successful insertion appears in the current view.</li>
+                <li>For a multiple selection, choose <strong>Insert and apply to all remaining</strong> to accept each later file's own detected name and metadata without reopening the same review.</li>
               </ol>
               <p>Files copied from SSD, DSD, ADFS, HFE or MMB retain their catalogue load/execute addresses and other supported metadata. For loose host files, select their companion <code>.inf</code> sidecars too, or use a conventional <code>name,load-exec</code> filename. Raw host bytes alone do not contain a trustworthy address.</p>
             </div>
             <div class="help-task">
               <h4>Import one or more host folders</h4>
               <ol>
-                <li>Navigate to the destination and choose <strong>File → Add folder</strong>, or drag folders from the desktop onto the pane. Use drag and drop to select several top-level folders when your browser supports it.</li>
+                <li>Navigate to the destination and choose <strong>File → Insert Folder &amp; Contents</strong>, or drag folders from the desktop onto the pane. Use drag and drop to select several top-level folders when your browser supports it.</li>
                 <li>Review the preflight. Desktop housekeeping files are ignored and any target-name shortening is shown before the image changes.</li>
                 <li>On ADFS, keep <strong>Preserve folder structure</strong> to recreate the tree under the current directory, or choose <strong>Import all files here</strong> to flatten it.</li>
                 <li>On DFS, the batch is always flattened into the open catalogue group because A-Z are filename prefixes, not nested folders.</li>
@@ -7058,7 +7388,7 @@ function showHelp() {
               <h4>Create an ADFS directory</h4>
               <ol>
                 <li>Navigate to the parent directory.</li>
-                <li>Choose <strong>File → New folder</strong>, enter a legal name and select <strong>Create folder</strong>.</li>
+                <li>Choose <strong>File → New → New folder</strong>, enter a legal name and select <strong>Create folder</strong>.</li>
                 <li>Double-click the new directory to enter it, then add or drag content into it.</li>
               </ol>
               <p>ADFS directories are real hierarchical objects. DFS uses the separate catalogue-group workflow below.</p>
@@ -7066,11 +7396,12 @@ function showHelp() {
             <div class="help-task">
               <h4>Use DFS catalogue groups</h4>
               <ol>
-                <li>At the DFS virtual root, open <strong>$</strong> or any populated A-Z catalogue row.</li>
+                <li>An SSD, DSD side or open MMB disk starts directly on <strong>$</strong>. Default-catalogue files appear first.</li>
+                <li>After a visual gap, populated A-Z groups appear below as complete DFS names such as <strong>R.GAME</strong>. Each prefix stays grouped like a catalogue listing, but it is still part of the same flat DFS catalogue.</li>
                 <li>Choose <strong>File → New catalogue group</strong> to choose another one-character prefix and then choose its first file.</li>
                 <li>An empty group cannot be saved because DFS stores the prefix on each file, not as a separate directory entry.</li>
-                <li>Drag selected files onto a catalogue row to move them to that prefix. Open the same image in two panes when you want source and destination catalogues visible together.</li>
-                <li>Double-click <strong>..</strong> to return to the catalogue list. At an MMB disk's catalogue root, <strong>..</strong> returns to <strong>All disks</strong>.</li>
+                <li>Files from every displayed prefix can be opened, downloaded, renamed, protected, copied or deleted without changing views.</li>
+                <li>At an MMB disk's catalogue root, double-click <strong>..</strong> to return to <strong>All disks</strong>.</li>
               </ol>
             </div>
             <div class="help-task">
@@ -7086,7 +7417,7 @@ function showHelp() {
               <h4>Change access, download or delete</h4>
               <ol>
                 <li>Point at the Access column and select ◇ for read/write or ◆ for read-only. Select several files first to update them together.</li>
-                <li>Double-click an ordinary file to download a ZIP containing the loose file and its matching <code>.inf</code> metadata sidecar without changing the image.</li>
+                <li>Use the download arrow beside an ordinary file to download a ZIP containing the loose file and its matching <code>.inf</code> metadata sidecar without changing the image. Double-click opens the appropriate editor.</li>
                 <li>To remove one or several items, select them and use any visible × on the selected rows, or press <kbd>Delete</kbd>.</li>
                 <li>Read the single confirmation carefully. Deleting an ADFS directory recursively removes everything below it. Every affected installed-menu record is removed in the same batch update.</li>
               </ol>
@@ -7099,8 +7430,8 @@ function showHelp() {
               <ol>
                 <li>Create an SSD for one 200 KiB side, or a DSD for two sides.</li>
                 <li>On a DSD, use <strong>Side 0</strong>/<strong>Side 2</strong> to choose the catalogue you are editing.</li>
-                <li>Open <strong>$</strong> for the default catalogue, or another populated A-Z prefix. Use <strong>File → New catalogue group</strong> when the first file will introduce a new prefix.</li>
-                <li>Use <strong>File → Add file</strong>, or drag selected files from another pane or onto a catalogue row.</li>
+                <li>The pane opens on <strong>$</strong>. Files from populated A-Z prefixes are grouped underneath with complete names such as <strong>R.GAME</strong>. Use <strong>File → New catalogue group</strong> when the first file will introduce a new prefix.</li>
+                <li>Use <strong>File → Insert File</strong>, or drag selected files from another pane or onto a catalogue row.</li>
                 <li>Review shortened names and Acorn load/execute addresses before confirming each import.</li>
                 <li>Use the row actions to rename or delete. Use the Access column to mark one or several files read/write or read-only.</li>
                 <li>Use <strong>Tools → Check filesystem</strong>, optionally compact it, then select <strong>Save Image</strong> in the pane heading.</li>
@@ -7109,8 +7440,8 @@ function showHelp() {
             <h4>DFS rules enforced by the app</h4>
             <ul>
               <li>A leaf name is at most seven characters and its DFS directory prefix is one character.</li>
-              <li>The virtual root contains sibling groups <strong>$</strong> and A-Z. These are filename prefixes, not nested directories.</li>
-              <li><strong>$</strong> is always shown so a blank disk can receive its first default-catalogue file. Other prefixes appear when populated and disappear when their last file is removed.</li>
+              <li><strong>$</strong> is the default view. Populated A-Z prefixes are grouped below its files, not represented as nested directories.</li>
+              <li>A blank disk still opens at <strong>$</strong>. Other prefixes appear when populated and disappear when their last file is removed.</li>
               <li>A standard DFS side holds no more than 31 catalogue entries.</li>
               <li>SSD has one catalogue. DSD has separate side 0 and side 2 catalogues.</li>
               <li>A file must fit in the remaining sectors. Compacting can consolidate fragmented free space.</li>
@@ -7123,7 +7454,7 @@ function showHelp() {
             <figure><img src="/help/hfe-create.png" alt="Create image dialog showing HFE-wrapped DFS and ADFS floppy choices"><figcaption>Create a new HFE around DFS SSD/DSD or ADFS S/M/L geometry. Existing supported HFE images open through the normal image picker.</figcaption></figure>
             <p>HFE stores floppy track timing and bit cells, while DFS and ADFS describe files inside the sectors. Acorn File Forge decodes the sectors with the HxC engine and then opens the detected filing system.</p>
             <ol>
-              <li>Open an HFE normally, or create an HFE-wrapped DFS/ADFS floppy from <strong>Create new image</strong>.</li>
+              <li>Open an HFE normally, or create an HFE-wrapped DFS/ADFS floppy from <strong>File → New → New Image</strong>.</li>
               <li>Check the opening warning. A clean HFE v1 disk is editable through the usual file tools.</li>
               <li>HFE v2/v3, weak-bit, bad-sector, protected or advanced timing images open as a clearly labelled read-only safe view. Export or drag files from them without changing their tracks.</li>
               <li>For an editable HFE, make the required changes and select <strong>Save Image</strong> in the pane heading.</li>
@@ -7159,9 +7490,9 @@ function showHelp() {
             <figure><img src="/help/rom-command-help.png" alt="A pinned tooltip showing command syntax reconstructed from a ROM table"><figcaption>Command help states its source. Hover or keyboard focus shows it temporarily; select the question mark to pin it while reading.</figcaption></figure>
             <div class="help-note"><strong>Decoder boundaries:</strong> entropy, strings and command candidates are evidence, not a claim that code is safe or that strings are files. A missing command may be constructed dynamically. A plausible RISC OS module remains a candidate until its enclosing structure proves it.</div>
             <div class="help-task"><h4>Create and edit a banked image</h4><ol>
-              <li>Choose <strong>Create new image → Acorn ROM image</strong>. Set the total byte size, logical bank size, target family, erased byte and layout.</li>
+              <li>Choose <strong>File → New → New Image (ROM)</strong>. Set the total byte size, logical bank size, target family, erased byte and layout.</li>
               <li>Choose erased bytes for a blank device, or the inert BBC-family language and service header skeleton for custom sideways-ROM development.</li>
-              <li>Use <strong>File → Add ROM banks</strong> for one or several files. Exact-multiple combined images are split into consecutive banks; anything requiring silent truncation is refused.</li>
+              <li>Use <strong>File → Insert ROM bank(s)</strong> for one or several files. Exact-multiple combined images are split into consecutive banks; anything requiring silent truncation is refused.</li>
               <li>Rename edits a recognised header title. Erase fills selected banks with <code>&FF</code> or <code>&00</code> without shrinking the image. Append empty bank grows the image by exactly one configured bank.</li>
               <li>Use Cut, Copy, Paste or drag between ROM panes. Dragging inside one ROM is an atomic move and overlapping ranges are safe.</li>
             </ol></div>
@@ -7216,6 +7547,31 @@ function showHelp() {
             </ul></div>
             <div class="help-warning"><strong>Hardware warning:</strong> a valid header does not prove that code is safe, correctly bank-switched or suitable for a particular machine. Make a checkpoint, retain the original dump and test an emulator or spare programmable device first.</div>
           </section>
+          <section id="help-romfs">
+            <h3>ROMFS data ROMs: complete workflow</h3>
+            <p class="help-lead">ROMFS is a genuine flat filing system stored in a standard 8 KiB or 16 KiB paged ROM. It is shown as files, unlike a raw ROM's bank inventory.</p>
+            <div class="help-task"><h4>Create a ROMFS image</h4><ol>
+              <li>Choose <strong>File → New → New Image</strong>, then <strong>Acorn ROMFS data ROM</strong>.</li>
+              <li>Review the target platform. BBC/Master or Electron is preselected from the pane workbench profile when possible. If no profile applies, choose it in the dialog.</li>
+              <li>Use 16 KiB for the normal full sideways-ROM capacity, or 8 KiB for a compact device. Enter a title of up to eight characters, the version byte and an Acorn copyright string beginning with <code>(C)</code>.</li>
+              <li>Create the image, then use <strong>File → Insert File</strong>, folder import, drag and drop, or cross-pane Copy and Paste to populate it.</li>
+              <li>Choose <strong>Tools → Check filesystem</strong>, save the timestamped ZIP, then test the ROM on an emulator or spare programmable device.</li>
+            </ol></div>
+            <div class="help-task"><h4>Edit and transfer files</h4><ol>
+              <li>Double-click a BASIC, script, text or binary file to use the appropriate editor. The download arrow exports a loose copy with its load/execute metadata sidecar.</li>
+              <li>Names are case-sensitive, contain up to ten Latin-1 characters and may include dots or slashes. Those characters are part of the name because ROMFS has no directories.</li>
+              <li>Use the pencil and × row controls to rename or delete. Multiple selections can be copied, exported or deleted together.</li>
+              <li>In the Access column choose <strong>Make loadable</strong> or <strong>Mark *RUN-only</strong>. ROMFS run-only protection is not the DFS/ADFS lock bit.</li>
+              <li>Host folders are flattened. Transfers to DFS or ADFS apply that destination's shorter naming and hierarchy rules while retaining load and execution addresses where possible.</li>
+            </ol></div>
+            <div class="help-task"><h4>Identity, CRCs and safe editing</h4><ol>
+              <li>Choose <strong>Tools → ROMFS properties</strong> to edit the catalogue title, version byte and copyright. The standard paged-ROM header checksum is rebuilt.</li>
+              <li>Every file header and data block carries a CRC. Normal edits rebuild the chain, and Check filesystem verifies it from the ROM header to the end marker.</li>
+              <li>Complete plain ROMFS images are rebuilt in storage order, so Compact is neither shown nor needed.</li>
+              <li>A composite ROM with executable bytes after its catalogue, or an incomplete multi-ROM fragment, opens as a read-only safe view. Export its files instead of moving code and absolute pointers accidentally.</li>
+              <li>The creator produces a selectable data ROM, commonly entered with <code>*ROM</code>. It does not claim to produce an autostart language ROM.</li>
+            </ol></div>
+          </section>
           <section id="help-mmb">
             <h3>MMB disk banks: slots and embedded disks</h3>
             <figure><img src="/help/mmb-actions.png" alt="MMB File and Menu controls with slot row actions"><figcaption>Every physical slot is listed. File contains disk insertion and creation; Edit contains clipboard actions; rename, access and eject controls live on each formatted slot row.</figcaption></figure>
@@ -7223,7 +7579,7 @@ function showHelp() {
               <h4>Insert SSD, DSD or HFE image files and ZIP distributions</h4>
               <ol>
                 <li>Select the first empty destination slot.</li>
-                <li>Open <strong>File → Insert SSD / DSD / HFE / ZIP</strong>.</li>
+                <li>Open <strong>File → Insert existing SSD / DSD / HFE / ZIP</strong>.</li>
                 <li>Select one or several SSD/DSD/HFE files, or ZIP files containing them. Every supported ZIP member is imported in archive order and unrelated documentation or artwork is ignored.</li>
                 <li>A DSD needs two adjacent empty slots. Its two sides occupy two SSD-sized MMB slots.</li>
                 <li>Review the allocation message and, if a menu is installed, review or skip each offered menu entry.</li>
@@ -7233,8 +7589,8 @@ function showHelp() {
               <h4>Create a blank writable disk in a slot</h4>
               <ol>
                 <li>Select an empty slot.</li>
-                <li>Choose <strong>File → Create blank SSD here</strong> or <strong>Create blank DSD here</strong>.</li>
-                <li>Enter the disk title and choose whether it is read/write.</li>
+                <li>Choose <strong>File → New → Insert new disc image</strong>.</li>
+                <li>Choose SSD or DSD in the normal creation dialog, enter the disk title and choose whether it is read/write.</li>
                 <li>Select <strong>Create and insert</strong>. Blank formatted disks are useful for saved games and user data.</li>
               </ol>
             </div>
@@ -7252,6 +7608,7 @@ function showHelp() {
               <h4>Browse and edit a disk inside an MMB</h4>
               <ol>
                 <li>Double-click a formatted slot to open its DFS catalogue.</li>
+                <li>Use the download arrow beside a formatted slot to export that disk directly as a standalone SSD. Empty slots have no download action.</li>
                 <li>Add, rename, lock, delete, drag or download files exactly as on an SSD.</li>
                 <li>Use <strong>Tools → Compact filesystem</strong> or <strong>Check filesystem</strong> while the disk is open.</li>
                 <li>Select <strong>All disks</strong> to return to the MMB index at the same slot.</li>
@@ -7283,7 +7640,7 @@ function showHelp() {
               <li>During a multi-item install, <strong>Abort operation</strong> stops before the next download. The item already in progress finishes at a safe image boundary.</li>
               <li>If an archive contains the same release as both SSD and UEF, the native SSD is selected once. Installing into a blank SSD adopts its catalogue and title; shortened SSD files are safely padded to the target's standard geometry.</li>
             </ol></div>
-            <div class="help-task"><h4>Add files or applications to an open disk</h4><ol>
+            <div class="help-task"><h4>Insert files or applications into an open disk</h4><ol>
               <li>Open an SSD/DSD disk, an MMB slot, an ADFS directory, or a RISC OS image and choose <strong>Library → Find software online</strong>.</li>
               <li>On DFS, ordinary single-catalogue downloads are copied into the currently open group. Multi-prefix distributions retain their original DFS prefixes so loaders and duplicate leaf names remain valid.</li>
               <li>On ADFS, a downloaded disk is extracted into the current directory by default. Select <strong>Create a folder</strong> to keep each disk separate.</li>
@@ -7306,8 +7663,9 @@ function showHelp() {
               <ol>
                 <li>Create an ADFS S/M/L floppy or an HDF/RAW hard-drive image, or open a supported existing image.</li>
                 <li>Double-click directories to enter them. Double-click <strong>..</strong> or use the breadcrumbs to move back through the hierarchy.</li>
-                <li>Use <strong>File → New folder</strong> to create a validated ADFS directory at the current location.</li>
-                <li>Use <strong>File → Add file</strong> to import host files with load/execute addresses and optional RISC OS filetype.</li>
+                <li>Use <strong>File → New → New folder</strong> to create a validated ADFS directory at the current location.</li>
+                <li>Use <strong>File → New → New file</strong> for an empty, correctly named file with explicit load and execution addresses. This is also available inside writable DFS catalogue groups and MMB disks.</li>
+                <li>Use <strong>File → Insert File</strong> to import host files with load/execute addresses and optional RISC OS filetype.</li>
                 <li>When the selected host file is a recognised disk, tape or ZIP image, review its catalogue preview before anything is written.</li>
                 <li>Extraction defaults to the directory currently shown. Optionally choose another existing destination with the directory picker, and optionally create a named child directory there. You can instead store the original image as an ordinary file.</li>
                 <li>Direct extraction never overwrites an existing name. A rollback point protects the complete working image if extraction fails or is aborted.</li>
@@ -7322,7 +7680,7 @@ function showHelp() {
               <figure><img src="/help/image-import-preview.png" alt="Image import dialog previewing Chuckulus files with optional destination and child-directory controls"><figcaption>Inspect the source before writing. Direct extraction into the current directory is the default; destination browsing and a new child directory are independent options.</figcaption></figure>
               <ol>
                 <li>Navigate to the ADFS directory that will contain the imported software.</li>
-                <li>Drag an open MMB slot, SSD/DSD/HFE image, UEF tape or another supported image from another pane; alternatively use <strong>File → Add file</strong> and select an image from the host.</li>
+                <li>Drag an open MMB slot, SSD/DSD/HFE image, UEF tape or another supported image from another pane; alternatively use <strong>File → Insert File</strong> and select an image from the host.</li>
                 <li>Review the source preview. The current directory is selected by default; optionally tick <strong>Choose a different existing directory</strong> and browse the destination tree.</li>
                 <li>Optionally tick <strong>Create a new child directory</strong> and enter its name. Leave it unticked to place the source contents directly in the selected destination.</li>
                 <li>Choose whether to offer the imported program as a menu entry. Keeping it off-menu does not require a launch file.</li>
@@ -7361,7 +7719,7 @@ function showHelp() {
                 <li>Review the reconstructed files, adjust them if required, then save the new DFS image.</li>
               </ol>
             </div>
-            <p>Double-click an individual tape file to export it. You can also drag reconstructed tape files to a writable disk, or drag the complete UEF onto ADFS to create and populate a directory. Standard load and execute addresses are retained. Tokenised BASIC is checked for file I/O that inherits an already-open cassette channel; starting that program directly from disk would produce error 222 (<em>Channel</em>), so the app suppresses automatic <code>!BOOT</code> creation and reports the incompatibility. During ADFS extraction, machine-code OSCLI calls are also checked for DFS-only abbreviations such as <code>R.</code> and <code>L.</code>. Proven immediate pointers are redirected to appended <code>RUN</code> and <code>LOAD</code> commands without moving the original code. If the pointer or free address range cannot be proved safe, the file is left untouched and the image receives a warning.</p>
+            <p>Double-click an individual tape file to open its BASIC, text, disassembly or hex view. Use the download arrow beside its name to export it. Tape files remain read-only until copied to a writable disk image. A UEF stored inside ADFS or another filing system also opens as a read-only hierarchy of reconstructed cassette files. Detection uses the content, so names such as <code>$.UEF.THRUST</code> work without a <code>.uef</code> suffix, and gzip-compressed UEF data works too. The hierarchy shows load and execution addresses and marks incomplete tape sequences rather than hiding them. You can also drag reconstructed tape files to a writable disk, or drag the complete UEF onto ADFS to create and populate a directory. Standard load and execute addresses are retained. Tokenised BASIC is checked for file I/O that inherits an already-open cassette channel; starting that program directly from disk would produce error 222 (<em>Channel</em>), so the app suppresses automatic <code>!BOOT</code> creation and reports the incompatibility. During ADFS extraction, machine-code OSCLI calls are also checked for DFS-only abbreviations such as <code>R.</code> and <code>L.</code>. Proven immediate pointers are redirected to appended <code>RUN</code> and <code>LOAD</code> commands without moving the original code. If the pointer or free address range cannot be proved safe, the file is left untouched and the image receives a warning.</p>
           </section>
           <section id="help-transfer">
             <h3>Copy and drag between panes</h3>
@@ -7594,11 +7952,11 @@ function showHelp() {
               <li>Select a hex or ASCII cell. The inspector shows unsigned 8, 16 and 32-bit values in little and big-endian order.</li>
             </ol></div>
             <div class="help-task"><h4>Search, select and edit</h4><ol>
-              <li>Search for hexadecimal byte pairs such as <code>44 69 73 63</code>, or switch the search to Latin-1 text. Find previous and Find next can wrap around the image.</li>
+              <li>Search for hexadecimal byte pairs such as <code>44 69 73 63</code>, or switch the search to Latin-1 text. Find previous and Find next can wrap around the image. Find and Replace selects the complete matched range and stages a same-length replacement; it cannot insert or remove raw bytes.</li>
               <li>Click a byte, Shift-click another byte, or hold Shift while using the arrow keys to select a range.</li>
               <li>Choose HEX or ASCII mode, then type to replace bytes. You can also paste, fill the selection with one byte, copy as hex or text, or revert selected edits.</li>
               <li>Undo and redo affect staged editor changes only. The staged-change list shows the original and replacement value at every changed offset and can jump back to it.</li>
-              <li>Use Ctrl/Cmd-S to write, Ctrl/Cmd-Z or Ctrl/Cmd-Y for undo or redo, Ctrl/Cmd-F to search, Ctrl/Cmd-G to go to an offset, and Escape to close.</li>
+              <li>Use Ctrl/Cmd-S to write, Ctrl/Cmd-Z or Ctrl/Cmd-Y for undo or redo, Ctrl/Cmd-F to search, Ctrl/Cmd-H for replacement, Ctrl/Cmd-G to go to an offset, and Escape to close.</li>
             </ol></div>
             <div class="help-task"><h4>Write or close safely</h4><ol>
               <li>Select <strong>Write changes</strong>. Read the <strong>This is dangerous. Are you sure?</strong> warning and confirm only if the listed byte count is expected.</li>
@@ -7626,9 +7984,33 @@ function showHelp() {
               <li>Bulk MMB-to-ADFS imports perform their more detailed capacity, grouping and collision plan in the copy dialog.</li>
             </ol></div>
             <div class="help-task"><h4>Inspect a file or loader</h4><ol>
-              <li>Select a normal file and choose <strong>Analyse → Inspect selected file</strong>.</li>
-              <li>Switch between text or decoded tokenised BASIC, hexadecimal bytes and detected loader commands.</li>
-              <li>Small plain-text files can be edited in place. Tokenised BASIC is decoded read-only so line records cannot be corrupted by free-form text.</li>
+              <li>Double-click a file in any filesystem pane, or select it and choose <strong>Analyse → Open selected file</strong>. Use the download arrow beside its name when you only want the original file and metadata.</li>
+              <li>Tokenised BBC BASIC II opens as numbered editable source with a space after every line number. Use <strong>Tools → Renumber BASIC</strong> to update line numbers and encoded GOTO, GOSUB and other references without changing numbers inside strings.</li>
+              <li>When pasting into BASIC, choose whether to validate and normalise numbered BBC BASIC source or insert the clipboard exactly as plain text. The complete listing must be valid BASIC before Save can retokenise it.</li>
+              <li><code>!BOOT</code>, <code>LOADER</code> and other recognised command files open as compact unnumbered script editors. Edit their ordered <code>*EXEC</code>, OS and BASIC command lines directly.</li>
+              <li>Source and disassembly windows open centred at a useful desktop working size, then scale proportionally on smaller browser windows. They can be moved by dragging the title bar and resized from any edge or corner. Use the square title-bar control, or double-click the title bar, to maximise and restore the editor. The window remains constrained to the visible browser area and resizing does not disturb the document or its scroll position. File and Edit menus provide Save, Save As, Export, Close, undo, redo, clipboard actions, Select All, Find and Find and Replace. Replace Next starts at the current selection and wraps once; Replace All reports how many case-insensitive matches it changed. Save As creates a sibling inside the image while Export downloads readable source as browser-local text. Read-only disassembly retains Find without unsafe source replacement.</li>
+              <li>BASIC and command scripts use themed syntax colours for keywords, strings, numbers, comments, symbols and line numbers. The normal textarea remains the editable document, preserving browser undo, clipboard and input-method behaviour. Hover a highlighted command for its purpose, syntax, requirements and important compatibility notes.</li>
+              <li>BBC BASIC inline assembler between <code>[</code> and <code>]</code> reuses the disassembly editor's processor and MOS help. Hover 6502 or ARM mnemonics, named MOS entry points such as <code>OSWRCH</code>, standard addresses such as <code>&amp;FFEE</code>, or directives such as <code>EQUB</code>. Matching names outside an assembler region remain ordinary BASIC variables. Refactor and Condense leave assembler lines physically intact.</li>
+              <li>Press <strong>F1</strong> for help on the command at the caret. The editor's <strong>Help</strong> menu gives an overview of the detected language, a searchable command reference, live problems and document symbols. Problem and symbol entries jump back to their source location.</li>
+              <li><strong>Edit → Find all references</strong> lists code uses of the symbol at the caret. <strong>Rename symbol</strong> changes those uses as one undoable operation while leaving strings and comments alone. The BASIC program outline lists procedures and functions with their call sites. Diagnostics also flag unused definitions, mismatched procedure endings and conservative unreachable-line candidates.</li>
+              <li>Refactor and Condense show the original and proposed source side by side. Changed rows are marked. Every BASIC proposal completes an exact tokenise, detokenise and retokenise check before acceptance; the review displays its line count and tokenised byte size. Use <strong>Tools → Verify BASIC round trip</strong> to run the check independently, and <strong>Editor history</strong> to review accepted transformations and symbol renames from this window.</li>
+              <li><strong>View → Show synchronized bytes</strong> follows the BASIC line, text caret or selected disassembly row. It shows the matching saved bytes and printable characters, with a shortcut into the full Hex editor. Unsaved source is never presented as if it had already changed the image.</li>
+              <li>Live BASIC checks cover missing, duplicate and out-of-order line numbers, unresolved direct GOTO, GOSUB and RESTORE destinations, missing local DEF PROC definitions and unclosed strings. Script checks cover unclosed strings, filing-system-dependent <code>R.</code> and <code>L.</code> abbreviations and use of <code>CHAIN "!BOOT"</code> where a command script needs <code>*EXEC</code>. Treat these as focused editing checks rather than proof that software will run on every target.</li>
+              <li>Use <strong>Edit → Go to line</strong> for a physical source line or BASIC line number. BASIC selections can be commented or uncommented with <strong>Toggle comment</strong>. <strong>Tools → Normalise recognised commands</strong> follows the detected language convention while leaving strings, comments and identifiers unchanged. BBC BASIC and Acorn command scripts currently normalise commands to uppercase; the mechanism can support lowercase-preferring languages.</li>
+              <li><strong>Tools → Refactor selection or program</strong> applies to one selected line, a selected block, or the complete program when nothing is selected. It opens a non-destructive proposal that normalises proven BASIC commands, expands every safe colon-separated operation, and turns nested IF/ELSE IF/ELSE forms into readable guarded branches without changing their scope. It renumbers from 10 and updates direct destinations, including every entry in ON GOTO and ON GOSUB lists. Omitted-THEN command and assignment branches are recognised when the statement boundary can be proved. Compact ON ERROR handlers and star commands remain physical units because their remaining text has special meaning. Nothing changes until ✓ is selected and confirmed; × discards the proposal untouched. The accepted rewrite is one undoable operation and retains the logical cursor and viewport.</li>
+              <li><strong>Tools → Condense selection or program</strong> is the safe inverse. It uses colons to pack adjacent statements into the fewest tokenised lines allowed by the real BBC BASIC line limit. Explicit target lines begin a new packed line. Inline IF scope, ON ERROR handlers, comments, star commands, unconditional transfers and structured branch boundaries are never crossed. Programs with computed line destinations or ERL-dependent behaviour are refused rather than guessed. Surviving line numbers are retained. Condense also uses the ✓/× proposal, one-step undo and viewport preservation.</li>
+              <li>BASIC procedures, FOR and REPEAT loops, structured IF, CASE and WHILE blocks have minus controls in the left gutter. Select one to collapse that block and use its plus control to restore it. The single View command reads <strong>Collapse all blocks</strong> when everything is expanded and <strong>Expand all blocks</strong> when anything is collapsed. Folding never changes the real textarea or saved program. Double-click an outline line to expand everything and continue editing there. Every file initially opens fully expanded.</li>
+              <li><strong>View → Visual auto-indent</strong> displays BASIC structure using tabs or 2, 4, or 8 spaces. It is presentation only and never changes the textarea, dirty state, tokenised program or saved image bytes. While active, choose <strong>Show original indentation</strong>, or double-click a displayed line, to return to the exact editable source layout.</li>
+              <li>Procedures and multi-line functions indent consistently from <code>DEFPROCname</code> or <code>DEFFNname</code> to <code>ENDPROC</code> or the function's leading <code>=</code> return. Compact tokenised forms such as <code>FORI%=...</code> and closers later on a line, such as <code>]:NEXT</code>, <code>NEXT:ENDPROC</code> and <code>CALL address:ENDPROC</code>, are recognised. A one-line <code>DEFFNname(...)=expression</code> does not open a block. Folding uses the same scanner.</li>
+              <li>When Visual auto-indent is active, Refactor's generated lines inherit real surrounding procedures, loops and structured BASIC blocks. A classic <code>IF condition THEN line</code> controls one statement and does not create an indented block, so later physical lines reached through branching or fall-through remain at their normal level. The saved program remains free of display-only tabs or spaces.</li>
+              <li>Other readable files open in the text editor. Binary files open as editor-style 6502, ARM or 68000 source. Proven register values, MOS call purposes and reason codes, branch conditions, hardware I/O regions, entry points, BRK error messages and cross-references appear as semicolon comments on the relevant instruction. Internal targets receive stable labels derived from proved behaviour, such as <code>write_text_8120</code>, <code>execute_command_834A</code>, <code>loop_8057</code> or <code>equal_80C2</code>, instead of anonymous subroutine/location names. The hexadecimal suffix keeps similar routines distinct. The analyser drops register assumptions at uncertain control-flow joins instead of inventing values. The readable-string list filters out accidental punctuation and number runs; select a string to jump to its disassembled line. Double-click an instruction only when you want that offset in Hex.</li>
+              <li>Every 6502, ARM and 68000 disassembly row has hover help, including condition and size variants, unfamiliar decoder mnemonics and pseudo-operations such as <code>EQUB</code> and <code>EQUS</code>. Help combines the operation family, exact operand and addressing form, encoded bytes, cross-references and the analyser's contextual comment. MOS entry points retain their specific calling conventions. The Help menu lists operations actually present as well as its instruction and MOS reference.</li>
+              <li>The disassembly <strong>Project</strong> menu retains notes, bookmarks, symbols and code/data decisions outside the image bytes. Click one row or shift-click a range, then mark it as code, text, bytes, words, addresses or bitmap data. The listing is rebuilt using that decision. Symbols use a portable <code>&amp;address = label</code> text format for import and export. Find references and the outline show direct callers and labelled entry points.</li>
+              <li><strong>Project → Run in configured emulator</strong> appears in source and disassembly editors. It is available when the server has an <code>ACORN_FILE_EMULATOR_COMMAND</code> containing <code>{file}</code>. Optional placeholders include <code>{image}</code>, <code>{path}</code>, <code>{load}</code> and <code>{execute}</code>. The temporary export is removed afterwards and the result is retained in project history.</li>
+              <li>Labelled disassembly regions also have left-gutter folding controls. The single state-aware <strong>View</strong> command collapses or expands all labelled regions as appropriate. Visible instruction rows retain double-click-to-Hex while other regions are folded.</li>
+              <li>ZIP, TAR, compressed TAR, GZIP, BZIP2 and XZ files are marked as archives. Double-click one to browse its safe read-only file and folder hierarchy in the pane; use breadcrumbs or <strong>..</strong> to move up. Double-click a member to extract it in memory and open the normal BASIC, command-script, text, disassembly or hex viewer. Archive member editors are read-only for now; use <strong>File → Export original archive member</strong> or the row download arrow to keep the unchanged bytes. The app rejects unsafe parent paths and expansion limits rather than rewriting an archive without a transactional checkpoint.</li>
+              <li>Use <strong>Tools → Open raw bytes in Hex</strong> from any file viewer when the automatic interpretation is uncertain. File saves retain Acorn load, execution and filetype metadata, reject stale edits and create an undo checkpoint.</li>
+              <li>The structural parser understands classic and structured BBC BASIC forms. BASIC V and tokenised programs with a trailing binary payload remain read-only because rewriting them as BASIC II would be unsafe, so transformation commands are disabled for those files.</li>
               <li>Choose <strong>Check loader dependencies</strong> to resolve CHAIN, EXEC, RUN, LOAD, DIR and LIB targets beside the launcher and flag root-relative references before moving software below ADFS root.</li>
             </ol></div>
             <div class="help-task"><h4>Audit a collection</h4><ol>
@@ -7712,7 +8094,7 @@ function showHelp() {
               <dt>Ctrl/Cmd-V</dt><dd>Paste into the current directory, DFS catalogue group, or selected MMB slot.</dd>
               <dt>Escape</dt><dd>Cancel a pending clipboard selection when no dialog is open.</dd>
               <dt>Double-click / Enter</dt><dd>Open a directory or MMB disk.</dd>
-              <dt>Double-click a file</dt><dd>Download a ZIP containing the file and its <code>.inf</code> metadata.</dd>
+              <dt>Double-click a file</dt><dd>Open the content-aware BASIC, script, text, disassembly or hex editor.</dd>
               <dt>Delete</dt><dd>Delete the selected object after confirmation.</dd>
               <dt>Drag selected files</dt><dd>Copy them to a compatible destination.</dd>
               <dt>Drag MMB slots</dt><dd>Cut and paste as one block within an MMB, or copy to another image.</dd>
@@ -7931,7 +8313,7 @@ async function showSelectionPreflight(index) {
   const pane = panes[index];
   const items = selectedEntries(index).map(entry => ({
     name: entry.name,
-    source: pane.image.kind === "mmb" && pane.slot === null ? `Slot ${entry.slot}` : fullPath(pane.path, entry.name),
+    source: pane.image.kind === "mmb" && pane.slot === null ? `Slot ${entry.slot}` : entryImagePath(pane, entry),
     type: entry.type,
   }));
   if (!items.length) return toast("Select one or more items to dry-run.", true);
@@ -7952,45 +8334,1030 @@ function selectedInspectable(index) {
   const pane = panes[index];
   const entry = selectedEntry(index);
   return entry && entry.type !== "dir" && entry.type !== "directory"
-    ? { pane, entry, path: fullPath(pane.path, entry.name) }
+    ? { pane, entry, path: entryImagePath(pane, entry) }
     : null;
 }
 
 async function showFileInspector(index) {
   const selected = selectedInspectable(index);
   if (!selected) return toast("Select one file to inspect.", true);
-  const { pane, entry, path } = selected;
-  analysisLoading("Inspecting file", path);
-  const query = new URLSearchParams({ path, ...(pane.slot != null ? { slot: pane.slot } : {}), ...(pane.side != null ? { side: pane.side } : {}) });
-  try {
-    const report = await api(`/api/images/${pane.image.id}/inspect?${query}`);
-    const canEdit = report.editable && !pane.image.readOnly;
-    if (!replaceAnalysisLoading(`<div class="analysis-dialog file-inspector"><header><div><small>${esc(report.view.toUpperCase())} VIEW · ${humanSize(report.size)}</small><h2>${esc(entry.name)}</h2></div><code>${esc(report.sha256.slice(0, 16))}…</code></header>
-      <nav class="inspector-tabs"><button type="button" data-view="primary" class="active">${report.tokenisedBasic ? "BASIC" : report.view === "text" ? "Text" : "Hex"}</button><button type="button" data-view="hex">Hex</button><button type="button" data-view="commands">Loader commands (${report.commands.length})</button></nav>
-      <textarea class="inspector-content" name="inspectedText" spellcheck="false" ${canEdit ? "" : "readonly"}>${esc(report.view === "hex" ? report.hex : report.text)}</textarea>
-      <div class="inspector-commands" hidden>${report.commands.map(item => `<p><b>${esc(item.action)}</b><code>${esc(item.target)}</code></p>`).join("") || "<p>No conventional loader commands were detected.</p>"}</div>
-      ${report.truncated ? '<div class="help-warning">Preview limited to the first 1 MiB.</div>' : ""}
-      ${report.tokenisedBasic ? '<div class="help-note">Tokenised BASIC is decoded safely but protected from free-form editing. Use dependency and compatibility repairs for loader changes.</div>' : ""}
-      <div class="modal-actions"><button class="button ghost" value="cancel">Close</button>${canEdit ? '<button class="button primary" value="save">Save text</button>' : ""}</div></div>`,
-    canEdit ? async form => {
+  return openFileEditor(index, selected.entry.name, null, selected.path);
+}
+
+function fileContextQuery(pane, path, extra = {}) {
+  return new URLSearchParams({
+    path,
+    ...(pane.slot != null ? { slot: pane.slot } : {}),
+    ...(pane.side != null ? { side: pane.side } : {}),
+    ...extra,
+  });
+}
+
+async function openFileHexEditor(index, entry, path, host = null, initialOffset = 0, target = null) {
+  const pane = panes[index];
+  if (!window.AcornHexEditor) return toast("The hex editor could not be opened.", true);
+  await window.AcornHexEditor.open({
+    host: host || document.querySelector(`.pane[data-pane="${index}"]`),
+    image: { id: pane.image.id, name: entry.name, size: Number(entry.length || 0), readOnly: Boolean(target?.readOnly || pane.image.readOnly) },
+    request: api,
+    notify: toast,
+    endpoint: target?.hexEndpoint || `/api/images/${pane.image.id}/file-hex`,
+    context: target?.context || { path, ...(pane.slot != null ? { slot: pane.slot } : {}), ...(pane.side != null ? { side: pane.side } : {}) },
+    scope: "file",
+    kicker: target ? "READ-ONLY ARCHIVE MEMBER BYTES" : null,
+    title: entry.name,
+    initialOffset,
+    exportUrl: target?.exportUrl || fileExportUrl(pane, path),
+    onSaved: updatedImage => {
+      pane.image = updatedImage;
+      rememberOpenPanes();
+    },
+  });
+  if (!target) await refreshCurrentView(index);
+}
+
+function fileDownloadUrl(pane, path) {
+  const query = fileContextQuery(pane, path, { bundle: "metadata" });
+  return `/api/images/${pane.image.id}/file?${query}`;
+}
+
+function fileExportUrl(pane, path) {
+  return `/api/images/${pane.image.id}/file?${fileContextQuery(pane, path)}`;
+}
+
+function disassemblyComment(row) {
+  return [
+    row.comment || "",
+    row.references?.length ? `referenced from ${row.references.map(value => `&${Number(value).toString(16).toUpperCase()}`).join(", ")}` : "",
+  ].filter(Boolean).join("; ");
+}
+
+function disassemblyText(report) {
+  return report.rows.map(row => {
+    const address = Number(row.address).toString(16).toUpperCase().padStart(4, "0");
+    const instruction = `${row.mnemonic}${row.operand ? ` ${row.operand}` : ""}`;
+    const comment = disassemblyComment(row);
+    return `${row.label ? `${row.label}:\n` : ""}${`&${address}`.padEnd(9)}${String(row.bytes || "").padEnd(14)}${instruction.padEnd(25)}${comment ? `; ${comment}` : ""}`.trimEnd();
+  }).join("\n");
+}
+
+function disassemblySource(report) {
+  return report.rows.map(row => {
+    const address = Number(row.address).toString(16).toUpperCase().padStart(4, "0");
+    const comments = disassemblyComment(row);
+    const instruction = `${row.mnemonic}${row.operand ? ` ${row.operand}` : ""}`;
+    return `${row.label ? `<div class="disassembly-label"><span class="disassembly-fold-cell"></span><span>${esc(row.label)}:</span></div>` : ""}<div class="disassembly-source-line${row.reachable === false ? " unreachable" : ""}" data-offset="${Number(row.offset)}" tabindex="0" title="Double-click to open these bytes in Hex">
+      <span class="disassembly-fold-cell" aria-hidden="true"></span><span class="disassembly-address">&amp;${address}</span><span class="disassembly-bytes" title="${esc(row.bytes)}">${esc(row.bytes)}</span><span class="disassembly-instruction" title="${esc(instruction)}">${esc(instruction)}</span><span class="disassembly-comment" ${comments ? `title="${esc(comments)}"` : ""}>${comments ? `; ${esc(comments)}` : ""}</span>
+    </div>`;
+  }).join("");
+}
+
+function disassemblyColumnStyle(report) {
+  const rows = Array.isArray(report?.rows) ? report.rows : [];
+  const characterLength = value => Array.from(String(value || "")).length;
+  const widestBytes = rows.reduce((width, row) => Math.max(width, characterLength(row.bytes)), "Bytes".length);
+  const widestInstruction = rows.reduce((width, row) => {
+    const instruction = `${row.mnemonic || ""}${row.operand ? ` ${row.operand}` : ""}`;
+    return Math.max(width, characterLength(instruction));
+  }, "Instruction".length);
+  // Three spare monospace cells keep the next column visually separate. Very
+  // long data declarations remain available through their tooltip instead of
+  // pushing useful annotations beyond the editor window.
+  const bytesWidth = Math.max(8, Math.min(30, widestBytes + 3));
+  const instructionWidth = Math.max(14, Math.min(44, widestInstruction + 3));
+  return `--disassembly-bytes-width:${bytesWidth}ch;--disassembly-instruction-width:${instructionWidth}ch`;
+}
+
+function editorMenus({ downloadUrl, downloadLabel = "Download with metadata…", canEdit = false, basic = false, readOnly = false } = {}) {
+  const shortcut = value => `<kbd>${value}</kbd>`;
+  return `<nav class="editor-menubar" aria-label="Editor menus">
+    <details class="editor-menu"><summary>File</summary><div class="editor-menu-panel">
+      <button type="button" data-editor-action="save" ${canEdit ? "disabled" : "disabled"}><span>Save</span>${shortcut("Ctrl+S")}</button>
+      <button type="button" data-editor-action="save-as" ${canEdit ? "" : "disabled"}><span>Save As…</span>${shortcut("Ctrl+Shift+S")}</button>
+      <button type="button" data-editor-action="export"><span>Export as text…</span></button>
+      ${downloadUrl ? `<a href="${esc(downloadUrl)}"><span>${esc(downloadLabel)}</span></a>` : ""}
+      <span class="editor-menu-separator" role="separator"></span>
+      <button type="button" data-editor-action="close"><span>Close</span>${shortcut("Ctrl+W")}</button>
+    </div></details>
+    <details class="editor-menu"><summary>Edit</summary><div class="editor-menu-panel">
+      <button type="button" data-editor-action="undo" ${canEdit ? "" : "disabled"}><span>Undo</span>${shortcut("Ctrl+Z")}</button>
+      <button type="button" data-editor-action="redo" ${canEdit ? "" : "disabled"}><span>Redo</span>${shortcut("Ctrl+Y")}</button>
+      <span class="editor-menu-separator" role="separator"></span>
+      <button type="button" data-editor-action="cut" ${canEdit ? "" : "disabled"}><span>Cut</span>${shortcut("Ctrl+X")}</button>
+      <button type="button" data-editor-action="copy"><span>Copy</span>${shortcut("Ctrl+C")}</button>
+      <button type="button" data-editor-action="paste" ${canEdit ? "" : "disabled"}><span>Paste</span>${shortcut("Ctrl+V")}</button>
+      <button type="button" data-editor-action="select-all"><span>Select All</span>${shortcut("Ctrl+A")}</button>
+      <span class="editor-menu-separator" role="separator"></span>
+      <button type="button" data-editor-action="find"><span>Find…</span>${shortcut("Ctrl+F")}</button>
+      <button type="button" data-editor-action="find-replace" ${canEdit ? "" : "disabled"}><span>Find and Replace…</span>${shortcut("Ctrl+H")}</button>
+      <button type="button" data-editor-action="find-references"><span>Find all references</span></button>
+      <button type="button" data-editor-action="rename-symbol" ${canEdit ? "" : "disabled"}><span>Rename symbol…</span></button>
+      <button type="button" data-editor-action="go-to-line"><span>Go to line…</span>${shortcut("Ctrl+G")}</button>
+      ${basic ? `<button type="button" data-editor-action="toggle-comment" ${canEdit ? "" : "disabled"}><span>Toggle comment</span>${shortcut("Ctrl+/")}</button>` : ""}
+    </div></details>
+    <details class="editor-menu"><summary>View</summary><div class="editor-menu-panel editor-view-panel">
+      ${basic ? `<fieldset><legend>Visual auto-indent</legend><label>Indent with<select data-indent-style><option value="spaces">Spaces</option><option value="tabs">Tabs</option></select></label><label>Spaces<select data-indent-size><option value="2">2</option><option value="4" selected>4</option><option value="8">8</option></select></label><button type="button" data-editor-action="auto-indent-view"><span>Auto-indent view</span></button><small>Display only. Saved bytes are unchanged.</small></fieldset><span class="editor-menu-separator" role="separator"></span>` : ""}
+      <button type="button" data-editor-action="fold-toggle-all"><span>Collapse all blocks</span></button>
+      <button type="button" data-editor-action="sync-bytes"><span>Show synchronized bytes</span></button>
+    </div></details>
+    <details class="editor-menu"><summary>Tools</summary><div class="editor-menu-panel editor-tools-panel">
+      ${basic ? `<fieldset ${canEdit ? "" : "disabled"}><legend>Renumber BASIC</legend><label>Start<input name="renumberStart" type="number" min="0" max="32767" value="10"></label><label>Step<input name="renumberStep" type="number" min="1" max="32767" value="10"></label><button class="basic-renumber" type="button">Renumber</button></fieldset><span class="editor-menu-separator" role="separator"></span>` : ""}
+      <button type="button" data-editor-action="normalise-commands" ${canEdit ? "" : "disabled"}><span>Normalise recognised commands</span></button>
+      ${basic ? `<button type="button" data-editor-action="verify-basic"><span>Verify BASIC round trip</span></button><button type="button" data-editor-action="program-outline"><span>Program outline and call graph</span></button>` : ""}
+      <button type="button" data-editor-action="editor-history"><span>Editor history</span></button>
+      <button type="button" data-editor-action="hex"><span>Open raw bytes in Hex</span></button>
+      ${basic ? `<span class="editor-menu-separator" role="separator"></span><button type="button" data-editor-action="condense-code" ${canEdit ? "" : "disabled"}><span>Condense selection or program…</span></button><button type="button" data-editor-action="refactor-code" ${canEdit ? "" : "disabled"}><span>Refactor selection or program…</span></button>` : ""}
+    </div></details>
+    <details class="editor-menu"><summary>Project</summary><div class="editor-menu-panel">
+      <button type="button" data-editor-action="project-bookmark"><span>Add bookmark at cursor…</span></button>
+      <button type="button" data-editor-action="project-notes"><span>Project notes…</span></button>
+      <button type="button" data-editor-action="run-emulator"><span>Run in configured emulator…</span></button>
+    </div></details>
+    <details class="editor-menu"><summary>Help</summary><div class="editor-menu-panel">
+      <button type="button" data-editor-action="help-overview"><span>About this file and language</span></button>
+      <button type="button" data-editor-action="help-reference"><span>Command reference…</span></button>
+      <span class="editor-menu-separator" role="separator"></span>
+      <button type="button" data-editor-action="help-problems"><span>Problems</span></button>
+      <button type="button" data-editor-action="help-symbols"><span>Document symbols</span></button>
+    </div></details>
+    ${readOnly ? '<span class="editor-read-only">Read-only</span>' : ""}
+  </nav>`;
+}
+
+function disassemblyMenus(downloadUrl, exportUrl, exportLabel = "Export original binary…") {
+  const shortcut = value => `<kbd>${value}</kbd>`;
+  return `<nav class="editor-menubar" aria-label="Disassembly editor menus">
+    <details class="editor-menu"><summary>File</summary><div class="editor-menu-panel">
+      <button type="button" data-disassembly-action="save-as"><span>Save As Disassembly…</span></button>
+      <button type="button" data-disassembly-action="export"><span>Export disassembly as text…</span></button>
+      ${exportUrl ? `<a href="${esc(exportUrl)}"><span>${esc(exportLabel)}</span></a>` : ""}
+      ${downloadUrl ? `<a href="${esc(downloadUrl)}"><span>Download original with metadata…</span></a>` : ""}
+      <span class="editor-menu-separator" role="separator"></span>
+      <button type="button" data-disassembly-action="close"><span>Close</span>${shortcut("Ctrl+W")}</button>
+    </div></details>
+    <details class="editor-menu"><summary>Edit</summary><div class="editor-menu-panel">
+      <button type="button" data-disassembly-action="copy"><span>Copy</span>${shortcut("Ctrl+C")}</button>
+      <button type="button" data-disassembly-action="select-all"><span>Select All</span>${shortcut("Ctrl+A")}</button>
+      <button type="button" data-disassembly-action="find"><span>Find…</span>${shortcut("Ctrl+F")}</button>
+      <button type="button" data-disassembly-action="find-references"><span>Find references to selected address</span></button>
+      <button type="button" data-disassembly-action="rename-symbol"><span>Rename selected symbol…</span></button>
+    </div></details>
+    <details class="editor-menu"><summary>View</summary><div class="editor-menu-panel">
+      <button type="button" data-disassembly-action="fold-toggle-all"><span>Collapse all labelled blocks</span></button>
+      <button type="button" data-disassembly-action="sync-bytes"><span>Show synchronized bytes</span></button>
+    </div></details>
+    <details class="editor-menu"><summary>Tools</summary><div class="editor-menu-panel">
+      <button type="button" data-disassembly-action="hex"><span>Open raw bytes in Hex</span></button>
+    </div></details>
+    <details class="editor-menu"><summary>Project</summary><div class="editor-menu-panel">
+      <button type="button" data-disassembly-action="mark-code"><span>Mark selection as code</span></button>
+      <button type="button" data-disassembly-action="mark-text"><span>Mark selection as text</span></button>
+      <button type="button" data-disassembly-action="mark-bytes"><span>Mark selection as bytes</span></button>
+      <button type="button" data-disassembly-action="mark-words"><span>Mark selection as words</span></button>
+      <button type="button" data-disassembly-action="mark-addresses"><span>Mark selection as addresses</span></button>
+      <button type="button" data-disassembly-action="mark-bitmap"><span>Mark selection as bitmap</span></button>
+      <span class="editor-menu-separator" role="separator"></span>
+      <button type="button" data-disassembly-action="bookmark"><span>Bookmark selected address…</span></button>
+      <button type="button" data-disassembly-action="notes"><span>Project notes…</span></button>
+      <button type="button" data-disassembly-action="symbols-import"><span>Import symbol file…</span></button>
+      <button type="button" data-disassembly-action="symbols-export"><span>Export symbol file…</span></button>
+      <button type="button" data-disassembly-action="outline"><span>Program outline and call graph</span></button>
+      <button type="button" data-disassembly-action="history"><span>Project history</span></button>
+      <button type="button" data-disassembly-action="run-emulator"><span>Run in configured emulator…</span></button>
+    </div></details>
+    <details class="editor-menu"><summary>Help</summary><div class="editor-menu-panel">
+      <button type="button" data-disassembly-action="help-overview"><span>About this disassembly</span></button>
+      <button type="button" data-disassembly-action="help-reference"><span>Instruction and MOS reference…</span></button>
+      <button type="button" data-disassembly-action="help-symbols"><span>Discovered symbols…</span></button>
+      <button type="button" data-disassembly-action="help-problems"><span>Disassembly cautions</span></button>
+    </div></details>
+    <span class="editor-read-only">Read-only disassembly</span>
+  </nav>`;
+}
+
+function closeEditorMenus(root, except = null) {
+  root.querySelectorAll(".editor-menu[open]").forEach(menu => {
+    if (menu !== except) menu.removeAttribute("open");
+  });
+}
+
+let editorWindowController = null;
+
+function installEditorWindow(root) {
+  const previous = editorWindowController?.snapshot();
+  editorWindowController?.destroy(true);
+  const titleBar = root?.querySelector(":scope > header");
+  if (!titleBar) return;
+  const nativeClose = modal.querySelector(":scope > form > .modal-close");
+  const controls = document.createElement("div");
+  controls.className = "editor-window-controls";
+  controls.innerHTML = `<button type="button" class="editor-window-maximise" title="Maximise editor" aria-label="Maximise editor"></button><button type="button" class="editor-window-close" title="Close editor" aria-label="Close editor">×</button>`;
+  titleBar.classList.add("editor-window-titlebar");
+  titleBar.append(controls);
+  modal.classList.add("editor-window");
+
+  const directions = ["n", "ne", "e", "se", "s", "sw", "w", "nw"];
+  const handles = directions.map(direction => {
+    const handle = document.createElement("span");
+    handle.className = `editor-resize-handle editor-resize-${direction}`;
+    handle.dataset.resizeDirection = direction;
+    handle.tabIndex = 0;
+    handle.setAttribute("role", "separator");
+    handle.setAttribute("aria-label", `Resize editor from the ${direction.toUpperCase()} edge`);
+    modal.append(handle);
+    return handle;
+  });
+  const margin = 8;
+  const minWidth = () => Math.min(520, Math.max(300, window.innerWidth - margin * 2));
+  const minHeight = () => Math.min(340, Math.max(240, window.innerHeight - margin * 2));
+  const currentRect = () => {
+    const rect = modal.getBoundingClientRect();
+    return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+  };
+  const constrain = rectangle => {
+    const width = Math.min(Math.max(rectangle.width, minWidth()), window.innerWidth - margin * 2);
+    const height = Math.min(Math.max(rectangle.height, minHeight()), window.innerHeight - margin * 2);
+    return {
+      width,
+      height,
+      left: Math.min(Math.max(rectangle.left, margin), Math.max(margin, window.innerWidth - width - margin)),
+      top: Math.min(Math.max(rectangle.top, margin), Math.max(margin, window.innerHeight - height - margin)),
+    };
+  };
+  const setRect = rectangle => {
+    const rect = constrain(rectangle);
+    Object.assign(modal.style, {
+      position: "fixed", margin: "0", maxWidth: "none", maxHeight: "none",
+      left: `${rect.left}px`, top: `${rect.top}px`, width: `${rect.width}px`, height: `${rect.height}px`,
+    });
+    return rect;
+  };
+  const preferredInitialRect = () => {
+    // A desktop editor should feel like a working window, not a small prompt.
+    // Scale down with the browser rather than relying on fixed dimensions that
+    // either swamp a compact viewport or waste space on a large one.
+    const width = Math.min(1080, Math.max(minWidth(), Math.round(window.innerWidth * .62)));
+    const height = Math.min(760, Math.max(minHeight(), Math.round(window.innerHeight * .82)));
+    return {
+      width,
+      height,
+      left: Math.round((window.innerWidth - width) / 2),
+      top: Math.round((window.innerHeight - height) / 2),
+    };
+  };
+  const initial = previous?.rect || preferredInitialRect();
+  let maximised = Boolean(previous?.maximised);
+  let restoreRect = previous?.restoreRect || null;
+  setRect(maximised ? { left: margin, top: margin, width: window.innerWidth - margin * 2, height: window.innerHeight - margin * 2 } : initial);
+  const maximiseButton = controls.querySelector(".editor-window-maximise");
+  const updateMaximiseButton = () => {
+    maximiseButton.innerHTML = maximised
+      ? '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="6" width="10" height="10" rx="1"/><path d="M7 6V3h10v10h-4"/></svg>'
+      : '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="14" height="14" rx="1"/></svg>';
+    maximiseButton.title = maximised ? "Restore editor" : "Maximise editor";
+    maximiseButton.setAttribute("aria-label", maximiseButton.title);
+    modal.classList.toggle("editor-window-maximised", maximised);
+  };
+  const toggleMaximise = () => {
+    if (maximised) {
+      maximised = false;
+      setRect(restoreRect || initial);
+    } else {
+      restoreRect = currentRect();
+      maximised = true;
+      setRect({ left: margin, top: margin, width: window.innerWidth - margin * 2, height: window.innerHeight - margin * 2 });
+    }
+    updateMaximiseButton();
+  };
+  updateMaximiseButton();
+
+  let pointerCleanup = null;
+  const beginPointerOperation = (event, direction = "move") => {
+    if (event.button !== 0) return;
+    if (maximised) return;
+    event.preventDefault();
+    const origin = currentRect();
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const move = moveEvent => {
+      const dx = moveEvent.clientX - startX;
+      const dy = moveEvent.clientY - startY;
+      if (direction === "move") return setRect({ ...origin, left: origin.left + dx, top: origin.top + dy });
+      let { left, top, width, height } = origin;
+      if (direction.includes("e")) width += dx;
+      if (direction.includes("s")) height += dy;
+      if (direction.includes("w")) { left += dx; width -= dx; }
+      if (direction.includes("n")) { top += dy; height -= dy; }
+      setRect({ left, top, width, height });
+    };
+    const end = () => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", end);
+      document.removeEventListener("pointercancel", end);
+      pointerCleanup = null;
+    };
+    pointerCleanup?.();
+    pointerCleanup = end;
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", end, { once: true });
+    document.addEventListener("pointercancel", end, { once: true });
+  };
+  const resizeByKeyboard = (direction, event) => {
+    if (maximised || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+    event.preventDefault();
+    const amount = event.shiftKey ? 30 : 10;
+    const dx = event.key === "ArrowLeft" ? -amount : event.key === "ArrowRight" ? amount : 0;
+    const dy = event.key === "ArrowUp" ? -amount : event.key === "ArrowDown" ? amount : 0;
+    const origin = currentRect();
+    let { left, top, width, height } = origin;
+    if (direction.includes("e")) width += dx;
+    if (direction.includes("s")) height += dy;
+    if (direction.includes("w")) { left += dx; width -= dx; }
+    if (direction.includes("n")) { top += dy; height -= dy; }
+    setRect({ left, top, width, height });
+  };
+  const drag = event => {
+    if (event.target.closest("button, a, input, select, textarea, summary")) return;
+    beginPointerOperation(event);
+  };
+  const doubleClick = event => {
+    if (!event.target.closest("button, a, input, select, textarea, summary")) toggleMaximise();
+  };
+  const viewportChanged = () => {
+    if (maximised) setRect({ left: margin, top: margin, width: window.innerWidth - margin * 2, height: window.innerHeight - margin * 2 });
+    else setRect(currentRect());
+  };
+  titleBar.addEventListener("pointerdown", drag);
+  titleBar.addEventListener("dblclick", doubleClick);
+  maximiseButton.addEventListener("click", toggleMaximise);
+  controls.querySelector(".editor-window-close").addEventListener("click", () => nativeClose.click());
+  handles.forEach(handle => {
+    handle.addEventListener("pointerdown", event => beginPointerOperation(event, handle.dataset.resizeDirection));
+    handle.addEventListener("keydown", event => resizeByKeyboard(handle.dataset.resizeDirection, event));
+  });
+  window.addEventListener("resize", viewportChanged);
+
+  const destroy = (keepGeometry = false) => {
+    pointerCleanup?.();
+    titleBar.removeEventListener("pointerdown", drag);
+    titleBar.removeEventListener("dblclick", doubleClick);
+    window.removeEventListener("resize", viewportChanged);
+    controls.remove();
+    handles.forEach(handle => handle.remove());
+    if (!keepGeometry) {
+      modal.classList.remove("editor-window", "editor-window-maximised");
+      ["position", "margin", "max-width", "max-height", "left", "top", "width", "height"].forEach(property => modal.style.removeProperty(property));
+    }
+    if (editorWindowController?.destroy === destroy) editorWindowController = null;
+  };
+  editorWindowController = {
+    snapshot: () => ({ rect: currentRect(), maximised, restoreRect }),
+    destroy,
+  };
+  modal.addEventListener("close", () => destroy(), { once: true });
+}
+
+function editorTextPosition(editor) {
+  const before = editor.value.slice(0, editor.selectionStart);
+  const lines = before.split("\n");
+  return { line: lines.length, column: lines.at(-1).length + 1 };
+}
+
+function updateSourceEditorStatus(root) {
+  const editor = root.querySelector(".source-content");
+  if (!editor) return;
+  const position = editorTextPosition(editor);
+  const lines = editor.value.split("\n").length;
+  const dirty = editor.value !== editor.dataset.savedValue;
+  root.querySelector(".editor-document-state").textContent = editor.readOnly ? "Read-only" : dirty ? "Modified" : "Saved";
+  root.querySelector(".editor-position").textContent = `Ln ${position.line}, Col ${position.column}`;
+  root.querySelector(".editor-size").textContent = `${lines.toLocaleString()} line${lines === 1 ? "" : "s"} · ${editor.value.length.toLocaleString()} characters`;
+  root.querySelector('[data-editor-action="save"]').disabled = editor.readOnly || !dirty;
+}
+
+function editorFind(editor) {
+  const needle = prompt("Find text:", editor.dataset.findText || "");
+  if (!needle) return;
+  editor.dataset.findText = needle;
+  let found = editor.value.toLocaleLowerCase().indexOf(needle.toLocaleLowerCase(), editor.selectionEnd);
+  if (found < 0) found = editor.value.toLocaleLowerCase().indexOf(needle.toLocaleLowerCase());
+  if (found < 0) return toast(`“${needle}” was not found.`, true);
+  editor.focus();
+  editor.setSelectionRange(found, found + needle.length);
+}
+
+async function editorFindReplace(editor) {
+  const needle = prompt("Find text:", editor.dataset.findText || "");
+  if (!needle) return;
+  const replacement = prompt("Replace it with:", editor.dataset.replaceText || "");
+  if (replacement == null) return;
+  editor.dataset.findText = needle;
+  editor.dataset.replaceText = replacement;
+  const choice = await editorChoice(
+    "Find and Replace",
+    `Replace the next occurrence of “${needle}”, or every occurrence in this file? Matching is case-insensitive.`,
+    [
+      { value: "cancel", label: "Cancel", className: "ghost" },
+      { value: "next", label: "Replace next" },
+      { value: "all", label: "Replace all", className: "primary" },
+    ],
+  );
+  if (choice === "cancel") return;
+  const foldedNeedle = needle.toLocaleLowerCase();
+  if (choice === "next") {
+    const selected = editor.value.slice(editor.selectionStart, editor.selectionEnd);
+    let found = selected.toLocaleLowerCase() === foldedNeedle ? editor.selectionStart
+      : editor.value.toLocaleLowerCase().indexOf(foldedNeedle, editor.selectionEnd);
+    if (found < 0) found = editor.value.toLocaleLowerCase().indexOf(foldedNeedle);
+    if (found < 0) return toast(`“${needle}” was not found.`, true);
+    editor.setRangeText(replacement, found, found + needle.length, "select");
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+    editor.focus();
+    return;
+  }
+  let count = 0;
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const updated = editor.value.replace(new RegExp(escaped, "giu"), () => { count += 1; return replacement; });
+  if (!count) return toast(`“${needle}” was not found.`, true);
+  editor.setRangeText(updated, 0, editor.value.length, "end");
+  editor.dispatchEvent(new Event("input", { bubbles: true }));
+  editor.focus();
+  toast(`Replaced ${count.toLocaleString()} occurrence${count === 1 ? "" : "s"}.`);
+}
+
+function editorChoice(title, message, choices) {
+  return new Promise(resolve => {
+    const shade = document.createElement("div");
+    shade.className = "editor-choice-shade";
+    shade.setAttribute("role", "dialog");
+    shade.setAttribute("aria-modal", "true");
+    shade.setAttribute("aria-labelledby", "editor-choice-title");
+    shade.innerHTML = `<section class="editor-choice-card"><h2 id="editor-choice-title">${esc(title)}</h2><p>${esc(message)}</p><div class="modal-actions">${choices.map(choice => `<button type="button" class="button ${choice.className || ""}" data-choice="${esc(choice.value)}">${esc(choice.label)}</button>`).join("")}</div></section>`;
+    const finish = value => { shade.remove(); resolve(value); };
+    shade.querySelectorAll("[data-choice]").forEach(button => button.onclick = () => finish(button.dataset.choice));
+    shade.addEventListener("keydown", event => {
+      if (event.key === "Escape") finish("cancel");
+      keepFocusInside(shade, event);
+    });
+    modal.append(shade);
+    shade.querySelector('[data-choice="cancel"]')?.focus();
+  });
+}
+
+function installEditorCloseGuard(root, editor, closeEditor) {
+  const closeButton = modal.querySelector(".modal-close");
+  const dirty = () => !editor.readOnly && editor.value !== editor.dataset.savedValue;
+  const requestClose = () => {
+    if (dirty() && !confirm("Close this editor and discard its unsaved changes?")) return;
+    closeEditor();
+  };
+  const interceptClose = event => {
+    if (!root.isConnected) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    requestClose();
+  };
+  const interceptCancel = event => {
+    if (!root.isConnected || !dirty()) return;
+    event.preventDefault();
+    requestClose();
+  };
+  closeButton.addEventListener("click", interceptClose, true);
+  modal.addEventListener("cancel", interceptCancel);
+  modal.addEventListener("close", () => {
+    closeButton.removeEventListener("click", interceptClose, true);
+    modal.removeEventListener("cancel", interceptCancel);
+  }, { once: true });
+  return requestClose;
+}
+
+async function loadEditorProject(pane, path) {
+  const query = fileContextQuery(pane, path);
+  return (await api(`/api/images/${pane.image.id}/editor-project?${query}`)).project;
+}
+
+async function saveEditorProject(pane, path, project) {
+  return (await api(`/api/images/${pane.image.id}/editor-project`, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, slot: pane.slot, side: pane.side, project }),
+  })).project;
+}
+
+function bytePreviewMarkup(report) {
+  const bytes = String(report?.data || "").match(/../g) || [];
+  const ascii = bytes.map(value => {
+    const number = Number.parseInt(value, 16);
+    return number >= 32 && number <= 126 ? String.fromCharCode(number) : ".";
+  }).join("");
+  return `<code>${bytes.join(" ") || "No bytes"}</code><span>${esc(ascii)}</span>`;
+}
+
+function installSourceEditorControls(index, pane, entry, path, report, canEdit, isBasic, target = null, intelligence = null) {
+  const root = modalContent.querySelector(".source-editor");
+  const editor = root.querySelector(".source-content");
+  const requestClose = installEditorCloseGuard(root, editor, () => modal.close());
+  const saveButton = root.querySelector(".editor-save-submit");
+  let project = report.project || null;
+  let lineRanges = [];
+  let synchronizedBytes = false;
+  let syncTimer = null;
+  const syncPanel = root.querySelector(".source-byte-sync");
+  const ensureProject = async () => project || (project = await loadEditorProject(pane, path));
+  const sourceByteOffset = () => {
+    if (!isBasic) return editor.selectionStart;
+    const lineText = editor.value.slice(0, editor.selectionStart).split("\n").at(-1) || "";
+    const number = Number(lineText.match(/^\s*(\d+)/)?.[1]);
+    return lineRanges.find(row => Number(row.line) === number)?.start ?? 0;
+  };
+  const updateSynchronizedBytes = async () => {
+    if (!synchronizedBytes || !syncPanel || target) return;
+    try {
+      if (isBasic && !lineRanges.length) {
+        const verified = await api(`/api/images/${pane.image.id}/inspect/basic/verify`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: editor.value }),
+        });
+        lineRanges = verified.lineRanges || [];
+      }
+      const offset = sourceByteOffset();
+      const bytes = await api(`/api/images/${pane.image.id}/file-hex?${fileContextQuery(pane, path, { offset, length: 32 })}`);
+      syncPanel.innerHTML = `<header><strong>Saved bytes at file offset ${Number(bytes.offset).toLocaleString()}</strong><button type="button" title="Open this location in the full hex editor">Open Hex</button></header>${bytePreviewMarkup(bytes)}`;
+      syncPanel.querySelector("button").onclick = () => openFileHexEditor(index, entry, path, modalContent, bytes.offset, target);
+    } catch (error) { syncPanel.innerHTML = `<span>${esc(error.message || String(error))}</span>`; }
+  };
+  const save = async () => {
+    if (editor.readOnly || editor.value === editor.dataset.savedValue) return;
+    if (!target && intelligence?.history) {
+      const changes = intelligence.history();
+      if (changes.length) {
+        const current = await ensureProject();
+        current.history = [...(current.history || []), ...changes];
+        project = await saveEditorProject(pane, path, current);
+        changes.splice(0, changes.length);
+      }
+    }
+    modal.querySelector("form").requestSubmit(saveButton);
+  };
+  const saveAs = async () => {
+    if (editor.readOnly) return;
+    const rule = targetNameRule(pane, entry.name);
+    const suffix = entry.name.length < rule.limit ? "2" : "";
+    const suggested = `${entry.name.slice(0, rule.limit - suffix.length)}${suffix}`;
+    const newName = prompt(`Save beside ${entry.name} as a new ${rule.label} file (maximum ${rule.limit} characters):`, suggested);
+    if (newName == null) return;
+    try {
       const data = await api(`/api/images/${pane.image.id}/inspect`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path, slot: pane.slot, side: pane.side, text: form.get("inspectedText") })
+        body: JSON.stringify({ path, slot: pane.slot, side: pane.side, text: editor.value, basic: isBasic, sha256: report.sha256, newName })
       });
       pane.image = data.image;
       await loadDirectory(index);
-      toast(`${entry.name} updated safely`);
+      modal.close();
+      toast(`${newName} created with the original Acorn metadata. An undo checkpoint is available.`);
+    } catch (error) { toast(error.message, true); }
+  };
+  const insertPaste = async text => {
+    let inserted = text;
+    if (isBasic) {
+      const choice = await editorChoice(
+        "Paste into BBC BASIC",
+        "Choose whether to validate numbered BASIC source or insert the clipboard exactly as plain text. The complete program must be valid BASIC before it can be saved.",
+        [
+          { value: "cancel", label: "Cancel", className: "ghost" },
+          { value: "plain", label: "Paste plain text" },
+          { value: "basic", label: "Paste as BASIC source", className: "primary" },
+        ],
+      );
+      if (choice === "cancel") return;
+      if (choice === "basic") {
+        try {
+          const result = await api(`/api/images/${pane.image.id}/inspect/basic/normalise`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text }),
+          });
+          inserted = result.text;
+        } catch (error) { return toast(error.message, true); }
+      }
+    }
+    editor.setRangeText(inserted, editor.selectionStart, editor.selectionEnd, "end");
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+    editor.focus();
+  };
+  const replaceSelection = async mode => {
+    try {
+      if (mode === "copy" || mode === "cut") {
+        const text = editor.value.slice(editor.selectionStart, editor.selectionEnd);
+        if (text) await navigator.clipboard.writeText(text);
+        if (mode === "cut" && canEdit && text) editor.setRangeText("", editor.selectionStart, editor.selectionEnd, "end");
+      } else if (mode === "paste" && canEdit) {
+        await insertPaste(await navigator.clipboard.readText());
+        return;
+      }
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      editor.focus();
+    } catch (_error) { toast("Clipboard access was refused by the browser. Use the keyboard shortcut instead.", true); }
+  };
+  root.querySelectorAll(".editor-menu").forEach(menu => menu.addEventListener("toggle", () => {
+    if (menu.open) closeEditorMenus(root, menu);
+  }));
+  root.querySelectorAll("[data-editor-action]").forEach(control => control.addEventListener("click", async event => {
+    event.preventDefault();
+    const action = control.dataset.editorAction;
+    closeEditorMenus(root);
+    if (action === "save") save();
+    else if (action === "save-as") await saveAs();
+    else if (action === "export") downloadDocument(`${entry.name}.txt`, editor.value, "text/plain;charset=utf-8");
+    else if (action === "close") requestClose();
+    else if (["copy", "cut", "paste"].includes(action)) await replaceSelection(action);
+    else if (action === "select-all") { editor.focus(); editor.select(); updateSourceEditorStatus(root); }
+    else if (action === "find") editorFind(editor);
+    else if (action === "find-replace") await editorFindReplace(editor);
+    else if (action === "find-references") intelligence?.findReferences();
+    else if (action === "rename-symbol") intelligence?.renameSymbol();
+    else if (action === "go-to-line") intelligence?.goToLine();
+    else if (action === "fold-toggle-all") intelligence?.toggleAll();
+    else if (action === "sync-bytes") {
+      synchronizedBytes = !synchronizedBytes;
+      syncPanel.hidden = !synchronizedBytes;
+      control.querySelector("span").textContent = synchronizedBytes ? "Hide synchronized bytes" : "Show synchronized bytes";
+      if (synchronizedBytes) await updateSynchronizedBytes();
+    }
+    else if (action === "condense-code") await intelligence?.condense();
+    else if (action === "refactor-code") await intelligence?.refactor();
+    else if (action === "auto-indent-view") intelligence?.toggleAutoIndent(root.querySelector("[data-indent-style]")?.value, root.querySelector("[data-indent-size]")?.value);
+    else if (action === "toggle-comment") intelligence?.toggleComment();
+    else if (action === "normalise-commands") intelligence?.normaliseCommands();
+    else if (action === "verify-basic") await intelligence?.verifyRoundTrip();
+    else if (action === "program-outline") intelligence?.showOutline();
+    else if (action === "editor-history") intelligence?.showHistory();
+    else if (action === "project-notes") {
+      if (target) return toast("Archive-member project notes become available after extracting the member into an image.", true);
+      const current = await ensureProject();
+      const notes = prompt("Project notes for this file:", current.notes || "");
+      if (notes != null) { current.notes = notes; project = await saveEditorProject(pane, path, current); toast("Project notes saved."); }
+    }
+    else if (action === "project-bookmark") {
+      if (target) return toast("Extract this archive member before adding project bookmarks.", true);
+      const current = await ensureProject();
+      const offset = sourceByteOffset();
+      const name = prompt(`Bookmark saved-file offset ${offset}:`, isBasic ? `BASIC line ${editor.value.slice(0, editor.selectionStart).split("\n").at(-1)?.match(/^\s*(\d+)/)?.[1] || "cursor"}` : `Offset ${offset}`);
+      if (name) { current.bookmarks = [...(current.bookmarks || []), { offset, name, note: "" }]; project = await saveEditorProject(pane, path, current); toast("Bookmark saved."); }
+    }
+    else if (action === "run-emulator") {
+      if (target) return toast("Extract this archive member before handing it to an emulator.", true);
+      const status = await api(`/api/images/${pane.image.id}/editor-emulator`);
+      if (!status.available) return toast(status.message, true);
+      if (!confirm(`Run ${entry.name} using the configured emulator command for ${status.hardware || "this profile"}?`)) return;
+      const result = await api(`/api/images/${pane.image.id}/editor-emulator`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, slot: pane.slot, side: pane.side }) });
+      toast(`Emulator finished with return code ${result.result.returnCode}.`);
+    }
+    else if (action === "undo" || action === "redo") {
+      editor.focus();
+      if (!intelligence?.[action]?.()) document.execCommand(action);
+      updateSourceEditorStatus(root);
+    }
+    else if (action === "hex") openFileHexEditor(index, entry, path, modalContent, 0, target);
+    else if (action === "help-overview") intelligence?.overview();
+    else if (action === "help-reference") intelligence?.reference();
+    else if (action === "help-problems") intelligence?.showProblems();
+    else if (action === "help-symbols") intelligence?.showSymbols();
+  }));
+  const indentStyle = root.querySelector("[data-indent-style]");
+  const indentSize = root.querySelector("[data-indent-size]");
+  const updateIndentControls = () => { if (indentSize) indentSize.disabled = indentStyle?.value === "tabs"; };
+  indentStyle?.addEventListener("change", updateIndentControls);
+  updateIndentControls();
+  editor.addEventListener("input", () => updateSourceEditorStatus(root));
+  if (isBasic && canEdit) editor.addEventListener("paste", event => {
+    event.preventDefault();
+    insertPaste(event.clipboardData.getData("text"));
+  });
+  editor.addEventListener("keyup", () => updateSourceEditorStatus(root));
+  editor.addEventListener("click", () => updateSourceEditorStatus(root));
+  const scheduleSync = () => { clearTimeout(syncTimer); syncTimer = setTimeout(updateSynchronizedBytes, 100); };
+  editor.addEventListener("click", scheduleSync);
+  editor.addEventListener("keyup", scheduleSync);
+  root.addEventListener("keydown", event => {
+    if (!(event.ctrlKey || event.metaKey)) return;
+    const key = event.key.toLocaleLowerCase();
+    if (key === "z" && !event.shiftKey && intelligence?.undo?.()) { event.preventDefault(); updateSourceEditorStatus(root); }
+    else if ((key === "y" || (key === "z" && event.shiftKey)) && intelligence?.redo?.()) { event.preventDefault(); updateSourceEditorStatus(root); }
+    else if (key === "s") { event.preventDefault(); event.shiftKey ? saveAs() : save(); }
+    else if (key === "w") { event.preventDefault(); requestClose(); }
+    else if (key === "f") { event.preventDefault(); editorFind(editor); }
+    else if (key === "h" && canEdit) { event.preventDefault(); editorFindReplace(editor); }
+    else if (key === "g") { event.preventDefault(); intelligence?.goToLine(); }
+    else if (key === "/" && isBasic && canEdit) { event.preventDefault(); intelligence?.toggleComment(); }
+  });
+  updateSourceEditorStatus(root);
+}
+
+async function renderDisassemblyEditor(index, entry, path, inspection, architecture = "auto", origin = "", start = "0", length = "8192", focusOffset = null, target = null) {
+  const pane = panes[index];
+  const query = new URLSearchParams({
+    ...(target?.context || Object.fromEntries(fileContextQuery(pane, path))),
+    architecture, origin, start, length,
+  });
+  const report = await api(`${target?.disassemblyEndpoint || `/api/images/${pane.image.id}/disassembly`}?${query}`);
+  const downloadUrl = target ? "" : fileDownloadUrl(pane, path);
+  const exportUrl = target?.exportUrl || fileExportUrl(pane, path);
+  if (!replaceAnalysisLoading(`<div class="analysis-dialog file-inspector disassembly-editor"><header><div><small>${esc(report.architecture.toUpperCase())} DISASSEMBLY · ${humanSize(report.size)}</small><h2>${esc(entry.name)}</h2></div></header>
+    ${disassemblyMenus(downloadUrl, exportUrl, target ? "Export original archive member…" : "Export original binary…")}
+    <div class="disassembly-controls">
+      <label>Processor<select name="architecture"><option value="6502" ${report.architecture === "6502" ? "selected" : ""}>6502</option><option value="arm" ${report.architecture === "arm" ? "selected" : ""}>ARM</option><option value="m68k" ${report.architecture === "m68k" ? "selected" : ""}>68000</option></select></label>
+      <label>Origin<input name="origin" value="0x${Number(report.origin).toString(16).toUpperCase()}"></label>
+      <label>File offset<input name="start" value="${Number(report.start)}"></label>
+      <label>Bytes<input name="length" value="${Number(length) || 8192}"></label>
+      <button class="button small disassembly-refresh" type="button">Disassemble</button>
+    </div>
+    <div class="disassembly-source" style="${disassemblyColumnStyle(report)}" role="textbox" aria-readonly="true" aria-label="Disassembled source"><div class="disassembly-source-head" aria-hidden="true"><span></span><span>Address</span><span>Bytes</span><span>Instruction</span><span>Annotation</span></div>${disassemblySource(report)}</div>
+    <aside class="disassembly-byte-sync" aria-live="polite" hidden></aside>
+    <details class="disassembly-strings"><summary>Readable strings (${report.strings.length})</summary><div>${report.strings.map(item => `<button type="button" data-string-offset="${Number(item.offset)}" title="Go to this location in the disassembly"><code>&amp;${Number(item.address).toString(16).toUpperCase()}</code><span>${esc(item.text)}</span></button>`).join("") || "<p>No human-looking text strings were found.</p>"}</div></details>
+    ${report.truncated || report.limited ? '<div class="help-warning">Only the requested section is shown. Change File offset or Bytes to inspect another region.</div>' : ""}
+    <footer class="editor-status"><span>Read-only</span><span>${report.rows.length.toLocaleString()} decoded lines · comments appear beside their instruction</span><span>${esc(report.architectureReason)}</span></footer></div>`)) return;
+  const root = modalContent.querySelector(".disassembly-editor");
+  const source = root.querySelector(".disassembly-source");
+  installEditorWindow(root);
+  const intelligence = window.AcornCodeEditor?.enhanceDisassembly({ root, report });
+  modalContent.querySelector(".disassembly-refresh").onclick = async () => {
+    const values = Object.fromEntries(new FormData(modalContent.closest("form")));
+    analysisLoading("Disassembling file", path);
+    try { await renderDisassemblyEditor(index, entry, path, inspection, values.architecture, values.origin, values.start, values.length, null, target); }
+    catch (error) { toast(error.message, true); modal.close(); }
+  };
+  root.querySelectorAll(".editor-menu").forEach(menu => menu.addEventListener("toggle", () => {
+    if (menu.open) closeEditorMenus(root, menu);
+  }));
+  const selectSource = () => {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(source);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  };
+  const findSource = () => {
+    const needle = prompt("Find in disassembly:");
+    if (!needle) return;
+    const line = [...root.querySelectorAll(".disassembly-source-line")].find(item => item.textContent.toLocaleLowerCase().includes(needle.toLocaleLowerCase()));
+    root.querySelectorAll(".disassembly-source-line.found").forEach(item => item.classList.remove("found"));
+    if (!line) return toast(`“${needle}” was not found.`, true);
+    line.classList.add("found");
+    line.scrollIntoView({ block: "center" });
+    line.focus();
+  };
+  let project = report.project || { symbols: {}, regions: [], bookmarks: [], history: [], notes: "", tests: [] };
+  let selectedLines = [];
+  let selectionAnchor = null;
+  let synchronizedBytes = false;
+  const syncPanel = root.querySelector(".disassembly-byte-sync");
+  const sourceLines = () => [...root.querySelectorAll(".disassembly-source-line")];
+  const reportRow = element => report.rows.find(row => Number(row.offset) === Number(element?.dataset.offset));
+  const setSelectedLines = lines => {
+    selectedLines = lines;
+    sourceLines().forEach(line => line.classList.toggle("project-selected", selectedLines.includes(line)));
+  };
+  const updateDisassemblyBytes = async () => {
+    if (!synchronizedBytes || !syncPanel || !selectedLines[0]) return;
+    try {
+      const offset = Number(selectedLines[0].dataset.offset);
+      const endpoint = target?.hexEndpoint || `/api/images/${pane.image.id}/file-hex`;
+      const context = target?.context || Object.fromEntries(fileContextQuery(pane, path));
+      const bytes = await api(`${endpoint}?${new URLSearchParams({ ...context, offset, length: 32 })}`);
+      syncPanel.innerHTML = `<header><strong>Bytes at file offset ${Number(bytes.offset).toLocaleString()}</strong><button type="button">Open Hex</button></header>${bytePreviewMarkup(bytes)}`;
+      syncPanel.querySelector("button").onclick = () => openFileHexEditor(index, entry, path, modalContent, bytes.offset, target);
+    } catch (error) { syncPanel.innerHTML = `<span>${esc(error.message || String(error))}</span>`; }
+  };
+  sourceLines().forEach((line, lineIndex, allLines) => line.addEventListener("click", event => {
+    if (event.shiftKey && selectionAnchor != null) {
+      const first = Math.min(selectionAnchor, lineIndex); const last = Math.max(selectionAnchor, lineIndex);
+      setSelectedLines(allLines.slice(first, last + 1));
+    } else {
+      selectionAnchor = lineIndex;
+      setSelectedLines([line]);
+    }
+    updateDisassemblyBytes();
+  }));
+  const selectedRange = () => {
+    const rows = selectedLines.map(reportRow).filter(Boolean);
+    if (!rows.length) return null;
+    const startOffset = Math.min(...rows.map(row => Number(row.offset)));
+    const endOffset = Math.max(...rows.map(row => Number(row.offset) + Math.max(1, String(row.bytes || "").split(/\s+/).filter(Boolean).length)));
+    return { start: startOffset, end: endOffset, rows };
+  };
+  const persistProject = async (action, detail = "") => {
+    if (target) return toast("Extract this archive member before saving disassembly project data.", true);
+    project.history = [...(project.history || []), { time: new Date().toISOString(), action, detail }];
+    project = await saveEditorProject(pane, path, project);
+  };
+  const refreshProjectListing = async () => {
+    const values = Object.fromEntries(new FormData(modalContent.closest("form")));
+    analysisLoading("Applying disassembly project", path);
+    await renderDisassemblyEditor(index, entry, path, inspection, values.architecture, values.origin, values.start, values.length, selectedRange()?.start, target);
+  };
+  const markRegion = async kind => {
+    const range = selectedRange();
+    if (!range) return toast("Select one or more disassembly lines first.", true);
+    const name = prompt(`Name this ${kind} region:`, `${kind}_${range.start.toString(16).toUpperCase()}`);
+    if (name == null) return;
+    project.regions = [...(project.regions || []).filter(row => Number(row.end) <= range.start || Number(row.start) >= range.end), { start: range.start, end: range.end, kind, name: name || kind, width: 8 }];
+    await persistProject(`Marked ${kind} region`, `${range.start}-${range.end}`);
+    await refreshProjectListing();
+  };
+  const showProjectHistory = () => intelligence?.showCustom("Project history", (project.history || []).length
+    ? `<div class="code-history-list">${[...(project.history || [])].reverse().map(item => `<article><time>${esc(item.time || "")}</time><b>${esc(item.action || "Change")}</b><span>${esc(item.detail || "")}</span></article>`).join("")}</div>`
+    : '<p class="code-empty-message">No retained project changes exist for this file.</p>');
+  const showDisassemblyOutline = () => {
+    const labelled = report.rows.filter(row => row.label);
+    intelligence?.showCustom("Program outline and call graph", labelled.length ? `<div class="code-outline-list">${labelled.map(row => {
+      const callers = report.rows.filter(sourceRow => Number(sourceRow.target) === Number(row.address));
+      return `<article><button type="button" data-disassembly-offset="${Number(row.offset)}"><b>${esc(row.label)}</b><span>&amp;${Number(row.address).toString(16).toUpperCase()} · ${callers.length} caller${callers.length === 1 ? "" : "s"}</span></button></article>`;
+    }).join("")}</div>` : '<p class="code-empty-message">No labelled entry points were found in this range.</p>');
+  };
+  root.querySelectorAll("[data-disassembly-action]").forEach(control => control.addEventListener("click", async event => {
+    event.preventDefault();
+    closeEditorMenus(root);
+    const action = control.dataset.disassemblyAction;
+    if (action === "close") modal.close();
+    else if (action === "save-as") downloadDocument(`${entry.name}.asm`, disassemblyText(report), "text/plain;charset=utf-8");
+    else if (action === "export") downloadDocument(`${entry.name}-disassembly.txt`, disassemblyText(report), "text/plain;charset=utf-8");
+    else if (action === "select-all") selectSource();
+    else if (action === "copy") {
+      const selected = window.getSelection()?.toString();
+      try { await navigator.clipboard.writeText(selected || disassemblyText(report)); }
+      catch (_error) { toast("Clipboard access was refused by the browser. Use Ctrl+C after Select All.", true); }
+    } else if (action === "find") findSource();
+    else if (action === "find-references") {
+      const row = reportRow(selectedLines[0]);
+      if (!row) return toast("Select a disassembly line first.", true);
+      const matches = report.rows.filter(item => Number(item.target) === Number(row.address) || (item.references || []).map(Number).includes(Number(row.address)));
+      intelligence?.showCustom(`References to &${Number(row.address).toString(16).toUpperCase()}`, matches.length ? `<div class="code-reference-results">${matches.map(item => `<button type="button" data-disassembly-offset="${Number(item.offset)}"><b>&amp;${Number(item.address).toString(16).toUpperCase()}</b><code>${esc(`${item.mnemonic} ${item.operand || ""}`)}</code></button>`).join("")}</div>` : '<p class="code-empty-message">No direct references were decoded in this range.</p>');
+    }
+    else if (action === "rename-symbol") {
+      const row = reportRow(selectedLines[0]);
+      if (!row) return toast("Select a disassembly line first.", true);
+      const name = prompt(`Symbol for &${Number(row.address).toString(16).toUpperCase()}:`, row.label || `loc_${Number(row.address).toString(16).toUpperCase()}`);
+      if (name) { project.symbols = { ...(project.symbols || {}), [String(Number(row.address))]: name }; await persistProject("Renamed symbol", `&${Number(row.address).toString(16).toUpperCase()} = ${name}`); await refreshProjectListing(); }
+    }
+    else if (action === "fold-toggle-all") intelligence?.toggleAll();
+    else if (action === "sync-bytes") { synchronizedBytes = !synchronizedBytes; syncPanel.hidden = !synchronizedBytes; control.querySelector("span").textContent = synchronizedBytes ? "Hide synchronized bytes" : "Show synchronized bytes"; if (synchronizedBytes) await updateDisassemblyBytes(); }
+    else if (action.startsWith("mark-")) await markRegion(action.slice(5));
+    else if (action === "bookmark") {
+      const range = selectedRange(); if (!range) return toast("Select a disassembly line first.", true);
+      const name = prompt(`Bookmark file offset ${range.start}:`, `Offset ${range.start}`);
+      if (name) { project.bookmarks = [...(project.bookmarks || []), { offset: range.start, name, note: prompt("Optional bookmark note:", "") || "" }]; await persistProject("Added bookmark", name); await refreshProjectListing(); }
+    }
+    else if (action === "notes") { const notes = prompt("Project notes for this file:", project.notes || ""); if (notes != null) { project.notes = notes; await persistProject("Updated project notes"); toast("Project notes saved."); } }
+    else if (action === "symbols-export") {
+      const body = Object.entries(project.symbols || {}).sort((a, b) => Number(a[0]) - Number(b[0])).map(([address, name]) => `&${Number(address).toString(16).toUpperCase()} = ${name}`).join("\n");
+      downloadDocument(`${entry.name}.symbols`, body, "text/plain;charset=utf-8");
+    }
+    else if (action === "symbols-import") {
+      const picker = document.createElement("input"); picker.type = "file"; picker.accept = ".symbols,.sym,.txt";
+      picker.onchange = async () => { const body = await picker.files[0].text(); const symbols = { ...(project.symbols || {}) }; body.split(/\r?\n/).forEach(line => { const match = line.match(/^\s*(?:&|0x)?([0-9a-f]+)\s*(?:=|\s)\s*([A-Za-z_.][A-Za-z0-9_.]*)/i); if (match) symbols[String(Number.parseInt(match[1], 16))] = match[2]; }); project.symbols = symbols; await persistProject("Imported symbol file", picker.files[0].name); await refreshProjectListing(); }; picker.click();
+    }
+    else if (action === "outline") showDisassemblyOutline();
+    else if (action === "history") showProjectHistory();
+    else if (action === "run-emulator") {
+      if (target) return toast("Extract this archive member before handing it to an emulator.", true);
+      const status = await api(`/api/images/${pane.image.id}/editor-emulator`); if (!status.available) return toast(status.message, true);
+      if (confirm(`Run ${entry.name} using the configured emulator?`)) { const result = await api(`/api/images/${pane.image.id}/editor-emulator`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, slot: pane.slot, side: pane.side }) }); project = result.project; toast(`Emulator finished with return code ${result.result.returnCode}.`); }
+    }
+    else if (action === "hex") openFileHexEditor(index, entry, path, modalContent, 0, target);
+    else if (action === "help-overview") intelligence?.overview();
+    else if (action === "help-reference") intelligence?.reference();
+    else if (action === "help-symbols") intelligence?.showSymbols();
+    else if (action === "help-problems") intelligence?.showProblems();
+  }));
+  const focusLine = offset => {
+    const lines = [...root.querySelectorAll(".disassembly-source-line")];
+    const line = lines.find(item => Number(item.dataset.offset) === Number(offset))
+      || lines.filter(item => Number(item.dataset.offset) <= Number(offset)).at(-1);
+    if (!line) return false;
+    lines.forEach(item => item.classList.remove("found"));
+    line.classList.add("found");
+    line.scrollIntoView({ block: "center" });
+    line.focus();
+    return true;
+  };
+  root.querySelectorAll("[data-string-offset]").forEach(button => button.onclick = async () => {
+    const offset = Number(button.dataset.stringOffset);
+    if (offset >= Number(report.start) && offset < Number(report.end) && focusLine(offset)) return;
+    analysisLoading("Disassembling string location", `File offset ${offset.toLocaleString()}…`);
+    try {
+      await renderDisassemblyEditor(
+        index, entry, path, inspection, report.architecture,
+        `0x${Number(report.origin).toString(16).toUpperCase()}`, String(offset), length, offset, target,
+      );
+    } catch (error) { toast(error.message, true); modal.close(); }
+  });
+  root.querySelectorAll(".disassembly-source-line").forEach(line => line.ondblclick = () =>
+    openFileHexEditor(index, entry, path, modalContent, Number(line.dataset.offset), target));
+  root.addEventListener("keydown", event => {
+    if (!(event.ctrlKey || event.metaKey)) return;
+    const key = event.key.toLocaleLowerCase();
+    if (key === "w") { event.preventDefault(); modal.close(); }
+    else if (key === "f") { event.preventDefault(); findSource(); }
+  });
+  if (focusOffset != null) requestAnimationFrame(() => focusLine(focusOffset));
+}
+
+async function openFileEditor(index, name, target = null, pathOverride = null) {
+  const pane = panes[index];
+  const entry = pane.entries.find(item => String(item.name).toLocaleLowerCase() === String(name).toLocaleLowerCase());
+  if (!entry) return toast("That file is no longer present. Refresh the pane and try again.", true);
+  const path = target?.displayPath || pathOverride || entryImagePath(pane, entry);
+  analysisLoading("Inspecting file", path);
+  const query = target ? new URLSearchParams(target.context) : fileContextQuery(pane, path);
+  try {
+    const report = await api(`${target?.inspectEndpoint || `/api/images/${pane.image.id}/inspect`}?${query}`);
+    pane.fileKinds[fileKindKey(pane, entry.name)] = report.view;
+    renderPane(index, true);
+    if (report.view === "container") {
+      if (target) {
+        modal.close();
+        return openFileHexEditor(index, entry, path, null, 0, target);
+      }
+      modal.close();
+      pane.archivePath = path;
+      pane.archiveName = entry.name;
+      pane.archiveMember = "";
+      return loadDirectory(index);
+    }
+    if (report.view === "disassembly") return renderDisassemblyEditor(index, entry, path, report, "auto", "", "0", "8192", null, target);
+    if (report.view === "hex") {
+      modal.close();
+      return openFileHexEditor(index, entry, path, null, 0, target);
+    }
+    const canEdit = !target && report.editable && !report.readOnly && !pane.image.readOnly;
+    const isBasic = report.view === "basic";
+    const isScript = report.view === "script";
+    const downloadUrl = target?.downloadUrl || fileDownloadUrl(pane, path);
+    const sourceKind = isBasic ? `${esc(report.basic.dialect)} · ${report.basic.lineCount} LINES` : isScript ? `BBC COMMAND SCRIPT · ${report.script.lineCount} LINES` : "TEXT FILE";
+    const editorRows = Math.max(7, Math.min(24, report.text.split("\n").length + 1));
+    if (!replaceAnalysisLoading(`<div class="analysis-dialog file-inspector source-editor"><header><div><small>${sourceKind} · ${humanSize(report.size)}</small><h2>${esc(entry.name)}</h2></div></header>
+      ${editorMenus({ downloadUrl, downloadLabel: target ? "Export original archive member…" : "Download with metadata…", canEdit, basic: isBasic, readOnly: !canEdit })}
+      <textarea class="inspector-content source-content${isBasic ? " basic-source" : ""}" name="inspectedText" rows="${editorRows}" spellcheck="false" wrap="off" ${canEdit ? "" : "readonly"}>${esc(report.text)}</textarea>
+      <aside class="source-byte-sync" aria-live="polite" hidden></aside>
+      ${target ? '<div class="help-note">This member was extracted in memory. It is read-only until safe transactional archive rebuilding is available; exporting keeps its original bytes.</div>' : ""}
+      ${isBasic && !report.editable ? `<div class="help-warning">${report.basic.trailingBytes ? "This program has trailing binary data" : `${esc(report.basic.dialect)} cannot be safely retokenised by this editor`}. It is open read-only; the raw bytes remain available in Hex.</div>` : ""}
+      <footer class="editor-status"><span class="editor-document-state">${canEdit ? "Saved" : "Read-only"}</span><span class="editor-position">Ln 1, Col 1</span><span class="editor-size"></span></footer>
+      <button class="editor-save-submit" type="submit" value="save" hidden>Save</button></div>`,
+    canEdit ? async form => {
+      const data = await api(`/api/images/${pane.image.id}/inspect`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path, slot: pane.slot, side: pane.side, text: form.get("inspectedText"), basic: isBasic, sha256: report.sha256 })
+      });
+      pane.image = data.image;
+      await loadDirectory(index);
+      report.sha256 = data.inspection.sha256;
+      const editor = modalContent.querySelector(".source-content");
+      editor.dataset.savedValue = editor.value;
+      updateSourceEditorStatus(modalContent.querySelector(".source-editor"));
+      toast(`${entry.name} updated safely. An undo checkpoint is available.`);
+      return false;
     } : null)) return;
-    const textarea = modalContent.querySelector(".inspector-content");
-    const commands = modalContent.querySelector(".inspector-commands");
-    modalContent.querySelectorAll(".inspector-tabs button").forEach(button => button.onclick = () => {
-      modalContent.querySelectorAll(".inspector-tabs button").forEach(item => item.classList.toggle("active", item === button));
-      const view = button.dataset.view;
-      commands.hidden = view !== "commands";
-      textarea.hidden = view === "commands";
-      if (view === "hex") { textarea.value = report.hex; textarea.readOnly = true; }
-      else if (view === "primary") { textarea.value = report.view === "hex" ? report.hex : report.text; textarea.readOnly = !canEdit; }
+    const editor = modalContent.querySelector(".source-content");
+    editor.dataset.savedValue = editor.value;
+    installEditorWindow(modalContent.querySelector(".source-editor"));
+    if (!target) {
+      try { report.project = await loadEditorProject(pane, path); }
+      catch (_error) { report.project = null; }
+    }
+    const intelligence = window.AcornCodeEditor?.enhance({
+      textarea: editor,
+      root: modalContent.querySelector(".source-editor"),
+      language: isBasic ? "basic" : isScript ? "script" : "text",
+      inlineAssemblyLanguage: isBasic && (report.basic?.dialect === "BBC BASIC V" || pane.image?.targetHardware === "risc-os") ? "arm" : "6502",
+      initialHistory: report.project?.history || [],
+      validateBasic: isBasic ? async (text, baseline = "") => api(`/api/images/${pane.image.id}/inspect/basic/verify`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, baseline }),
+      }) : null,
+      packBasic: isBasic ? async runs => {
+        const result = await api(`/api/images/${pane.image.id}/inspect/basic/pack`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ runs }),
+        });
+        return result.groups;
+      } : null,
     });
+    installSourceEditorControls(index, pane, entry, path, report, canEdit, isBasic, target, intelligence);
+    const renumber = modalContent.querySelector(".basic-renumber");
+    if (renumber) renumber.onclick = async () => {
+      const editor = modalContent.querySelector(".basic-source");
+      renumber.disabled = true;
+      renumber.textContent = "Renumbering…";
+      try {
+        const result = await api(`/api/images/${pane.image.id}/inspect/basic/renumber`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: editor.value, start: modalContent.querySelector('[name="renumberStart"]').value, step: modalContent.querySelector('[name="renumberStep"]').value })
+        });
+        editor.value = result.text;
+        editor.focus();
+        editor.dispatchEvent(new Event("input", { bubbles: true }));
+        intelligence?.recordHistory?.("Renumbered BASIC", `${result.lineCount} lines`);
+        toast(`${result.lineCount} BASIC lines renumbered, including encoded line references. Save to write the program.`);
+      } catch (error) { toast(error.message, true); }
+      finally { renumber.disabled = false; renumber.textContent = "Renumber"; }
+    };
   } catch (error) { toast(error.message, true); modal.close(); }
 }
 

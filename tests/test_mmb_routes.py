@@ -1,5 +1,7 @@
 import threading
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, call, patch
 
@@ -92,6 +94,21 @@ class MmbRouteTests(unittest.TestCase):
             call(self.service, self.target),
             call(self.service, self.source),
         ])
+
+    def test_formatted_slot_can_be_downloaded_as_an_ssd(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        image = Path(temporary.name) / "ARCADIANS.ssd"
+        image.write_bytes(b"dfs-image")
+        self.service.slot_download.return_value = (image.read_bytes(), "ARCADIANS.ssd")
+
+        response = self.client.get("/api/images/source/slots/42/download")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, b"dfs-image")
+        self.assertIn("ARCADIANS.ssd", response.headers["Content-Disposition"])
+        self.service.slot_download.assert_called_once_with(self.source, 42)
+        response.close()
 
 
 if __name__ == "__main__":

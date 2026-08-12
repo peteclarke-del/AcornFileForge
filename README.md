@@ -111,8 +111,10 @@ sample media. They show actual decoded data and controls rather than mockups.
 1. The app starts with one full-width work pane. Open or create an image there.
 2. Select **Add Pane** in the header when you need a source, destination or
    scratch area. Add a third in the same way; three is the maximum.
-3. Double-click directories or MMB slots to browse them. Use the `..` row to
-   return to the parent, or select a breadcrumb to jump straight there.
+3. Double-click directories or MMB slots to browse them. SSD and DSD panes open
+   directly on `$`; files from populated A-Z catalogue prefixes are grouped
+   underneath. Use the `..` row to return to the parent where applicable, or
+   select a breadcrumb to jump straight there.
 4. Drag files, directories, disk images, ROM banks, or MMB slots to their destination.
 5. Use **Edit** to undo the latest operation or create a named checkpoint
    before a larger experiment.
@@ -388,22 +390,331 @@ a different saved address. Missing launchers and ambiguous dependencies remain
 for review. The repair dialog itemises what is eligible and creates an undo
 checkpoint before writing.
 
-### File and dependency inspection
+### Opening and editing files
 
-Select a file and choose **Inspect selected file** to see:
+Double-click a file in any filesystem pane to open it. The same viewer is
+available through **Analyse → Open selected file**. The app examines the
+contents instead of trusting the filename:
 
-- a text view for readable command and data files;
-- a decoded BBC BASIC listing for tokenised programs;
-- a conventional offset, hexadecimal and ASCII view;
-- the SHA-256 digest and detected `CHAIN`, `EXEC`, `RUN`, `LOAD`, `DIR`, and
-  `LIB` commands.
+- tokenised BBC BASIC II opens as an editable, numbered source listing;
+- `!BOOT` and other recognised `*EXEC` or BASIC command files open as
+  editable, unnumbered scripts;
+- readable Latin-1 files open in the text editor;
+- binary files open in an annotated disassembly viewer;
+- UEF tape containers, including gzip-compressed or extensionless UEF files,
+  reconstruct their cassette files as a read-only hierarchy with load and
+  execution addresses;
+- ZIP, TAR, TAR.GZ/TGZ, TAR.BZ2, TAR.XZ, standalone GZIP, BZIP2 and XZ files
+  appear as archives and open as read-only folder hierarchies in the same pane.
+  Double-clicking a member extracts it in memory and opens the appropriate
+  BASIC, command-script, text, disassembly or hex viewer;
+- an empty or otherwise undecodable file falls back to the hex editor.
 
-Small plain-text files can be edited safely from the inspector. Their existing
-load and execution metadata is retained. Tokenised BASIC is deliberately
-read-only in the free-form editor because converting an arbitrary listing back
-to BBC BASIC requires dialect-aware line-reference tokenisation. Existing
-compatibility repairs still make proven, length-safe changes to tokenised BASIC
-loaders.
+The download arrow beside every filename exports the original file and its
+Acorn metadata without opening it. This keeps opening, editing and downloading
+as separate, predictable actions.
+
+At the MMB index, every formatted slot has the same download arrow. It exports
+that slot as a standalone 200 KiB SSD using the visible disk title. Empty slots
+do not offer a download because they have no formatted catalogue entry.
+
+Every row has a type icon: directories and DFS catalogue groups use folder
+icons, MMB slots use disks, ROM banks use chips, containers use archive icons,
+and BASIC, command-script, text and binary files use distinct document icons.
+Names and RISC OS filetypes provide immediate safe classifications. Unlabelled
+files up to 128 KiB are inspected through the filesystem mount that is already
+open for the directory listing, so BASIC, command scripts, text, containers and
+binary files normally have the right icon before they are opened. Results are
+cached until the image changes. Larger unlabelled files remain generic binary
+rows until opened, avoiding a costly scan of every file in a large DAT image.
+
+The compact source window uses familiar **File**, **Edit** and **Tools** menus.
+File provides Save, Save As, browser-local text export, metadata download and
+Close. Save As creates a sibling inside the image and retains the original
+Acorn metadata and access state. Edit provides undo, redo, cut, copy, paste,
+select all, find, and case-insensitive Find and Replace, with the usual keyboard
+shortcuts. Replace Next works from the current selection and wraps once;
+Replace All reports its exact replacement count. Unsaved text is never
+discarded without a warning. Editors open centred at a useful desktop working
+size and scale proportionally when the browser window is smaller. Drag the
+title bar to move an editor, drag any edge or corner to resize it, or use the
+title-bar square to maximise and
+restore it. Double-clicking the title bar performs the same maximise or restore
+action. Movement and sizing remain constrained to the visible browser window.
+
+### Code-aware editing and help
+
+Source editors highlight BBC BASIC keywords, command-script operations,
+strings, numbers, comments, symbols and line numbers using colours owned by the
+normal light and dark themes. The editable textarea remains the real document,
+so browser undo, clipboard access, input methods, selection and the existing
+checked save path continue to work normally. The coloured layer never becomes
+the source of saved text.
+
+Commands with built-in reference information have dotted hover targets. Hover
+one to see its purpose, syntax, target requirements and a practical warning
+where one matters. Hover help appears only after the pointer settles on a
+command. Moving away, scrolling, clicking, pressing Escape, switching windows
+or refreshing the code view dismisses it, and only one tooltip can exist at a
+time. For keyboard use, place the caret in or after a command on
+the current line and press **F1**. The editor's **Help** menu also provides:
+
+- an overview of the detected language and the commands used in the file;
+- a searchable command reference;
+- live problems that jump back to the relevant source position;
+- document symbols for BASIC line numbers, procedures, functions and important
+  script targets.
+
+The Edit menu can find every code reference to the symbol at the caret and can
+rename that symbol as one undoable change. Strings and comments are excluded,
+so changing a variable, procedure or function name does not rewrite user-facing
+text. The BASIC program outline groups procedures and functions with their call
+sites. Diagnostics also report unused local definitions, mismatched `DEF PROC`
+and `ENDPROC` counts, and conservatively identified unreachable lines.
+
+Refactor and Condense use a two-column review with the original source beside
+the proposal. Changed rows are marked, and BBC BASIC proposals are tokenised,
+detokenised and tokenised again before they can be accepted. The review reports
+the exact tokenised byte size and line count. **Tools → Verify BASIC round
+trip** performs the same check without proposing a transformation. A retained
+editor history lists accepted transformations and symbol changes made in the
+current window.
+
+**View → Show synchronized bytes** follows the source caret or selected
+disassembly row and displays the corresponding saved bytes and printable text.
+It is deliberately labelled as saved data when the source has unsaved edits.
+The strip can open the same offset in the full Hex editor.
+
+The Project menu stores notes, bookmarks, symbols and code/data decisions with
+the recoverable working session and its checkpoints. In disassembly, shift-click
+selects a range. It can be marked as code, text, bytes, 16-bit words, an address
+table or bitmap data, then redisassembled using that decision. Symbols can be
+renamed, imported from or exported to a simple `&address = label` text file.
+The outline shows labelled regions and direct callers, while Find references
+jumps to decoded users of the selected address. This metadata never changes the
+file bytes.
+
+An optional emulator hand-off is available when
+`ACORN_FILE_EMULATOR_COMMAND` is set. The command must include `{file}` and may
+also use `{image}`, `{path}`, `{load}` and `{execute}`. Acorn File Forge exports
+the selected file to a temporary path, runs the configured command for up to 60
+seconds, records its return code and output in the file project, then removes
+the temporary file. For example:
+
+```yaml
+environment:
+  ACORN_FILE_EMULATOR_COMMAND: 'my-emulator --run {file}'
+```
+
+The application does not bundle or assume a particular emulator.
+
+BBC BASIC listings also recognise inline assembler between `[` and `]`.
+Hovering a 6502 or ARM mnemonic shows the same processor help used by the
+disassembly editor. Named MOS entry points such as `OSWRCH`, their standard
+absolute addresses such as `&FFEE`, and assembler directives including `OPT`,
+`EQUB`, `EQUW`, `EQUD`, `EQUS` and `ALIGN` receive contextual help too. Ordinary
+BASIC variables outside an assembler region are not mistaken for mnemonics.
+Refactor and Condense treat assembler regions as physical source and never split
+or pack their lines.
+
+The initial BBC BASIC checks find missing, duplicate and out-of-order line
+numbers, unresolved direct `GOTO`, `GOSUB` and `RESTORE` destinations, missing
+local `DEF PROC` definitions and unclosed strings. Command-script checks flag
+unclosed strings, filing-system-dependent `R.` and `L.` abbreviations, and the
+common mistake of using `CHAIN "!BOOT"` for a file that should be passed to
+`*EXEC`. These are editing diagnostics, not a substitute for running the
+software on its target machine.
+
+The **Edit** menu can jump to a physical source line or a BBC BASIC line number.
+For BASIC, **Toggle comment** adds or removes `REM` across the selected lines. **Tools →
+Normalise recognised commands** applies the convention for the detected
+language without changing strings, comments or ordinary identifiers. BBC BASIC
+and Acorn command scripts currently prefer uppercase; the operation is designed
+to support lowercase conventions for other languages. Existing whole-program renumbering remains available separately
+because it also updates encoded BASIC line references.
+
+BBC BASIC procedures, `FOR` loops, `REPEAT` loops, structured `IF`, `CASE` and
+`WHILE` blocks have a small minus control in the left gutter. Select it to fold
+the block and use the resulting plus control to restore it. The single
+state-aware **View** command reads **Collapse all blocks** while everything is
+expanded and **Expand all blocks** whenever blocks are collapsed. The original textarea and saved program are never
+rewritten to produce the outline. Double-click a visible outline line to expand
+everything and place the caret on that line before editing. Files open with all
+blocks expanded.
+
+**View → Visual auto-indent** can display BASIC block structure using tabs or
+2, 4, or 8 spaces. This is deliberately a display option. It does not alter the
+textarea, dirty state, tokenised program or bytes saved to the image. While it
+is active the button changes to **Show original indentation**. Double-clicking a
+visible line also returns to the exact source layout and places the caret there.
+Procedures and multi-line functions are treated consistently: code after
+`DEFPROCname` or a multi-line `DEFFNname` is indented until `ENDPROC` or the
+function's leading `=` return. The scanner understands the compact spelling
+produced by tokenised listings, including `FORI%=...`, and closers later on a
+physical line, including `]:NEXT`, `NEXT:ENDPROC` and
+`CALL address:ENDPROC`. Compact closers such as `NEXTc%` and
+`UNTILINKEY...` also end their matching visual block. A one-line
+`DEFFNname(...)=expression` does not open a
+block. Folding uses this same structure scan, so its controls match the visual
+indentation.
+
+**Tools → Refactor selection or program** uses the physical selection when one
+exists, including a single selected line, or the complete BASIC program
+otherwise. This is the single command for both untangling and wider cleanup. It normalises proven command
+tokens, expands every statement boundary it can prove safe, renumbers the program from
+10 in steps of 10, and updates direct line destinations, including every target
+in an `ON … GOTO` or `ON … GOSUB` list. Refactor first opens a
+non-destructive proposal in the code view. No line is changed or renumbered
+until ✓ is selected and the confirmation is accepted; × discards the proposal
+without touching the document or undo history. It deliberately does not rename
+variables, alter strings, invent procedures or rewrite dynamic line expressions.
+Those changes could alter BBC BASIC's semantics, memory use or computed control
+flow. An accepted rewrite is one undoable editor operation and retains the
+logical cursor position and viewport. Visual indentation remains view-only.
+Nested `IF … ELSE IF … ELSE` chains are expanded into explicit guarded branches
+whose generated targets are resolved during the proposal. A compact `ON ERROR`
+handler is expanded safely using an explicit `ON ERROR GOTO` target followed by
+a normal-flow jump over the extracted handler. Its former colon-separated
+actions can therefore occupy separate numbered lines without running when the
+handler is installed.
+Every other proven statement separator is expanded, including chains on a
+`DEFPROC` or `ENDPROC` line and statements inside each branch of an inline
+`IF`. A line whose entire body is `:` is preserved exactly because BBC BASIC
+requires an executable no-op rather than an empty numbered source line.
+Compact command spellings emitted by the tokeniser, including `PROCmove(...)`,
+`VDU7`, `COLOUR129` and `CHAINf$`, are recognised as statements rather than
+being mistaken for computed line destinations. Standalone compact structural
+forms are normalised across the complete proposal, so forms such as
+`UNTILINKEY...`, `IFcondition`, `FORI%=...` and `NEXTI%` receive a readable
+space even when their original physical line contained no colon.
+BBC BASIC's omitted-`THEN` assignment shorthand is also recognised when both
+branches assign the same unambiguous variable, for example
+`IF condition path$="one" ELSE path$="two"`. Cases whose statement boundary
+cannot be proved remain unchanged for manual review.
+
+When Visual auto-indent is active, lines created by Refactor inherit any real
+surrounding structured block, such as a procedure, loop, multi-line `IF`, `CASE`
+or `WHILE`. A classic `IF condition THEN line` does not create a block: following
+physical lines reached by branching or fall-through therefore remain at their
+normal indentation. The proposal and accepted result both retain the active
+visual indentation. Presentation remains view-only and no tabs or spaces are
+written into the tokenised program.
+
+**Tools → Condense selection or program** performs the inverse operation. It
+packs adjacent statements onto the fewest safe physical lines with `:`, while
+preserving the first surviving line number and every explicit destination. The
+actual BBC BASIC tokeniser measures each proposed line, so tokenised keyword
+savings are used without exceeding the 251-byte line limit. A target line always
+starts a new packed line. Packing also stops after an inline `IF`, `ON ERROR`,
+`REM`, `*` command or unconditional transfer, and at structured branch
+boundaries. Programs that use computed line destinations or use `ERL` in
+calculations or control flow are left unchanged because removing a physical
+line number could alter their behaviour. Merely printing `ERL` in an error
+handler is safe and does not block the transformation. Empty, untargeted
+numbered lines inside the chosen range are removed.
+Like Refactor, Condense first shows an original/proposed comparison with Accept
+and Cancel controls, commits as
+one undoable edit, and preserves the logical selection and viewport.
+
+The parser recognises classic and structured BBC BASIC syntax, including
+omitted `THEN`, nested `ELSE IF`, procedures, loops, `CASE` and `WHILE` forms.
+Transformations are only enabled for dialects the installed tokeniser can write
+back without changing their byte format. BBC BASIC V remains an annotated,
+read-only listing at present; the app will not silently rewrite it as BASIC II.
+
+Every emitted disassembly row has contextual hover help across 6502, ARM and
+68000 output. This includes normal processor instructions, condition and size
+variants, decoder-specific mnemonics, and data pseudo-operations such as
+`EQUB`, `EQUS`, `EQUW` and `EQUD`. The tooltip combines the operation family,
+the exact decoded operand and addressing form, encoded bytes, cross-references
+and the analyser's row comment. MOS entry points from `OSRDRM` through `OSCLI`
+retain their specific calling help. An unfamiliar decoder mnemonic receives an
+architecture-specific fallback instead of losing its tooltip. The Help menu
+lists the operations actually present alongside the instruction and MOS
+reference. Disassembly help remains advisory because data bytes can decode as
+plausible instructions.
+Labelled disassembly regions have the same left-gutter controls and one
+state-aware **View** command. Folding only hides rendered rows, so double-clicking any visible
+instruction still opens its bytes at the matching Hex offset.
+
+The BASIC editor accepts complete numbered lines, so you can insert a line by
+typing its number or remove it by deleting the line. Every displayed line has
+a space after its line number. **Tools → Renumber BASIC** retokenises the
+current listing and updates encoded targets used by statements such as `GOTO`,
+`GOSUB` and `RESTORE`; numbers inside strings are left alone. Pasting offers a
+choice between validating and normalising numbered BBC BASIC source or
+inserting the clipboard exactly as plain text. The complete listing must still
+be valid BASIC when it is saved. Existing load, execution and filetype metadata
+is retained, and every save creates an automatic undo checkpoint. BASIC V files
+and BASIC programs with trailing binary payloads open read-only because
+rewriting those formats as BASIC II would be unsafe.
+
+The script editor is intended for files such as `!BOOT`, `LOADER`, `START` and
+other content that is recognisably made from OS or BASIC commands. It does not
+add line numbers. Lines are sent in order by `*EXEC` or the boot process, so
+they can be inserted, removed or rearranged directly. Detection checks both
+content and conventional names, while a tokenised `!BOOT` still opens in the
+numbered BASIC editor.
+
+The machine-code viewer uses the pane's hardware profile to choose 6502 for
+8-bit Acorn targets or ARM for RISC OS. You can override that with 6502, ARM or
+68000, change the load origin and file offset, and request another block of
+bytes. The result is shown as fixed-width source rather than a report table.
+Annotations follow values only while they can be proved along the current code
+path. Immediate A, X and Y values are shown, MOS calls explain their operation,
+and known OSBYTE, OSWORD, OSFILE and OSFIND reason codes include the proven
+parameters. OSWRCH shows the character or VDU control byte being written.
+Branches explain their condition, and local routines and destinations receive
+stable semantic labels rather than anonymous `sub_` and `loc_` names. Proven
+behaviour produces names such as `write_text_8120`, `execute_command_834A`,
+`loop_8057` and `equal_80C2`. File entry points use `program_entry_`, while
+readable strings include a short, sanitised excerpt in their label. Detected
+strings within the requested range are emitted directly as `EQUS` data rows
+rather than left looking like accidental instructions. A referenced address
+inside a string starts a separate labelled `EQUS` row so jumps and
+cross-references remain exact; adjacent non-text bytes remain visible as
+`EQUB`. Every
+generated name retains its hexadecimal address suffix so similar routines stay
+unambiguous. Hardware accesses identify the relevant BBC I/O region, execution
+addresses are marked, and conventional BBC BRK error blocks are decoded into
+their error number and message. Known MOS calls and cross-references appear as
+semicolon comments on the instruction they describe. The string list excludes incidental punctuation and
+number runs that merely happen to be printable. Select a readable string to
+jump to its decoded line, disassembling that block first when necessary.
+Double-click an instruction when you deliberately want Hex at that exact file
+offset. The File menu exports
+the formatted disassembly as text, exports the unchanged binary, or downloads
+the original with Acorn metadata. Binary data can resemble instructions, so
+the raw-byte view remains the final authority.
+
+The disassembly grid measures the widest byte sequence and instruction in each
+result, adds a small monospace gutter, and moves Annotation left whenever the
+decoded instructions are short. Sensible caps prevent a long data declaration
+from consuming the editor; hover a shortened byte or instruction cell for its
+full contents. A sticky heading keeps the columns identifiable while scrolling.
+
+Archive browsing validates member paths, ignores non-regular TAR objects and
+limits archive, member and entry counts before expansion. Double-click an
+archive to enter it, use its breadcrumbs or `..` to move around, then
+double-click a member to inspect its extracted bytes in the normal
+content-aware viewer. BASIC, command scripts and text are decoded as source;
+machine code is disassembled; uncertain data opens in Hex. The member editor
+is deliberately read-only for now. Use its File menu or the row download arrow
+to export the unchanged member. The app does not claim that an edited member
+has been saved until the whole container can be rebuilt and checkpointed
+transactionally.
+
+UEF detection examines the content rather than requiring a filename suffix.
+This means an ADFS file such as `$.UEF.THRUST` opens as a tape container even
+though its leaf name has no `.uef`. Both raw and gzip-compressed UEF streams are
+recognised. Each valid cassette block sequence becomes a file row; incomplete
+sequences remain visible and are marked as incomplete rather than discarded.
+Recovered members are labelled as tape files and classified as tokenised BASIC,
+command scripts, readable text or binary data for their row icons.
+
+Saving from the text, BASIC or file-level hex editor checks the file digest
+first. If another operation changed it while the editor was open, the save is
+refused rather than overwriting newer work.
 
 **Check loader dependencies** resolves conventional targets beside the
 launcher and reports missing or root-relative paths. Complete disk extraction
@@ -411,12 +722,17 @@ already copies every catalogue file, so local companion programs travel with
 the launcher. The report explains when installing below ADFS root is unsafe or
 needs the existing guarded root-reference rewrite.
 
-### Raw image hex editor
+### Raw image and file hex editor
 
 Choose **Tools → Hex editor** to open a raw editor over the relevant pane. It
 works in small ranged pages, so opening a large HDF or BeebSCSI DAT does not
 copy the complete image into browser memory. A paired BeebSCSI DSC can be
 selected from the Component list when its geometry needs inspection.
+
+The same editor is available for an individual file from its BASIC, text or
+disassembly view. File-level raw writes preserve filesystem metadata and create
+an undo checkpoint, but can still damage tokenised source or executable code,
+so they use the same explicit dangerous-change confirmation.
 
 ![Raw image hex editor showing byte, ASCII and value views](app/static/help/hex-editor.png)
 
@@ -427,6 +743,9 @@ The editor provides:
 - 128, 256, 512 and 1,024-byte page sizes;
 - hexadecimal and Latin-1 text search, forward or backward, with optional
   wrapping;
+- fixed-size hexadecimal or Latin-1 replacement, with the matched byte range
+  selected before it is staged. Search and replacement values must contain the
+  same number of bytes because raw editing cannot resize an image;
 - byte and range selection using click, Shift-click or Shift plus the arrow
   keys;
 - hexadecimal or ASCII typing modes;
@@ -451,6 +770,7 @@ its Write changes control remains disabled.
 
 Useful shortcuts while the editor has focus are Ctrl/Cmd-S to review and write,
 Ctrl/Cmd-Z and Ctrl/Cmd-Y for editor undo and redo, Ctrl/Cmd-F to search,
+Ctrl/Cmd-H to move to replacement controls,
 Ctrl/Cmd-G to enter an offset, Ctrl/Cmd-C and Ctrl/Cmd-V for byte selections,
 the arrow keys to move, Shift plus the arrow keys to extend a selection, and
 Escape to close safely.
@@ -571,6 +891,7 @@ still stops only at a safe filesystem boundary.
 | Acorn cassette | UEF and compressed UEF | Reconstruct ordinary tape files, export them, drag them to disks, or convert them to SSD or DSD |
 | HxC floppy container | HFE v1, v2 and v3 | Decode DFS or ADFS sectors for browsing and extraction; safely edit ordinary HFE v1 disks and save them back with their original track layout |
 | Acorn ROM | ROM, ROM0-ROM7, recognised BIN | Inspect BBC-family headers, browse and rearrange banks, edit bytes and titles, build custom images, and combine or split byte-wide chip sets |
+| Acorn ROMFS data ROM | ROM identified by its catalogue | Browse, create, add, export, rename and delete files; retain load/execute metadata; set run-only protection; edit ROM identity; validate every block CRC |
 
 The file extension is only a hint. Generic names such as `HardDisc4`,
 `drive.img`, or `backup.bin` are inspected by content. A DFS image renamed to
@@ -578,7 +899,12 @@ The file extension is only a hint. Generic names such as `HardDisc4`,
 
 ### Images you can create
 
-The **Create new image** dialog offers:
+Use **File → New → New Image (current format)** to start with the format that
+matches the current pane. An unused pane is selected automatically, and a new
+pane is added when the three-pane limit has not been reached. If all three panes
+are occupied, the app asks to save the current image first. Cancelling that
+save question leaves the workspace unchanged. The familiar image-creation
+dialog then offers:
 
 - DFS SSD, 200 KiB
 - DFS DSD, 400 KiB
@@ -591,6 +917,7 @@ The **Create new image** dialog offers:
 - Raw physical-drive image
 - MMB bank with 511 empty slots
 - Acorn ROM from 256 bytes to 64 MiB, with a configurable bank size, erased byte, platform and linear, two-chip or four-chip byte layout
+- Acorn ROMFS data ROM in standard 8 KiB or 16 KiB form, with platform, title, version and copyright defaults
 
 Hard-drive capacity is entered as a size such as `4MB`, `20MB`, or `512MB`.
 The size field follows the selected format. Fixed-size DFS, ADFS floppy, HFE,
@@ -644,7 +971,7 @@ menu bar. **File** and **Edit** are always first, followed by **View**,
 clipboard commands, Undo and Checkpoints. View contains refresh, MMB return and
 DSD-side commands. The pane-heading icons remain quick shortcuts.
 
-Open **File** to add a file or create the directory/catalogue object supported
+Open **File** to insert a file or create the directory/catalogue object supported
 by the current filesystem. Open **Edit** for **Cut**, **Copy** and **Paste**.
 The clipboard is intentionally single-use: browsing and selecting a destination
 keeps it, while a successful paste, cancelling paste, pressing Escape, or
@@ -660,7 +987,7 @@ previews the required consecutive slots, applies DFS seven-character names and
 one-character catalogue groups, and splits the files across more disks or sides
 when the 31-entry or 200 KiB side limit requires it.
 
-**File → Add folder** provides a batch host-folder import. On ADFS floppy and
+**File → Insert Folder & Contents** provides a batch host-folder import. On ADFS floppy and
 hard-drive images, review the preflight and choose either to recreate the
 selected folder tree beneath the current directory or flatten every file into
 the current directory. DFS cannot store nested folders, so it offers the flat
@@ -683,29 +1010,36 @@ Loose host files do not normally contain those values, so Acorn File Forge also
 recognises companion `.inf` sidecars and common `name,load-exec` filenames. It
 uses neutral metadata only when no reliable source exists.
 
-Double-clicking an ordinary file exports a small ZIP containing the loose file
-and its matching `.inf` sidecar. The sidecar records the catalogue filename,
-load address, execute address, length and lock state, so moving the file through
-a modern host filesystem does not discard its Acorn identity. Complete SSD,
-DSD, ADFS, HFE and MMB image saves do not receive a bogus image-level `.inf`:
-those formats already carry the metadata internally and their download ZIP
-includes the technical README and catalogue instead. DAT saves continue to
-include the required matching DSC geometry file.
+Double-clicking an ordinary file opens the appropriate BASIC, text,
+disassembly or hex view. The download arrow beside the filename exports a small
+ZIP containing the loose file and its matching `.inf` sidecar. The sidecar
+records the catalogue filename, load address, execute address, length and lock
+state, so moving the file through a modern host filesystem does not discard its
+Acorn identity. Complete SSD, DSD, ADFS, HFE and MMB image saves do not receive
+a bogus image-level `.inf`: those formats already carry the metadata internally
+and their download ZIP includes the technical README and catalogue instead.
+DAT saves continue to include the required matching DSC geometry file.
 
 ### Files and directories
 
-- Choose **File → Add folder** or drop a host folder to import a complete batch.
+- Use **File → New → New file** in a writable SSD, DSD, MMB disk, ADFS floppy or
+  ADFS hard-drive directory. The filename is constrained to that filing
+  system's limit, the initial file is zero bytes, and its load and execution
+  addresses default to `&00000000`. Existing files are never replaced.
+- Choose **File → Insert Folder & Contents** or drop a host folder to import a complete batch.
   ADFS defaults to preserving its hierarchy and also offers a flat import. DFS
   imports the regular files into the open catalogue group because its directory
   letters are prefixes rather than real folders. Name shortening is shown in
   the preview. Existing ordinary files are replaced only when the explicit
   replacement option is selected.
-- Select **File → New folder** in a writable ADFS floppy or hard-drive pane to create a
+- Select **File → New → New folder** in a writable ADFS floppy or hard-drive pane to create a
   directory at the current location. The name is checked against the target
   format before the image is changed.
-- DFS media use **File → New catalogue group** instead. The pane root shows `$` and every
-  populated A-Z prefix as virtual catalogue groups. Open one to browse, add,
-  rename, delete or protect its files. Because DFS cannot store an empty group,
+- DFS media use **File → New catalogue group** instead. The pane opens on `$`.
+  Default-catalogue files appear first, followed by a visual gap and the files
+  in each populated A-Z prefix, displayed as `R.FILENAME` and grouped by prefix.
+  These remain flat DFS names, not directories, and can be opened, downloaded,
+  renamed, deleted, protected, copied or dragged directly. Because DFS cannot store an empty group,
   **New catalogue group** asks for the first file that will use a new prefix.
 - Double-click `..` to move to the parent directory. Inside an MMB disk, the
   root-level `..` row returns to **All disks** at the same slot.
@@ -745,13 +1079,16 @@ include the required matching DSC geometry file.
   counts as one image. Unrelated text and artwork files are ignored.
 - Drop an SSD, DSD, HFE, or ZIP containing them onto an empty MMB slot to
   insert it. The HFE must contain a DFS disk.
-- Select an empty MMB slot and use **File** to insert host or open
-  media, or create a formatted blank SSD/DSD directly. This is useful for save
-  disks and user-writable data.
+- Select an empty MMB slot and use **File → New → Insert new disc image** to run
+  the normal creation workflow for a formatted SSD or DSD. Existing host and
+  open-pane media remain under the ordinary File menu. New blank media is useful
+  for save disks and user-writable data.
 - Use **File → Insert folder of disk images** to scan a host folder recursively.
   The app flattens supported disk images into MMB slots in discovery order and
   reports unrelated files that will be ignored before insertion begins.
 - Drag an open DFS disk onto an empty MMB slot in another pane.
+- Use the download arrow beside a formatted MMB slot to save that individual
+  disk as a standalone SSD without opening it first.
 - Drag one or several selected MMB slots onto a destination slot to perform the same atomic operation as Cut and Paste. Relative gaps are retained, overlapping moves are safe, and unrelated occupied slots are replaced only after confirmation.
 - Drag an MMB slot onto ADFS to create a named directory containing the slot's
   DFS catalogue.
@@ -916,6 +1253,52 @@ field reference, supported layouts, Workbench instructions, physical programmer
 transform order, patch safeguards and troubleshooting guide. The summary below
 is enough for normal use.
 
+## Working with Acorn ROMFS data ROMs
+
+ROMFS is different from a raw ROM image. It is a real, flat filing system in an
+8 KiB or 16 KiB paged ROM. Acorn File Forge recognises it from the catalogue,
+opens it with an `RFS` badge, and presents its files through the same editor,
+download, drag, copy and paste workflows as disk files.
+
+Choose **Create a blank image → Acorn ROMFS data ROM** to make one. If the
+destination pane has a workbench hardware profile, the BBC/Master or Electron
+target is preselected. If it cannot be inferred, the dialog asks. The same
+dialog always exposes the capacity, filesystem title, version byte and
+copyright so nothing hardware-significant is hidden. The 16 KiB portable data
+ROM is the general default; choose 8 KiB when the intended device or available
+ROM slot requires it.
+
+ROMFS rules and safeguards:
+
+- The catalogue is flat and case-sensitive. Names contain up to ten Latin-1
+  characters. Dots and slashes are valid ROMFS filename characters, not
+  directories.
+- Files retain 32-bit load and execution addresses. Loose exports include a
+  matching `.inf` sidecar, and imports use selected `.inf` metadata where
+  available.
+- The ROMFS `X` access bit means run-only copy protection. The Access controls
+  therefore read **Make loadable** and **Mark *RUN-only** instead of pretending
+  it is the DFS/ADFS lock bit.
+- File header and data CRCs are regenerated after edits. **Tools → Check
+  filesystem** reparses the complete block chain and reports CRC failure rather
+  than accepting damaged bytes.
+- **Tools → ROMFS properties** edits the catalogue title plus the standard
+  paged-ROM version and copyright identity. The header checksum is rebuilt.
+- Plain, complete images can be edited and are rebuilt in storage order after
+  every change, so they do not need compaction.
+- Composite ROMs with executable bytes after the filesystem and incomplete
+  fragments from a multi-ROM set open read-only. Their files can still be
+  viewed, exported and copied elsewhere, but rewriting them could move code or
+  invalidate absolute pointers.
+- The generated image is a data ROM selected by the compatible ROM filing
+  system, commonly with `*ROM`. It is not an autostart language ROM. Test a new
+  image in an emulator or spare programmable device before relying on it.
+
+Dragging between ROMFS, DFS and ADFS applies the destination filename rules and
+preserves load and execution addresses. Folder imports into ROMFS are flattened
+because the format has no directories. A preflight lists any shortened or
+colliding names before the image changes.
+
 ### Pane and decoded bank information
 
 - A recognised BBC-family header shows its title, version, copyright, language
@@ -960,7 +1343,7 @@ is enough for normal use.
   Health reports its checksum if it does not match the image bytes.
 - Double-click a bank to open the hex editor at its first byte. Erase fills a
   selected bank with the configured erased value while keeping the image size.
-- **File → Add ROM banks** accepts several files. Exact multiples of the bank
+- **File → Insert ROM bank(s)** accepts several files. Exact multiples of the bank
   size are split in order; a file that would need silent truncation is refused.
 - Select two or four equal-size ROM files together to concatenate them or
   interleave them as byte-wide chips. Four-chip mode covers the usual
@@ -999,7 +1382,9 @@ Choose **Tools → ROM Workbench** for the higher-level maintenance tools:
   being presented as invented code. Known entry points seed reachable-code
   analysis, branch and call targets receive cross-references, and calls through
   the BBC MOS jump table are labelled with names such as `OSBYTE`, `OSWORD`,
-  `OSFILE` and `OSCLI`. Symbols and address regions saved in the project
+  `OSFILE` and `OSCLI`. Internal 6502 routines are named from proved MOS calls,
+  return form, loops and hardware access; ARM and 68000 targets use clear
+  `subroutine_`, `loop_`, `dispatch_` and `continue_` roles. Symbols and address regions saved in the project
   metadata are applied to the listing.
 - **Compare** compares this ROM with another ROM open in a workbench pane. It
   lists contiguous changed ranges and exports an Acorn File Forge patch. A

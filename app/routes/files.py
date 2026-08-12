@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import io
 import tempfile
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -9,6 +11,14 @@ from pathlib import Path
 from flask import Blueprint, jsonify, request, send_file
 
 from ..archive_utils import open_single_upload_image
+from ..archive_browser import (
+    ArchiveError,
+    MAX_ARCHIVE_BYTES,
+    is_archive_name,
+    list_archive,
+    read_archive_member,
+    read_archive_member_details,
+)
 from ..disk_service import (
     DestinationExistsError,
     DiskError,
@@ -16,6 +26,7 @@ from ..disk_service import (
     EmptyDiskError,
 )
 from ..formats import ADFS_EXTENSIONS, DFS_EXTENSIONS, HFE_EXTENSIONS, MMB_EXTENSIONS, TAPE_EXTENSIONS
+from ..file_editor import MAX_DISASSEMBLY_FILE, disassemble_file_data, inspect_file_data
 from ..menu_service import (
     analyse_adfs_directory,
     analyse_disk,
@@ -217,14 +228,81 @@ def create_files_blueprint(
 
     @blueprint.get("/api/images/<image_id>/tree")
     def tree(image_id):
-        return jsonify(
-            service.browse_directory(
+        result = service.browse_directory(
                 service.get(image_id),
                 request.args.get("path", "$"),
                 optional_int(request.args.get("slot")),
                 optional_int(request.args.get("side")),
             )
+        for entry in result.get("entries", []):
+            if entry.get("type") not in {"dir", "directory", "disk"} and is_archive_name(str(entry.get("name") or "")):
+                entry["archive"] = True
+                entry["filetype"] = "Archive"
+        return jsonify(result)
+
+    def archive_context(image_id):
+        session = service.get(image_id)
+        path = request.args.get("path", "")
+        if not path:
+            raise ArchiveError("Choose an archive to browse.")
+        slot = optional_int(request.args.get("slot"))
+        side = optional_int(request.args.get("side"))
+        metadata = service.file_metadata(session, slot, path, side)
+        if int(metadata.get("length") or 0) > MAX_ARCHIVE_BYTES:
+            raise ArchiveError("That archive is too large to browse safely in memory.")
+        data = service.read_file(
+            session, slot, path, side,
         )
+        return data, str(request.args.get("name") or path.rsplit(".", 1)[-1])
+
+    def archive_member_context(image_id):
+        session = service.get(image_id)
+        data, filename = archive_context(image_id)
+        member = str(request.args.get("member") or "")
+        if not member:
+            raise ArchiveError("Choose an archive member to inspect.")
+        content, metadata = read_archive_member_details(data, filename, member)
+        digest = hashlib.sha256(content).hexdigest()
+        return session, member, content, metadata, digest
+
+    @blueprint.get("/api/images/<image_id>/archive/tree")
+    def archive_tree(image_id):
+        data, filename = archive_context(image_id)
+        return jsonify(list_archive(data, filename, request.args.get("member", "")))
+
+    @blueprint.get("/api/images/<image_id>/archive/file")
+    def archive_file(image_id):
+        data, filename = archive_context(image_id)
+        member = request.args.get("member", "")
+        content = read_archive_member(data, filename, member)
+        return send_file(
+            io.BytesIO(content), mimetype="application/octet-stream", as_attachment=True,
+            download_name=member.rsplit("/", 1)[-1] or "archive-member",
+        )
+
+    @blueprint.get("/api/images/<image_id>/archive/inspect")
+    def archive_inspect(image_id):
+        _session, member, content, metadata, digest = archive_member_context(image_id)
+        return jsonify(inspect_file_data(
+            content[:MAX_DISASSEMBLY_FILE], metadata, member, read_only=True,
+            size=len(content), digest=digest,
+        ))
+
+    @blueprint.get("/api/images/<image_id>/archive/disassembly")
+    def archive_disassembly(image_id):
+        session, member, content, metadata, digest = archive_member_context(image_id)
+        try:
+            origin = int(str(request.args.get("origin")), 0) if request.args.get("origin") not in (None, "") else None
+            start = int(str(request.args.get("start") or "0"), 0)
+            length = int(str(request.args.get("length")), 0) if request.args.get("length") not in (None, "") else None
+        except ValueError as exc:
+            raise ArchiveError("Origin, offset and length must be valid decimal or 0x-prefixed numbers.") from exc
+        return jsonify(disassemble_file_data(
+            content[:MAX_DISASSEMBLY_FILE], metadata, session, member,
+            str(request.args.get("architecture") or "auto"),
+            origin, start, length,
+            size=len(content), digest=digest,
+        ))
 
     @blueprint.get("/api/images/<image_id>/preview")
     def preview_image(image_id):
@@ -376,6 +454,36 @@ def create_files_blueprint(
         service.make_directory(session, path)
         return jsonify(image=service.summary(session))
 
+    @blueprint.post("/api/images/<image_id>/empty-file")
+    def create_empty_file(image_id):
+        data = payload()
+        session = service.get(image_id)
+        slot = optional_int(data.get("slot"))
+        side = optional_int(data.get("side"))
+        if session.kind in {"rom", "tape"} or (session.kind == "mmb" and slot is None):
+            raise DiskError("This view cannot contain ordinary files.")
+        destination_dir = str(data.get("destination") or "$").rstrip(".")
+        if session.kind == "dfs" or (session.kind == "mmb" and slot is not None):
+            destination_dir = service.validate_dfs_prefix(destination_dir)
+        name = service.validate_leaf_name(session, str(data.get("name") or ""), slot)
+        existing = service.list_directory(session, destination_dir, slot, side)["entries"]
+        if any(str(row.get("name") or "").casefold() == name.casefold() for row in existing):
+            raise DiskError(f"'{name}' already exists in this directory.")
+        destination = name if session.kind == "romfs" else f"{destination_dir}.{name}"
+        with tempfile.NamedTemporaryFile(dir=work_dir, prefix="empty-file-", delete=False) as temp:
+            temp_path = Path(temp.name)
+        try:
+            service.put(
+                session, slot, destination, temp_path,
+                str(data.get("load") or "") or None,
+                str(data.get("execute") or "") or None,
+                str(data.get("filetype") or "") or None,
+                side,
+            )
+        finally:
+            temp_path.unlink(missing_ok=True)
+        return jsonify(image=service.summary(session), path=destination)
+
     @blueprint.post("/api/images/<image_id>/lock")
     def lock(image_id):
         data = payload()
@@ -411,7 +519,7 @@ def create_files_blueprint(
         destination_dir = request.form.get("destination", "$").rstrip(".")
         if session.kind == "dfs" or (session.kind == "mmb" and slot is not None):
             destination_dir = service.validate_dfs_prefix(destination_dir)
-        destination = f"{destination_dir}.{name}"
+        destination = name if session.kind == "romfs" else f"{destination_dir}.{name}"
         with tempfile.NamedTemporaryFile(dir=work_dir, prefix="import-", delete=False) as temp:
             upload.save(temp)
             temp_path = Path(temp.name)
