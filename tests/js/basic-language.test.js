@@ -28,6 +28,27 @@ test("star commands retain their leading star and do not become BASIC commands",
   assert.deepEqual(tokens.filter(token => token.type === "star-command").map(token => token.text), ["*LOAD"]);
 });
 
+test("compact loader syntax exposes every embedded BASIC keyword", () => {
+  const source = `10 MODE6:VDU23;8202;0;0;0;:OSCLI"LOAD "+$&9F0+" 2200"
+20 MODE3:VDU23;8202;0;0;0;:*LOAD CODE8
+30 T%=&2200:?&70=T%MOD256:?&71=T%DIV256:VDU14
+40 IF ?&70<>126 PRINT'STRING$(76,CHR$(45))':CALL&900:VDU15
+50 PRINT'STRING$(76,CHR$(45))''SPC(15)"PRESS";:OSCLI"FX 21":I=GET
+60 IFI=80 OR I=112 THEN OSCLI"FX 5 1":VDU2:GOTO50
+70 CHAIN"HAVEN"`;
+  const names = basic.scan(source).filter(token => token.type === "keyword").map(token => token.name);
+  for (const keyword of ["MODE", "VDU", "MOD", "DIV", "IF", "OR", "THEN", "GOTO", "CHAIN"]) {
+    assert.ok(names.includes(keyword), `${keyword} was not recognised in compact source`);
+  }
+  assert.equal(names.filter(name => name === "IF").length, 2);
+});
+
+test("compact commands remain distinct from typed command-like variables", () => {
+  const tokens = basic.scan("10 page%=1:print%=2:IFI=80:IFLENA$>0 PRINTA$");
+  assert.deepEqual(tokens.filter(token => token.type === "identifier").map(token => token.text), ["page%", "print%", "I", "A$", "A$"]);
+  assert.deepEqual(tokens.filter(token => token.type === "keyword").map(token => token.name), ["IF", "IF", "LEN", "PRINT"]);
+});
+
 test("statement splitting respects strings comments star commands and assembler", () => {
   assert.deepEqual(basic.splitStatements('A=1:PRINT "A:B":REM C:D').map(row => row.text), ["A=1", 'PRINT "A:B"', "REM C:D"]);
   assert.deepEqual(basic.splitStatements('*FX 21:PRINT "NOT EXECUTED HERE"').map(row => row.text), ['*FX 21:PRINT "NOT EXECUTED HERE"']);
