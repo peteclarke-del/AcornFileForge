@@ -22,6 +22,8 @@ from app.file_editor import (
     prepare_basic_source,
     save_editor_text,
     save_editor_text_as,
+    search_image_files,
+    update_file_properties,
     verify_basic_source,
     write_file_range,
 )
@@ -67,6 +69,23 @@ class FileEditorTests(unittest.TestCase):
         self.assertEqual(metadata_kind("PROGRAM", 0xFFB), "basic")
         self.assertEqual(metadata_kind("COMMANDS", 0xFEB), "script")
         self.assertEqual(metadata_kind("README", None), "text")
+
+    def test_image_search_traverses_adfs_directories_and_reports_source_lines(self):
+        service = Mock()
+        service.list_directory.side_effect = lambda _session, path, _slot, _side: {
+            "entries": (
+                [{"name": "Games", "path": "$.Games", "type": "dir", "length": 0}]
+                if path == "$" else
+                [{"name": "!BOOT", "path": "$.Games.!BOOT", "type": "file", "length": 31}]
+            )
+        }
+        service.read_file.return_value = b'*BASIC\rCHAIN "ARCADIANS"\r'
+        report = search_image_files(
+            service, SimpleNamespace(kind="adfs"), "arcadians", None, None, "$",
+        )
+        self.assertEqual(report["filesConsidered"], 1)
+        self.assertEqual(report["results"][0]["path"], "$.Games.!BOOT")
+        self.assertEqual(report["results"][0]["matches"][0]["line"], 2)
 
     def test_basic_listing_always_has_a_space_after_the_line_number(self):
         self.assertEqual(
@@ -257,6 +276,29 @@ class FileEditorTests(unittest.TestCase):
             self.assertEqual(metadata["execute"] & 0xFFFF, 0x1900)
             self.assertTrue(metadata["access"] & 0x08)
 
+    def test_basic_save_preserves_a_trailing_binary_payload(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            service = DiskService(root / "work")
+            session = service.create_blank("ssd", "EDITOR")
+            payload = bytes.fromhex("A90020EEFF60") + b"PAYLOAD\x00"
+            source = root / "PROGRAM"
+            source.write_bytes(tokenise('10 PRINT "OLD"') + payload)
+            service.put(session, None, "$.PROGRAM", source, "0x1900", "0x1900", None)
+            before = inspect_editable_file(service, session, "$.PROGRAM", None, None)
+
+            self.assertTrue(before["editable"])
+            self.assertTrue(before["basic"]["compound"])
+            self.assertEqual(before["basic"]["trailingBytes"], len(payload))
+            save_editor_text(
+                service, session, "$.PROGRAM", None, None,
+                '10 PRINT "NEW"\n20 END', True, before["sha256"],
+            )
+
+            stored = service.read_file(session, None, "$.PROGRAM")
+            self.assertTrue(stored.endswith(payload))
+            self.assertIn('10 PRINT "NEW"', detokenise(stored[:-len(payload)]))
+
     def test_save_as_creates_a_sibling_with_content_and_metadata(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -297,6 +339,27 @@ class FileEditorTests(unittest.TestCase):
 
             self.assertEqual(result["written"], 2)
             self.assertEqual(service.read_file(session, None, "$.CODE"), b"AxyDEF")
+
+    def test_file_properties_change_metadata_without_changing_bytes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            service = DiskService(root / "work")
+            session = service.create_blank("ssd", "EDITOR")
+            source = root / "CODE"
+            source.write_bytes(b"UNCHANGED")
+            service.put(session, None, "$.CODE", source, "0x1900", "0x1900", None)
+            before = inspect_editable_file(service, session, "$.CODE", None, None)
+
+            update_file_properties(
+                service, session, "$.CODE", None, None, before["sha256"],
+                load="0x3000", execute="0x3003", writable=False,
+            )
+
+            self.assertEqual(service.read_file(session, None, "$.CODE"), b"UNCHANGED")
+            metadata = service.file_metadata(session, None, "$.CODE")
+            self.assertEqual(metadata["load"] & 0xFFFF, 0x3000)
+            self.assertEqual(metadata["execute"] & 0xFFFF, 0x3003)
+            self.assertTrue(metadata["access"] & 0x08)
 
 
 if __name__ == "__main__":

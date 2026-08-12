@@ -58,6 +58,13 @@ class RomWorkbenchTests(unittest.TestCase):
         self.assertEqual([row["mnemonic"] for row in m68k["rows"]], ["NOP", "RTS"])
         self.assertEqual(m68k["rows"][0]["label"], "start_here")
 
+    @unittest.skipIf(Cs is None, "Capstone is installed in the production image")
+    def test_cmos_and_16_bit_6502_family_variants_are_explicit(self):
+        cmos = disassemble_capstone(bytes.fromhex("8000"), architecture="65c02", length=2)
+        self.assertEqual(cmos["rows"][0]["mnemonic"], "BRA")
+        sixteen = disassemble_capstone(bytes.fromhex("22008000"), architecture="65816", length=4)
+        self.assertEqual(sixteen["rows"][0]["mnemonic"], "JSL")
+
     def test_comparison_and_patch_are_checksum_guarded(self):
         left, right = b"hello ROM", b"hello rom!"
         report = compare_roms(left, right)

@@ -21,6 +21,9 @@ from .rom_workbench import RomWorkbenchError, disassemble
 
 MAX_EDITABLE_TEXT = 64 * 1024
 MAX_DISASSEMBLY_FILE = 1024 * 1024
+MAX_IMAGE_SEARCH_FILES = 5000
+MAX_IMAGE_SEARCH_RESULTS = 500
+MAX_IMAGE_SEARCH_BYTES = 256 * 1024
 
 
 def _context(
@@ -111,8 +114,107 @@ def inspect_file_data(
     }
 
 
+def search_image_files(
+    service: DiskService,
+    session: ImageSession,
+    query: str,
+    slot: int | None,
+    side: int | None,
+    root: str = "$",
+) -> dict:
+    """Search names and readable source across one mounted filesystem context."""
+    needle = str(query or "").strip()
+    if not needle:
+        raise DiskError("Enter text to search for in this image.")
+    if len(needle) > 200:
+        raise DiskError("Search text is limited to 200 characters.")
+    if session.kind == "mmb" and slot is None:
+        raise DiskError("Open an MMB slot before searching its files.")
+
+    files: list[dict] = []
+    if session.kind in {"dfs", "mmb"}:
+        files = service.list_dfs_catalogue_files(session, slot, side)
+    elif session.kind in {"romfs", "tape"}:
+        files = [
+            {**row, "path": str(row.get("path") or row.get("name") or "")}
+            for row in service.list_directory(session, "$", slot, side)["entries"]
+            if str(row.get("type") or "file").lower() not in {"dir", "directory"}
+        ]
+    elif session.kind == "adfs":
+        pending = [str(root or "$")]
+        visited = set()
+        while pending and len(files) < MAX_IMAGE_SEARCH_FILES:
+            directory = pending.pop()
+            if directory.casefold() in visited:
+                continue
+            visited.add(directory.casefold())
+            listing = service.list_directory(session, directory, slot, side)
+            for row in listing["entries"]:
+                name = str(row.get("name") or "")
+                if not name or name == "..":
+                    continue
+                path = str(row.get("path") or f"{directory.rstrip('.')}.{name}")
+                if str(row.get("type") or "file").lower() in {"dir", "directory"}:
+                    pending.append(path)
+                else:
+                    files.append({**row, "path": path})
+                    if len(files) >= MAX_IMAGE_SEARCH_FILES:
+                        break
+    else:
+        raise DiskError("Image-wide file search is not available for this media view.")
+
+    folded = needle.casefold()
+    results = []
+    scanned = 0
+    skipped_large = 0
+    for row in files[:MAX_IMAGE_SEARCH_FILES]:
+        path = str(row.get("path") or row.get("name") or "")
+        name = str(row.get("name") or path.rsplit(".", 1)[-1])
+        name_match = folded in path.casefold()
+        length = int(row.get("length") or 0)
+        matches = []
+        kind = str(row.get("contentKind") or "")
+        if length <= MAX_IMAGE_SEARCH_BYTES:
+            try:
+                data = service.read_file(session, slot, path, side)
+                scanned += 1
+                content_kind, basic, script, printable_ratio = analyse_content(data, path)
+                kind = kind or content_kind
+                if basic:
+                    text = str(basic["source"])
+                elif script or printable_ratio >= 0.70:
+                    text = data.decode("latin-1", "replace").replace("\r", "\n")
+                else:
+                    text = ""
+                for line_number, line in enumerate(text.splitlines(), 1):
+                    if folded in line.casefold():
+                        matches.append({"line": line_number, "text": line[:240]})
+                        if len(matches) >= 20:
+                            break
+            except Exception:
+                pass
+        else:
+            skipped_large += 1
+        if name_match or matches:
+            results.append({
+                "path": path, "name": name, "kind": kind or "file",
+                "size": length, "nameMatch": name_match, "matches": matches,
+            })
+            if len(results) >= MAX_IMAGE_SEARCH_RESULTS:
+                break
+    return {
+        "query": needle,
+        "root": root,
+        "filesConsidered": len(files),
+        "filesScanned": scanned,
+        "skippedLarge": skipped_large,
+        "truncated": len(files) >= MAX_IMAGE_SEARCH_FILES or len(results) >= MAX_IMAGE_SEARCH_RESULTS,
+        "results": results,
+    }
+
+
 def _architecture(session: ImageSession, requested: str) -> tuple[str, str]:
-    if requested in {"6502", "arm", "m68k"}:
+    if requested in {"6502", "65c02", "65816", "arm", "m68k"}:
         return requested, "Selected in the disassembly viewer"
     if session.target_hardware == "risc-os":
         return "arm", "The active hardware profile targets Archimedes / RISC OS"
@@ -352,7 +454,9 @@ def disassemble_file_data(
     architecture, reason = _architecture(session, architecture)
     load = int(metadata.get("load") or 0) & 0xFFFFFF
     execute = int(metadata.get("execute") or 0) & 0xFFFFFF
-    selected_origin = int(origin) if origin is not None else (load or (0x8000 if architecture == "6502" else 0))
+    selected_origin = int(origin) if origin is not None else (
+        load or (0x8000 if architecture in {"6502", "65c02", "65816"} else 0)
+    )
     available = max(1, len(data) - start)
     requested_length = min(length or available, available, MAX_DISASSEMBLY_FILE)
     entries = [execute] if selected_origin <= execute < selected_origin + len(data) else []
@@ -661,6 +765,44 @@ def replace_file_bytes(service, session, path, slot, side, content: bytes, expec
     return service.summary(session)
 
 
+def update_file_properties(
+    service,
+    session,
+    path,
+    slot,
+    side,
+    expected_sha256: str,
+    *,
+    load: str = "",
+    execute: str = "",
+    filetype: str = "",
+    writable: bool = True,
+) -> dict:
+    """Rewrite catalogue metadata without changing the file's bytes."""
+    content = service.read_file(session, slot, path, side)
+    if hashlib.sha256(content).hexdigest() != expected_sha256:
+        raise DiskError("The file changed after the editor opened it. Reopen the file before changing its properties.")
+    _find_row(service, session, path, slot, side)
+    with tempfile.NamedTemporaryFile(dir=service.work_dir, prefix="file-properties-", delete=False) as temporary:
+        temporary.write(content)
+        temporary_path = Path(temporary.name)
+    try:
+        service.set_access(session, slot, [path], writable=True, side=side)
+        service.mutate(session, slot, ["rm", "--force", "{image}:" + path], side)
+        service.put(
+            session, slot, path, temporary_path,
+            str(load or "") or None,
+            str(execute or "") or None,
+            str(filetype or "") or None,
+            side,
+        )
+        if not writable:
+            service.set_access(session, slot, [path], writable=False, side=side)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+    return service.summary(session)
+
+
 def _encode_editor_text(text: str, basic: bool) -> bytes:
     try:
         if basic:
@@ -671,8 +813,30 @@ def _encode_editor_text(text: str, basic: bool) -> bytes:
         raise DiskError(f"The edited file could not be encoded: {exc}") from exc
 
 
+def _preserve_basic_payload(original: bytes, tokenised: bytes) -> bytes:
+    """Replace only a BASIC II program prefix and retain a proven trailing payload."""
+    try:
+        from oaknut.basic import Verdict, detect
+    except ImportError as exc:
+        raise DiskError("The BBC BASIC editing library is unavailable.") from exc
+    detection = detect(original)
+    if detection.verdict not in {Verdict.BASIC, Verdict.BASIC_TRAILING}:
+        raise DiskError("The file is no longer a recognised tokenised BASIC program.")
+    program_length = int(detection.program_length or len(original))
+    if program_length < 2 or program_length > len(original):
+        raise DiskError("The original BASIC program boundary is invalid.")
+    return tokenised + original[program_length:]
+
+
+def encode_editor_replacement(original: bytes, text: str, basic: bool) -> bytes:
+    """Encode editor text and preserve any recognised compound BASIC payload."""
+    encoded = _encode_editor_text(text, basic)
+    return _preserve_basic_payload(original, encoded) if basic else encoded
+
+
 def save_editor_text(service, session, path, slot, side, text: str, basic: bool, expected_sha256: str) -> dict:
-    content = _encode_editor_text(text, basic)
+    original = service.read_file(session, slot, path, side)
+    content = encode_editor_replacement(original, text, basic)
     return replace_file_bytes(service, session, path, slot, side, content, expected_sha256)
 
 
@@ -702,6 +866,8 @@ def save_editor_text_as(
 
     row = _find_row(service, session, path, slot, side)
     content = _encode_editor_text(text, basic)
+    if basic:
+        content = _preserve_basic_payload(current, content)
     filetype = row.get("filetype")
     has_filetype = filetype not in (None, "")
     load = "" if has_filetype else str(row.get("loadHex") or row.get("load") or "")

@@ -23,10 +23,12 @@ change made elsewhere in the workspace. Save As creates a sibling file and
 leaves the source file intact. The image is still a private working copy until
 the pane's Save Image control prepares its timestamped download ZIP.
 
-Archive members are different. They are expanded in memory and opened
-read-only. Acorn File Forge does not rewrite a ZIP, TAR or compressed stream
-without a transactional archive writer. Export the member, edit it in a normal
-image, then rebuild the distribution with a suitable archive tool.
+Archive members are expanded in memory. Readable members in ZIP, TAR,
+compressed TAR, GZIP, BZIP2 and XZ containers can be edited. Save verifies the
+member and parent archive SHA-256 values, rebuilds the complete container and
+replaces the outer image file through the normal undoable transaction. UEF
+members remain read-only because rebuilding a tape stream may change timing or
+loader behaviour.
 
 ## Opening and exporting a file
 
@@ -59,8 +61,9 @@ The menus follow desktop editor conventions:
 
 - **File** contains Save, Save As, text or source export, original-byte
   download and Close where those operations apply.
-- **Edit** contains Undo, Redo, clipboard operations, Select All, Find, Find
-  and Replace, symbol references, symbol rename and line navigation.
+- **Edit** contains Undo, Redo, clipboard operations, Select All, persistent
+  Find and Replace, image-wide search, symbol references, symbol rename,
+  completion and line navigation.
 - **View** contains folding, synchronized bytes and visual indentation.
 - **Tools** contains language checks, outlines, transformation history,
   normalisation, BASIC verification, Condense and Refactor.
@@ -101,9 +104,10 @@ prove.
 
 Tokenised BBC BASIC II opens as numbered source with one visible space after
 each line number. The application retains the tokenised bytes as the authority
-for saving. BASIC V and BASIC programs with trailing binary data open
-read-only because writing them through the BASIC II tokeniser would change
-their format.
+for saving. A recognised BASIC II program with trailing binary data is editable
+because Save replaces only its tokenised prefix and preserves the payload byte
+for byte. BASIC V remains read-only because writing it through the BASIC II
+tokeniser would change its format.
 
 ### Editing and paste handling
 
@@ -118,9 +122,12 @@ strings or dynamic line expressions.
 
 ### Diagnostics and help
 
+The shared scanner carries explicit BASIC I through VI capability profiles.
 The live analyser reports missing, duplicated or out-of-order line numbers,
 unresolved direct destinations, missing local procedures, unmatched procedure
-boundaries, unclosed strings and conservatively identified unreachable lines.
+boundaries, array use before DIM, FOR/NEXT mismatches, mixed typed-variable
+families, unused assignments, dialect-incompatible commands, unclosed strings
+and conservatively identified unreachable lines.
 It also builds a procedure and function outline with direct call sites.
 
 Commands with reference data have dotted hover targets. Hovering displays the
@@ -206,6 +213,19 @@ browser-local text. Save preserves the existing load address, execution
 address, filetype and access state where the destination filesystem supports
 them.
 
+Find and Replace supports case-sensitive matching, whole identifiers, regular
+expressions, selection-only scope, preview and one-step Replace All. Ctrl+Space
+offers commands, identifiers, symbols and templates. Text and script editors
+can duplicate, move, join and delete selected lines. The conservative formatter
+removes trailing whitespace and normalises proven prefixes; BASIC must pass a
+token round trip before formatting is accepted. Image-wide search covers names
+and bounded readable content in MMB slots and filesystem subdirectories.
+
+File Properties changes load address, execution address, RISC OS filetype and
+writable state without modifying content. Whole-image dependency analysis
+distinguishes exact, unique-leaf, ambiguous, missing and root-relative launcher
+targets.
+
 ## Disassembly editor
 
 ![Annotated 6502 disassembly opened from a DFS executable](../app/static/help/file-editor-disassembly.png)
@@ -213,7 +233,7 @@ them.
 Binary files open as editor-style disassembly rather than a report table. The
 active workbench profile selects the initial architecture: 6502 for BBC,
 Master and Electron targets, ARM for Archimedes and RISC OS. The toolbar can
-override that choice with 6502, ARM or 68000 and accepts a mapped origin, file
+override that choice with NMOS 6502, 65C02, 65816, ARM or 68000 and accepts a mapped origin, file
 offset and bounded byte count.
 
 ### Decoding and annotation
@@ -233,8 +253,10 @@ comments for:
 
 Local targets receive stable semantic labels where behaviour is proven, with
 their hexadecimal address retained to keep similar routines distinct. ARM and
-68000 use Capstone 5.0.9. ARM words are decoded little-endian and 68000 words
-big-endian. Saved project symbols apply to all three architectures.
+68000, plus explicit 65C02 and 65816 modes, use Capstone. Static 65816 starts
+with 16-bit accumulator and index widths because runtime M/X state cannot be
+proved from isolated bytes. ARM words are decoded little-endian and 68000 words
+big-endian. Saved project symbols apply to every supported architecture.
 
 Static disassembly cannot prove indirect targets, generated code, compression,
 bank switching or whether bytes are data. Treat the original bytes and target
@@ -265,7 +287,7 @@ session. It includes:
 - user-classified code, text, byte, 16-bit word, address-table and bitmap
   regions;
 - transformation history;
-- configured emulator results.
+- configured emulator and debugger results.
 
 Shift-click disassembly rows to select a range, classify it, and rebuild the
 listing using that decision. Word and address regions follow the selected
@@ -273,6 +295,11 @@ processor's byte order. Symbols can be imported and exported as
 `&address = label`. Find references and the outline navigate direct users and
 labelled entry points. Project metadata participates in session recovery and
 checkpoints but does not alter the image bytes.
+
+The project manager edits notes, symbols and bookmarks together and exposes a
+portable JSON representation. Compare with saved file shows the current and
+persisted source side by side. The selected-data inspector renders text,
+hexadecimal bytes, both 16-bit byte orders and a bounded one-bit bitmap preview.
 
 ## Optional emulator hand-off
 
@@ -300,12 +327,26 @@ The executable and its dependencies must already exist inside the container.
 An exit code records what that configured tool observed. It does not prove
 compatibility with every Acorn machine or filing-system configuration.
 
+`ACORN_FILE_ASSEMBLER_COMMAND` enables the dangerous, explicit reassembly
+workflow. It must contain `{source}` and `{output}` and can use `{origin}` and
+`{architecture}`. Generated labels and comments are a starting point rather
+than guaranteed source syntax. Acorn File Forge checks the original binary
+hash, requires confirmation, runs the command without a shell and replaces the
+whole binary through an undo checkpoint only when a bounded output file exists.
+
+`ACORN_FILE_DEBUGGER_COMMAND` enables a local debugger hand-off and must contain
+`{file}`. It can also use `{image}`, `{path}`, `{load}`, `{execute}`,
+`{breakpoint}` and `{architecture}`. The tool receives a temporary file, has a
+120-second bound, and its output is retained in project test history.
+
 ## Archive and UEF members
 
 UEF, gzip-compressed UEF, ZIP, TAR, TAR.GZ, TGZ, TAR.BZ2, TAR.XZ, standalone
-GZIP, BZIP2 and XZ containers open as read-only hierarchies. UEF members expose
+GZIP, BZIP2 and XZ containers open as bounded hierarchies. UEF members expose
 their reconstructed load and execution addresses and whether the cassette
-block sequence was complete.
+block sequence was complete. UEF remains read-only. Readable members in the
+other formats can be edited through a checksum-guarded rebuild of the complete
+container and the normal image checkpoint.
 
 Archive handling rejects parent traversal, non-regular TAR objects, archives
 over 512 MiB, individual expanded members over 128 MiB and catalogues with

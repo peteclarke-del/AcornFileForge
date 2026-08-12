@@ -1,4 +1,5 @@
 window.AcornCodeEditor = (() => {
+  const BASIC_LANGUAGE = window.AcornBasicLanguage;
   const esc = value => String(value ?? "").replace(/[&<>"']/g, character => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;",
   }[character]));
@@ -140,7 +141,7 @@ window.AcornCodeEditor = (() => {
 
   const isStarHelpKey = value => /^\s*\*/.test(String(value || ""));
   const normaliseHelpKey = value => String(value || "").trim().replace(/^\*/, "").replace(/[^A-Za-z0-9$_.]/g, "").toUpperCase();
-  const COMMAND_CASE = Object.freeze({ basic: "upper", script: "upper", "6502": "upper", arm: "lower", m68k: "upper" });
+  const COMMAND_CASE = Object.freeze({ basic: "upper", script: "upper", "6502": "upper", "65c02": "upper", "65816": "upper", arm: "lower", m68k: "upper" });
   const dictionary = language => language === "basic" ? { ...BASIC_HELP, ...INLINE_ASSEMBLER_HELP, ...ASM_HELP, ...MOS_HELP } : language === "script" ? { ...SCRIPT_HELP, ...BASIC_HELP } : { ...INLINE_ASSEMBLER_HELP, ...ASM_HELP, ...MOS_HELP };
   const lookup = (language, key) => {
     const normal = normaliseHelpKey(key);
@@ -152,8 +153,8 @@ window.AcornCodeEditor = (() => {
     if (found) return { key: normal, ...found };
     if (language === "basic" && BASIC_KEYWORDS.has(normal)) return { key: normal, ...help("BBC BASIC keyword.", normal, "Syntax and availability depend on the target BBC BASIC version.") };
     const mnemonics = language === "arm" ? MNEMONICS_ARM : language === "m68k" ? MNEMONICS_M68K : MNEMONICS_6502;
-    if (mnemonics.has(normal) || (language === "6502" && EXTENDED_6502_MNEMONICS.has(normal))) return { key: normal, ...help(`${language.toUpperCase()} processor instruction.`, normal, "Operands and addressing modes must be valid for the selected processor variant.") };
-    if (["6502", "arm", "m68k"].includes(language) && /^[A-Z][A-Z0-9.]*$/.test(normal)) {
+    if (mnemonics.has(normal) || (["6502", "65c02", "65816"].includes(language) && EXTENDED_6502_MNEMONICS.has(normal))) return { key: normal, ...help(`${language.toUpperCase()} processor instruction.`, normal, "Operands and addressing modes must be valid for the selected processor variant.") };
+    if (["6502", "65c02", "65816", "arm", "m68k"].includes(language) && /^[A-Z][A-Z0-9.]*$/.test(normal)) {
       return { key: normal, ...help(`${language.toUpperCase()} instruction or assembler pseudo-operation.`, normal, "The decoded operands, processor variant and execution context determine its exact effect.") };
     }
     return null;
@@ -164,7 +165,7 @@ window.AcornCodeEditor = (() => {
     const operand = String(row?.operand || "").trim();
     const known = lookup(architecture, mnemonic);
     let summary = known?.summary || `${architecture.toUpperCase()} decoded operation.`;
-    if (architecture === "6502" && !ASM_HELP[mnemonic] && !INLINE_ASSEMBLER_HELP[mnemonic]) {
+    if (["6502", "65c02", "65816"].includes(architecture) && !ASM_HELP[mnemonic] && !INLINE_ASSEMBLER_HELP[mnemonic]) {
       if (/^LD[AXY]$/.test(mnemonic)) summary = `Loads the ${mnemonic.at(-1)} register and updates zero and negative flags.`;
       else if (/^ST[AXYZ]$/.test(mnemonic)) summary = `Stores the ${mnemonic.at(-1)} register to the destination without changing it.`;
       else if (/^(ADC|SBC)$/.test(mnemonic)) summary = `${mnemonic === "ADC" ? "Adds" : "Subtracts"} the operand with the carry flag and updates arithmetic flags.`;
@@ -202,8 +203,8 @@ window.AcornCodeEditor = (() => {
     let addressing = "No explicit operand; the operation uses implied processor state.";
     if (operand) {
       if (operand.startsWith("#")) addressing = `Immediate operand ${operand}.`;
-      else if (architecture === "6502" && /^\(.*\)(?:,[XY])?$/i.test(operand)) addressing = `Indirect 6502 addressing through ${operand}.`;
-      else if (architecture === "6502" && /,[XY]$/i.test(operand)) addressing = `Indexed 6502 addressing using ${operand.at(-1).toUpperCase()}.`;
+      else if (["6502", "65c02", "65816"].includes(architecture) && /^\(.*\)(?:,[XY])?$/i.test(operand)) addressing = `Indirect ${architecture.toUpperCase()} addressing through ${operand}.`;
+      else if (["6502", "65c02", "65816"].includes(architecture) && /,[XY]$/i.test(operand)) addressing = `Indexed ${architecture.toUpperCase()} addressing using ${operand.at(-1).toUpperCase()}.`;
       else if (architecture === "arm" && operand.includes("[")) addressing = `ARM register-indirect memory operand ${operand}.`;
       else if (architecture === "arm" && operand.includes("{")) addressing = `ARM register-list operand ${operand}.`;
       else if (architecture === "m68k" && /\([^)]*A\d[^)]*\)/i.test(operand)) addressing = `68000 address-register memory operand ${operand}.`;
@@ -228,7 +229,7 @@ window.AcornCodeEditor = (() => {
   // is semantic: it marks an integer variable. Keep lexical classification
   // separate so names such as page%, load% and print% cannot be mistaken for
   // the PAGE, LOAD and PRINT commands during highlighting or refactoring.
-  const isBasicKeywordToken = (raw, key) => !/%$/.test(raw) && BASIC_KEYWORDS.has(key);
+  const isBasicKeywordToken = (raw, key) => BASIC_LANGUAGE?.isKeywordToken(raw) ?? (!/%$/.test(raw) && BASIC_KEYWORDS.has(key));
 
   function inlineMnemonic(raw, architecture) {
     const key = normaliseHelpKey(raw);
@@ -361,7 +362,7 @@ window.AcornCodeEditor = (() => {
     });
   }
 
-  function diagnostics(text, language) {
+  function diagnostics(text, language, dialect = "BBC BASIC II") {
     const issues = [];
     const add = (severity, line, message, offset = 0) => issues.push({ severity, line, message, offset });
     const lines = String(text).split("\n");
@@ -412,7 +413,71 @@ window.AcornCodeEditor = (() => {
         add("info", next.index, `Line ${next.value} may be unreachable after an unconditional transfer.`, next.offset);
       }
     });
+    if (BASIC_LANGUAGE) {
+      issues.push(...advancedBasicDiagnostics(text));
+      const profile = BASIC_LANGUAGE.dialectProfile(dialect);
+      BASIC_LANGUAGE.scan(text).filter(token => token.type === "keyword").forEach(token => {
+        const required = Number(BASIC_LANGUAGE.KEYWORD_GENERATION[token.name] || 1);
+        if (required > Number(profile.generation || 2)) issues.push({
+          severity: "warning", line: token.line, offset: token.start,
+          message: `${token.name} requires BBC BASIC ${required === 5 ? "V or later" : required}; this file is ${dialect}.`,
+        });
+      });
+    }
     return issues;
+  }
+
+  function advancedBasicDiagnostics(text) {
+    const issues = [];
+    const tokens = BASIC_LANGUAGE.scan(text).filter(item => item.type === "identifier");
+    const byBase = new Map();
+    tokens.forEach(item => {
+      const base = item.text.replace(/[$%]$/, "").toUpperCase();
+      const suffix = item.text.match(/[$%]$/)?.[0] || "numeric";
+      if (!byBase.has(base)) byBase.set(base, new Set());
+      byBase.get(base).add(suffix);
+    });
+    byBase.forEach((suffixes, base) => {
+      if (suffixes.size < 2) return;
+      const token = tokens.find(item => item.text.replace(/[$%]$/, "").toUpperCase() === base);
+      issues.push({ severity: "info", line: token.line, offset: token.start, message: `${base} is used with multiple BASIC types (${[...suffixes].join(", ")}). Confirm that these are deliberately separate variables.` });
+    });
+
+    const masked = BASIC_LANGUAGE.maskStringsAndComments(text);
+    const dimmed = new Set();
+    const assignments = new Map();
+    const reads = new Map();
+    const forStack = [];
+    const lineOffsets = [];
+    text.split("\n").reduce((offset, line) => { lineOffsets.push(offset); return offset + line.length + 1; }, 0);
+    text.split("\n").forEach((line, index) => {
+      const lineOffset = lineOffsets[index];
+      const code = masked.slice(lineOffset, lineOffset + line.length).replace(/^\s*\d+\s*/, "");
+      for (const match of code.matchAll(/\bDIM\s*([A-Za-z][A-Za-z0-9_]*[$%]?)\s*\(/gi)) dimmed.add(match[1].toUpperCase());
+      for (const match of code.matchAll(/\b([A-Za-z][A-Za-z0-9_]*[$%]?)\s*\(/g)) {
+        const name = match[1].toUpperCase();
+        if (["DIM", "FN", "PROC", "TAB", "SPC", "POINT", "INSTR", "LEFT$", "MID$", "RIGHT$", "STRING$"].includes(name)) continue;
+        if (!dimmed.has(name)) issues.push({ severity: "warning", line: index + 1, offset: lineOffset + match.index, message: `${match[1]} is used as an array before a preceding DIM was found.` });
+      }
+      for (const match of code.matchAll(/\bFOR\s*([A-Za-z][A-Za-z0-9_]*[$%]?)/gi)) forStack.push({ name: match[1].toUpperCase(), line: index + 1 });
+      for (const match of code.matchAll(/\bNEXT\s*([A-Za-z][A-Za-z0-9_]*[$%]?)/gi)) {
+        const active = forStack.pop();
+        if (active && active.name !== match[1].toUpperCase()) issues.push({ severity: "warning", line: index + 1, offset: lineOffset + match.index, message: `NEXT ${match[1]} closes the active FOR ${active.name} from line ${active.line}.` });
+      }
+    });
+    tokens.forEach(item => {
+      const following = masked.slice(item.end).match(/^\s*/)?.[0].length || 0;
+      const assigned = masked[item.end + following] === "=";
+      const key = item.text.toUpperCase();
+      const target = assigned ? assignments : reads;
+      target.set(key, (target.get(key) || 0) + 1);
+    });
+    assignments.forEach((count, name) => {
+      if (reads.has(name) || /^I%$/.test(name)) return;
+      const token = tokens.find(item => item.text.toUpperCase() === name);
+      issues.push({ severity: "info", line: token.line, offset: token.start, message: `${name} is assigned ${count} time${count === 1 ? "" : "s"} but no later code reference was found.` });
+    });
+    return issues.slice(0, 500);
   }
 
   function symbols(text, language) {
@@ -437,6 +502,7 @@ window.AcornCodeEditor = (() => {
   }
 
   function sourceMask(text, language) {
+    if (language === "basic" && BASIC_LANGUAGE) return BASIC_LANGUAGE.maskStringsAndComments(text);
     const mask = [...text].map(character => character === "\n" ? "\n" : character);
     let quoted = false;
     for (let index = 0; index < text.length; index += 1) {
@@ -597,20 +663,10 @@ window.AcornCodeEditor = (() => {
       .replace(/\bTHEN(?![$%])(?=\d)/gi, "$& ")
       .replace(/(\d)ELSE(?![$%])(?=\S)/gi, "$1 ELSE ")
       .replace(/\bELSE(?![$%])(?=[A-Za-z])/gi, "$& ");
-    const statements = [];
-    let start = 0;
-    let quoted = false;
-    const commentAt = normal.search(/\bREM(?![$%])/i);
-    for (let index = 0; index < normal.length; index += 1) {
-      if (normal[index] === '"') quoted = !quoted;
-      if (!quoted && normal.slice(start, index).trimStart().startsWith("*")) break;
-      if (!quoted && normal[index] === ":" && (commentAt < 0 || index < commentAt)) {
-        statements.push(normal.slice(start, index).trim());
-        start = index + 1;
-      }
-    }
-    statements.push(normal.slice(start).trim());
-    return statements.filter(Boolean).map(statement => statement
+    const statements = BASIC_LANGUAGE
+      ? BASIC_LANGUAGE.splitStatements(normal).map(statement => statement.text)
+      : [normal.trim()].filter(Boolean);
+    return statements.map(statement => statement
       .replace(/^IF(?![$%])(?=\S)/i, "$& ")
       .replace(/\bTHEN(?![$%])(?=\S)/gi, "$& ")
       .replace(/(\d)ELSE(?![$%])(?=\S)/gi, "$1 ELSE "));
@@ -911,7 +967,7 @@ window.AcornCodeEditor = (() => {
     return `${match[1]}${body}`;
   }
 
-  const languageName = language => ({ basic: "BBC BASIC", script: "Acorn command script", text: "plain text", "6502": "6502 assembly", arm: "ARM assembly", m68k: "68000 assembly" }[language] || language);
+  const languageName = language => ({ basic: "BBC BASIC", script: "Acorn command script", text: "plain text", "6502": "6502 assembly", "65c02": "65C02 assembly", "65816": "65816 assembly", arm: "ARM assembly", m68k: "68000 assembly" }[language] || language);
 
   function helpMarkup(item) {
     if (!item) return '<p class="code-empty-message">No built-in help is available for that token.</p>';
@@ -982,7 +1038,7 @@ window.AcornCodeEditor = (() => {
     root.addEventListener("code-editor-destroy", hide, { once: true });
   }
 
-  function enhance({ textarea, root, language = "text", inlineAssemblyLanguage = "6502", validateBasic = null, packBasic = null, initialHistory = [] }) {
+  function enhance({ textarea, root, language = "text", dialect = "BBC BASIC II", inlineAssemblyLanguage = "6502", validateBasic = null, packBasic = null, initialHistory = [] }) {
     if (!textarea || !root || textarea.closest(".code-editor-surface")) return null;
     const surface = document.createElement("div");
     surface.className = "code-editor-surface";
@@ -1150,12 +1206,31 @@ window.AcornCodeEditor = (() => {
       drawer.querySelector(".code-drawer-close").onclick = closeDrawer;
       drawer.querySelectorAll("[data-code-offset]").forEach(button => button.onclick = () => goTo(Number(button.dataset.codeOffset)));
       drawer.querySelectorAll("[data-code-help]").forEach(button => button.onclick = () => renderDrawer(button.dataset.codeHelp, helpMarkup(lookup(language, button.dataset.codeHelp))));
+      drawer.querySelectorAll("[data-code-completion]").forEach(button => button.onclick = () => {
+        const selected = identifierAt(textarea.value, textarea.selectionStart, language);
+        const start = selected?.start ?? textarea.selectionStart;
+        const end = selected?.end ?? textarea.selectionEnd;
+        const value = button.dataset.codeCompletion;
+        textarea.setRangeText(value, start, end, "end");
+        textarea.dispatchEvent(new Event("input", { bubbles: true }));
+        closeDrawer();
+        textarea.focus();
+      });
+      drawer.querySelectorAll("[data-code-snippet]").forEach(button => button.onclick = () => {
+        const value = button.dataset.codeSnippet;
+        textarea.setRangeText(value, textarea.selectionStart, textarea.selectionEnd, "end");
+        textarea.dispatchEvent(new Event("input", { bubbles: true }));
+        closeDrawer();
+        textarea.focus();
+      });
       const filter = drawer.querySelector("[data-code-reference-filter]");
       if (filter) filter.oninput = () => drawer.querySelectorAll("[data-code-help]").forEach(button => button.hidden = !button.textContent.toLowerCase().includes(filter.value.toLowerCase()));
     };
+    const showCustom = (title, body) => renderDrawer(title, body);
     const overview = () => {
       const recognised = [...new Set(state.tokens.map(item => item.helpKey).filter(Boolean))];
-      renderDrawer(`${languageName(language)} overview`, `<div class="code-overview"><p>This file contains <strong>${textarea.value.split("\n").length.toLocaleString()} lines</strong>, <strong>${state.symbols.length.toLocaleString()} navigable symbols</strong> and <strong>${state.issues.length.toLocaleString()} diagnostics</strong>.</p><p>${language === "basic" ? "Numbered BBC BASIC source is tokenised when saved. Line destinations and local procedure definitions are checked while you type." : language === "script" ? "Commands are executed in order by *EXEC or the boot process. Filing-system dependencies and ambiguous DFS abbreviations are highlighted." : "Readable text is preserved as Latin-1. Syntax-specific checks are intentionally not imposed."}</p>${recognised.length ? `<h4>Commands used in this file</h4><div class="code-command-chips">${recognised.map(key => `<button type="button" data-code-help="${esc(key)}">${esc(key)}</button>`).join("")}</div>` : ""}</div>`);
+      const profile = BASIC_LANGUAGE?.dialectProfile(dialect);
+      renderDrawer(`${languageName(language)} overview`, `<div class="code-overview"><p>This file contains <strong>${textarea.value.split("\n").length.toLocaleString()} lines</strong>, <strong>${state.symbols.length.toLocaleString()} navigable symbols</strong> and <strong>${state.issues.length.toLocaleString()} diagnostics</strong>.</p><p>${language === "basic" ? `Detected dialect: <strong>${esc(dialect)}</strong>. Numbered source is tokenised when saved. ${profile ? `Its inline assembler targets ${esc(profile.processor)} and ${profile.structured ? "supports" : "predates"} structured CASE/WHILE syntax.` : ""} Line destinations and local procedure definitions are checked while you type.` : language === "script" ? "Commands are executed in order by *EXEC or the boot process. Filing-system dependencies and ambiguous DFS abbreviations are highlighted." : "Readable text is preserved as Latin-1. Syntax-specific checks are intentionally not imposed."}</p>${recognised.length ? `<h4>Commands used in this file</h4><div class="code-command-chips">${recognised.map(key => `<button type="button" data-code-help="${esc(key)}">${esc(key)}</button>`).join("")}</div>` : ""}</div>`);
     };
     const helpAtCursor = () => {
       const offset = textarea.selectionStart;
@@ -1167,6 +1242,61 @@ window.AcornCodeEditor = (() => {
     };
     const showProblems = () => renderDrawer("Problems", state.issues.length ? `<div class="code-problem-list">${state.issues.map(item => `<button type="button" data-code-offset="${item.offset}"><b class="${esc(item.severity)}">${esc(item.severity)}</b><span>Line ${item.line}: ${esc(item.message)}</span></button>`).join("")}</div>` : '<p class="code-empty-message">No problems were found by the live checks.</p>');
     const showSymbols = () => renderDrawer("Document symbols", state.symbols.length ? `<div class="code-symbol-list">${state.symbols.map(item => `<button type="button" data-code-offset="${item.offset}"><b>${esc(item.kind)}</b><span>${esc(item.name)}</span></button>`).join("")}</div>` : '<p class="code-empty-message">No navigable symbols were found in this file.</p>');
+    const showCompletions = () => {
+      const selected = identifierAt(textarea.value, textarea.selectionStart, language);
+      const prefix = String(selected?.name || "").toUpperCase();
+      const identifiers = language === "basic" && BASIC_LANGUAGE
+        ? BASIC_LANGUAGE.scan(textarea.value).filter(item => item.type === "identifier").map(item => item.text)
+        : [];
+      const commands = language === "basic" ? [...BASIC_KEYWORDS] : language === "script" ? [...SCRIPT_COMMANDS].map(item => `*${item}`) : [];
+      const candidates = [...new Set([...commands, ...identifiers, ...state.symbols.map(item => item.name.replace(/^Line\s+/, ""))])]
+        .filter(value => !prefix || value.toUpperCase().startsWith(prefix))
+        .sort((left, right) => left.localeCompare(right)).slice(0, 200);
+      const snippets = language === "basic" ? [
+        ["FOR loop", "FOR I%=1 TO 10:NEXT"], ["REPEAT loop", "REPEAT:UNTIL condition"],
+        ["Conditional", "IF condition THEN statement"], ["Procedure", "DEFPROCname:ENDPROC"],
+      ] : language === "script" ? [
+        ["Execute boot script", "*EXEC !BOOT"], ["Run machine code", "*RUN filename"],
+        ["Select directory", "*DIR directory"], ["Start BASIC", "*BASIC"],
+      ] : [];
+      renderDrawer("Completion and snippets", `<p class="code-empty-message">${prefix ? `Candidates beginning with ${esc(prefix)}.` : "Choose a known command, identifier or template."}</p><div class="code-completion-list">${candidates.map(value => `<button type="button" data-code-completion="${esc(value)}">${esc(value)}</button>`).join("") || "<small>No matching candidates.</small>"}</div>${snippets.length ? `<h4 class="code-drawer-section-title">Templates</h4><div class="code-snippet-list">${snippets.map(([label, value]) => `<button type="button" data-code-snippet="${esc(value)}"><b>${esc(label)}</b><code>${esc(value)}</code></button>`).join("")}</div>` : ""}`);
+    };
+    const formatCode = async () => {
+      if (textarea.readOnly) return false;
+      const hasSelection = textarea.selectionStart !== textarea.selectionEnd;
+      const lineStart = textarea.value.lastIndexOf("\n", Math.max(0, textarea.selectionStart - 1)) + 1;
+      const lineEndAt = textarea.value.indexOf("\n", textarea.selectionEnd);
+      const rangeStart = hasSelection ? lineStart : 0;
+      const rangeEnd = hasSelection ? (lineEndAt < 0 ? textarea.value.length : lineEndAt) : textarea.value.length;
+      const original = textarea.value.slice(rangeStart, rangeEnd);
+      const formatted = original.split("\n").map(line => {
+        let updated = line.replace(/[ \t]+$/g, "");
+        if (language === "basic") updated = normaliseBasicControlSpacing(updated.replace(/^\s*(\d+)\s*/, "$1 "));
+        if (language === "script") updated = updated.replace(/^\s*\*\s*/, "*");
+        return updated;
+      }).join("\n");
+      if (formatted === original) {
+        showCustom("Format source", '<p class="code-empty-message">The selected source already follows the conservative formatter rules.</p>');
+        return false;
+      }
+      const candidate = `${textarea.value.slice(0, rangeStart)}${formatted}${textarea.value.slice(rangeEnd)}`;
+      if (language === "basic" && validateBasic) {
+        const check = await validateBasic(candidate, textarea.value);
+        if (!check.roundTrip) {
+          showCustom("Format source", `<p class="code-empty-message">Formatting was not applied because the BASIC token round trip failed: ${esc(check.message || "unknown error")}</p>`);
+          return false;
+        }
+      }
+      if (!window.confirm(`Apply conservative whitespace formatting to ${hasSelection ? "the selected lines" : "the complete file"}?`)) return false;
+      const before = documentSnapshot();
+      const selectionEnd = rangeStart + formatted.length;
+      const after = { value: candidate, selectionStart: rangeStart, selectionEnd, scrollTop: textarea.scrollTop, scrollLeft: textarea.scrollLeft };
+      refactorUndo.push({ before, after });
+      refactorRedo.length = 0;
+      applyDocumentSnapshot(after);
+      historyEntry("Formatted source", hasSelection ? "Selected lines" : "Complete file");
+      return true;
+    };
     const findReferences = () => {
       const result = symbolReferences(textarea.value, textarea.selectionStart, language);
       renderDrawer(result.name ? `References to ${result.name}` : "Find all references", result.rows.length
@@ -1204,6 +1334,14 @@ window.AcornCodeEditor = (() => {
     const showHistory = () => renderDrawer("Editor history", editorHistory.length
       ? `<div class="code-history-list">${[...editorHistory].reverse().map(item => `<article><time>${esc(new Date(item.time).toLocaleTimeString())}</time><b>${esc(item.action)}</b><span>${esc(item.detail)}</span></article>`).join("")}</div>`
       : '<p class="code-empty-message">No transformations or symbol changes have been made in this editor window.</p>');
+    const compareWith = baseline => {
+      const before = String(baseline || "").split("\n");
+      const after = textarea.value.split("\n");
+      const maximum = Math.max(before.length, after.length);
+      const rows = Array.from({ length: maximum }, (_unused, index) => ({ before: before[index] ?? "", after: after[index] ?? "" }))
+        .map((row, index) => `<div class="code-inline-diff-row${row.before === row.after ? "" : " changed"}"><span>${index + 1}</span><pre>${esc(row.before) || " "}</pre><pre>${esc(row.after) || " "}</pre></div>`).join("");
+      renderDrawer("Current source compared with saved file", `<div class="code-inline-diff"><header><span></span><b>Saved</b><b>Current</b></header>${rows}</div>`);
+    };
     const verifyRoundTrip = async () => {
       if (!validateBasic) return;
       try {
@@ -1258,6 +1396,39 @@ window.AcornCodeEditor = (() => {
       const first = textarea.value.slice(0, start).split("\n").length - 1;
       const last = first + textarea.value.slice(start, end).split("\n").length - 1;
       return { first, last };
+    };
+    const lineOperation = action => {
+      if (textarea.readOnly) return false;
+      showOriginalView();
+      const range = currentPhysicalLines();
+      const lines = textarea.value.split("\n");
+      const selected = lines.slice(range.first, range.last + 1);
+      if (!selected.length) return false;
+      const before = documentSnapshot();
+      let first = range.first;
+      if (action === "delete") lines.splice(range.first, selected.length);
+      else if (action === "duplicate") { lines.splice(range.last + 1, 0, ...selected); first = range.last + 1; }
+      else if (action === "move-up" && range.first > 0) {
+        const previous = lines.splice(range.first - 1, 1)[0];
+        lines.splice(range.last, 0, previous);
+        first -= 1;
+      } else if (action === "move-down" && range.last < lines.length - 1) {
+        const following = lines.splice(range.last + 1, 1)[0];
+        lines.splice(range.first, 0, following);
+        first += 1;
+      } else if (action === "join" && language !== "basic") {
+        lines.splice(range.first, selected.length, selected.map(line => line.trim()).join(" "));
+      } else return false;
+      const updated = lines.join("\n");
+      const start = lines.slice(0, first).reduce((total, line) => total + line.length + 1, 0);
+      const count = action === "duplicate" ? selected.length : action === "join" ? 1 : action === "delete" ? 0 : selected.length;
+      const end = count ? start + lines.slice(first, first + count).join("\n").length : start;
+      const after = { value: updated, selectionStart: start, selectionEnd: end, scrollTop: textarea.scrollTop, scrollLeft: textarea.scrollLeft };
+      refactorUndo.push({ before, after });
+      refactorRedo.length = 0;
+      applyDocumentSnapshot(after);
+      historyEntry(`${action.replace("-", " ")} lines`, `${selected.length} line${selected.length === 1 ? "" : "s"}`);
+      return true;
     };
     const sourcePosition = offset => {
       const rows = textarea.value.slice(0, Math.max(0, offset)).split("\n");
@@ -1537,7 +1708,7 @@ window.AcornCodeEditor = (() => {
     };
     const render = () => {
       dismissHoverHelp(textarea.ownerDocument);
-      state = { tokens: sourceTokens(textarea.value, language, inlineAssemblyLanguage), issues: diagnostics(textarea.value, language), symbols: symbols(textarea.value, language), blocks: foldBlocks(textarea.value, language) };
+      state = { tokens: sourceTokens(textarea.value, language, inlineAssemblyLanguage), issues: diagnostics(textarea.value, language, dialect), symbols: symbols(textarea.value, language), blocks: foldBlocks(textarea.value, language) };
       const html = highlightedHtml(textarea.value, state.tokens);
       visual.querySelector("pre").innerHTML = html;
       hit.querySelector("pre").innerHTML = html;
@@ -1563,9 +1734,10 @@ window.AcornCodeEditor = (() => {
     textarea.addEventListener("keyup", updateMenus);
     textarea.addEventListener("keydown", event => {
       if (event.key === "F1") { event.preventDefault(); helpAtCursor(); }
+      else if (event.key === " " && (event.ctrlKey || event.metaKey)) { event.preventDefault(); showCompletions(); }
     });
     render();
-    return { overview, helpAtCursor, showProblems, showSymbols, findReferences, renameSymbol, showOutline, showHistory, verifyRoundTrip, reference, goToLine, normaliseCommands, toggleComment, condense, refactor, undo, redo, expandAll, collapseAll, toggleAll, toggleAutoIndent, showOriginalView, closeDrawer, refresh: render, recordHistory: historyEntry, state: () => state, history: () => pendingHistory };
+    return { overview, helpAtCursor, showProblems, showSymbols, showCompletions, showCustom, findReferences, renameSymbol, showOutline, showHistory, compareWith, verifyRoundTrip, reference, goToLine, normaliseCommands, toggleComment, lineOperation, formatCode, condense, refactor, undo, redo, expandAll, collapseAll, toggleAll, toggleAutoIndent, showOriginalView, closeDrawer, refresh: render, recordHistory: historyEntry, state: () => state, history: () => pendingHistory };
   }
 
   function enhanceDisassembly({ root, report }) {

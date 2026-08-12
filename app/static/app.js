@@ -3962,8 +3962,8 @@ async function showRomWorkbench(index) {
       <details class="rom-identity-editor"><summary>Identify this exact ROM</summary><div class="rom-identity-grid"><label>Title<input name="identityTitle" value="${esc(identity.record?.title || project.identity?.title || "")}"></label><label>Version<input name="identityVersion" value="${esc(identity.record?.version || project.identity?.version || "")}"></label><label>Publisher<input name="identityPublisher" value="${esc(identity.record?.publisher || project.identity?.publisher || "")}"></label><label>Platform<input name="identityPlatform" value="${esc(identity.record?.platform || project.identity?.platform || "")}"></label></div><div class="field"><label>Identification notes</label><textarea name="identityNotes" rows="3">${esc(identity.record?.notes || project.identity?.notes || "")}</textarea></div><button type="button" class="button primary save-rom-identity">Save fingerprinted identity</button><small>This browser owner's catalogue keys the record to the complete SHA-256, not the filename.</small></details>
     </section>
     <section role="tabpanel" id="rom-panel-code" aria-labelledby="rom-tab-code" data-rom-panel="code" class="rom-workbench-panel" hidden>
-      <div class="rom-tool-controls"><label>Bank<select name="disasmBank">${bankOptions}</select></label><label>Architecture<select name="disasmArchitecture"><option value="auto">Auto detect</option><option value="6502">6502</option><option value="arm">ARM</option><option value="m68k">68000</option></select></label><label>Mapped origin<input name="disasmOrigin" value="0x8000"></label><label>Offset<input name="disasmOffset" value="0x0"></label><label>Bytes<input name="disasmLength" type="number" min="1" max="262144" value="4096"></label><button type="button" class="button primary run-disassembly">Disassemble</button></div>
-      <div class="help-note">6502, ARM and 68000 code are decoded with architecture-appropriate byte order. Known entry points seed reachable-code analysis, branch and call targets gain cross-references, and unknown 6502 opcodes remain <code>EQUB</code> data.</div>
+      <div class="rom-tool-controls"><label>Bank<select name="disasmBank">${bankOptions}</select></label><label>Architecture<select name="disasmArchitecture"><option value="auto">Auto detect</option><option value="6502">6502</option><option value="65c02">65C02</option><option value="65816">65816</option><option value="arm">ARM</option><option value="m68k">68000</option></select></label><label>Mapped origin<input name="disasmOrigin" value="0x8000"></label><label>Offset<input name="disasmOffset" value="0x0"></label><label>Bytes<input name="disasmLength" type="number" min="1" max="262144" value="4096"></label><button type="button" class="button primary run-disassembly">Disassemble</button></div>
+      <div class="help-note">NMOS 6502, 65C02, 65816, ARM and 68000 code are decoded with architecture-appropriate byte order. Known entry points seed reachable-code analysis, branch and call targets gain cross-references, and unknown NMOS 6502 opcodes remain <code>EQUB</code> data.</div>
       <div class="rom-disassembly-output empty-list">Choose a bank and start address.</div>
     </section>
     <section role="tabpanel" id="rom-panel-compare" aria-labelledby="rom-tab-compare" data-rom-panel="compare" class="rom-workbench-panel" hidden>
@@ -7506,7 +7506,7 @@ function showHelp() {
               <li>Choose <strong>Tools → ROM Workbench</strong>. Overview shows every bank, its file offset, decoded identity, physical byte lanes and duplicate banks.</li>
               <li>Review the audit findings. The app can safely align contradictory sideways-ROM role flags with proven entry vectors and rebuild a standard RISC OS extension-ROM checksum. An automatic undo point is made first.</li>
               <li>Open <strong>Disassembly</strong>, choose a bank, architecture, mapped origin and offset. Auto detect chooses ARM for an Archimedes target and follows a recognised BBC-family processor header elsewhere.</li>
-              <li>NMOS 6502, ARM and 68000 instructions use their correct byte order. Unknown 6502 opcodes remain visible as <code>EQUB</code> data. Known entry points seed reachable-code analysis, call and branch targets gain cross-references, and BBC MOS jump-table calls are labelled.</li>
+              <li>NMOS 6502, 65C02, 65816, ARM and 68000 instructions use their correct byte order. Unknown NMOS 6502 opcodes remain visible as <code>EQUB</code> data. Known entry points seed reachable-code analysis, call and branch targets gain cross-references, and BBC MOS jump-table calls are labelled.</li>
               <li>Save address labels under <strong>Project</strong> using <code>address = label</code>. Known regions use <code>start-end = meaning</code>. Disassemble again to apply them to the listing.</li>
               <li>To compare revisions, open the other ROM in another pane and select it under <strong>Compare</strong>. Download the guarded patch when required.</li>
               <li>Tick individual comparison ranges to export only reviewed changes. A patch is applied only when the complete source SHA-256 matches. The finished bytes must then match the stored target SHA-256 or the operation fails.</li>
@@ -7526,7 +7526,7 @@ function showHelp() {
             <figure><img src="/help/rom-workbench-programmer.png" alt="ROM Workbench Programmer tab configured to mirror and split a ROM into two byte-wide chips"><figcaption>Programmer export applies padding or mirroring, byte and word transforms, address-line swaps, then physical lane splitting. Its report records checksums for programmer read-back.</figcaption></figure>
             <div class="help-task"><h4>Understand each Workbench tab</h4><ul>
               <li><strong>Overview:</strong> bank map, byte lanes, exact SHA-256 identity, audit and narrowly proven repairs.</li>
-              <li><strong>Disassembly:</strong> NMOS 6502, ARM or 68000 decoding with reachable-code analysis, cross-references, MOS call labels and project annotations.</li>
+              <li><strong>Disassembly:</strong> NMOS 6502, 65C02, 65816, ARM or 68000 decoding with reachable-code analysis, cross-references, MOS call labels and project annotations.</li>
               <li><strong>Compare:</strong> contiguous revision differences and complete or selective patches guarded by source and target SHA-256.</li>
               <li><strong>Build:</strong> an inert BBC service-ROM scaffold or an <code>AFFROMFS1</code> data archive for companion code. Neither is a finished application by itself.</li>
               <li><strong>Programmer:</strong> device padding or mirroring, adjacent-byte swaps, 16-bit word swaps, address-line swaps and one, two or four physical byte lanes.</li>
@@ -7994,6 +7994,8 @@ function showHelp() {
               <li>BBC BASIC inline assembler between <code>[</code> and <code>]</code> reuses the disassembly editor's processor and MOS help. Hover 6502 or ARM mnemonics, named MOS entry points such as <code>OSWRCH</code>, standard addresses such as <code>&amp;FFEE</code>, or directives such as <code>EQUB</code>. Matching names outside an assembler region remain ordinary BASIC variables. Refactor and Condense leave assembler lines physically intact.</li>
               <li>Press <strong>F1</strong> for help on the command at the caret. The editor's <strong>Help</strong> menu gives an overview of the detected language, a searchable command reference, live problems and document symbols. Problem and symbol entries jump back to their source location.</li>
               <li><strong>Edit → Find all references</strong> lists code uses of the symbol at the caret. <strong>Rename symbol</strong> changes those uses as one undoable operation while leaving strings and comments alone. The BASIC program outline lists procedures and functions with their call sites. Diagnostics also flag unused definitions, mismatched procedure endings and conservative unreachable-line candidates.</li>
+              <li><strong>Find and Replace</strong> stays open while you work and supports match case, whole identifiers, regular expressions, selection-only scope, previous/next, one replacement, preview and Replace All. <strong>Search files in this image</strong> finds names and bounded readable content across MMB slots and filesystem directories, then opens the containing location. <strong>Analyse file dependencies</strong> checks the entire image and reports exact, unique, ambiguous, missing and root-relative launcher targets.</li>
+              <li>Press <strong>Ctrl+Space</strong> for completions from known commands, identifiers, document symbols and templates. Text and script files provide duplicate, move, join and delete line operations. BASIC disables line moves that cannot preserve line-number meaning. <strong>Format selection or file</strong> applies conservative whitespace rules; BASIC must pass a token round trip before the proposal is applied.</li>
               <li>Refactor and Condense show the original and proposed source side by side. Changed rows are marked. Every BASIC proposal completes an exact tokenise, detokenise and retokenise check before acceptance; the review displays its line count and tokenised byte size. Use <strong>Tools → Verify BASIC round trip</strong> to run the check independently, and <strong>Editor history</strong> to review accepted transformations and symbol renames from this window.</li>
               <li><strong>View → Show synchronized bytes</strong> follows the BASIC line, text caret or selected disassembly row. It shows the matching saved bytes and printable characters, with a shortcut into the full Hex editor. Unsaved source is never presented as if it had already changed the image. A new or renumbered BASIC line reports that it has no saved byte range until Save succeeds.</li>
               <li>Live BASIC checks cover missing, duplicate and out-of-order line numbers, unresolved direct GOTO, GOSUB and RESTORE destinations, missing local DEF PROC definitions and unclosed strings. Script checks cover unclosed strings, filing-system-dependent <code>R.</code> and <code>L.</code> abbreviations and use of <code>CHAIN "!BOOT"</code> where a command script needs <code>*EXEC</code>. Treat these as focused editing checks rather than proof that software will run on every target.</li>
@@ -8004,19 +8006,21 @@ function showHelp() {
               <li><strong>View → Visual auto-indent</strong> displays BASIC structure using tabs or 2, 4, or 8 spaces. It is presentation only and never changes the textarea, dirty state, tokenised program or saved image bytes. While active, choose <strong>Show original indentation</strong>, or double-click a displayed line, to return to the exact editable source layout.</li>
               <li>Procedures and multi-line functions indent consistently from <code>DEFPROCname</code> or <code>DEFFNname</code> to <code>ENDPROC</code> or the function's leading <code>=</code> return. Compact tokenised forms such as <code>FORI%=...</code> and closers later on a line, such as <code>]:NEXT</code>, <code>NEXT:ENDPROC</code> and <code>CALL address:ENDPROC</code>, are recognised. A one-line <code>DEFFNname(...)=expression</code> does not open a block. Folding uses the same scanner.</li>
               <li>When Visual auto-indent is active, Refactor's generated lines inherit real surrounding procedures, loops and structured BASIC blocks. A classic <code>IF condition THEN line</code> controls one statement and does not create an indented block, so later physical lines reached through branching or fall-through remain at their normal level. The saved program remains free of display-only tabs or spaces.</li>
-              <li>Other readable files open in the text editor. Binary files open as editor-style 6502, ARM or 68000 source. Proven register values, MOS call purposes and reason codes, branch conditions, hardware I/O regions, entry points, BRK error messages and cross-references appear as semicolon comments on the relevant instruction. Internal targets receive stable labels derived from proved behaviour, such as <code>write_text_8120</code>, <code>execute_command_834A</code>, <code>loop_8057</code> or <code>equal_80C2</code>, instead of anonymous subroutine/location names. The hexadecimal suffix keeps similar routines distinct. The analyser drops register assumptions at uncertain control-flow joins instead of inventing values. The readable-string list filters out accidental punctuation and number runs; select a string to jump to its disassembled line. Double-click an instruction only when you want that offset in Hex.</li>
-              <li>Every 6502, ARM and 68000 disassembly row has hover help, including condition and size variants, unfamiliar decoder mnemonics and pseudo-operations such as <code>EQUB</code> and <code>EQUS</code>. Help combines the operation family, exact operand and addressing form, encoded bytes, cross-references and the analyser's contextual comment. MOS entry points retain their specific calling conventions. The Help menu lists operations actually present as well as its instruction and MOS reference.</li>
-              <li>The disassembly <strong>Project</strong> menu retains notes, bookmarks, symbols and code/data decisions outside the image bytes. Click one row or shift-click a range, then mark it as code, text, bytes, words, addresses or bitmap data. The listing is rebuilt using that decision. ARM word regions use little-endian values and 68000 word regions use big-endian values. Symbols apply to 6502, ARM and 68000 and use a portable <code>&amp;address = label</code> text format for import and export. Find references and the outline show direct callers and labelled entry points.</li>
+              <li>Other readable files open in the text editor. Binary files open as editor-style NMOS 6502, 65C02, 65816, ARM or 68000 source. Proven register values, MOS call purposes and reason codes, branch conditions, hardware I/O regions, entry points, BRK error messages and cross-references appear as semicolon comments on the relevant instruction. Internal targets receive stable labels derived from proved behaviour, such as <code>write_text_8120</code>, <code>execute_command_834A</code>, <code>loop_8057</code> or <code>equal_80C2</code>, instead of anonymous subroutine/location names. The hexadecimal suffix keeps similar routines distinct. The analyser drops register assumptions at uncertain control-flow joins instead of inventing values. The readable-string list filters out accidental punctuation and number runs; select a string to jump to its disassembled line. Double-click an instruction only when you want that offset in Hex.</li>
+              <li>Every processor disassembly row has hover help, including condition and size variants, unfamiliar decoder mnemonics and pseudo-operations such as <code>EQUB</code> and <code>EQUS</code>. Help combines the operation family, exact operand and addressing form, encoded bytes, cross-references and the analyser's contextual comment. MOS entry points retain their specific calling conventions. The Help menu lists operations actually present as well as its instruction and MOS reference.</li>
+              <li>The disassembly <strong>Project</strong> menu retains notes, bookmarks, symbols and code/data decisions outside the image bytes. Click one row or shift-click a range, then mark it as code, text, bytes, words, addresses or bitmap data. The listing is rebuilt using that decision. ARM word regions use little-endian values and 68000 word regions use big-endian values. Symbols apply to every supported processor and use a portable <code>&amp;address = label</code> text format for import and export. Find references and the outline show direct callers and labelled entry points.</li>
+              <li><strong>Tools → Inspect selected data</strong> presents bounded text, bytes, little-endian and big-endian words, plus a one-bit bitmap preview. Project metadata has one manager for notes, symbols, bookmarks and portable JSON. <strong>Compare with saved file</strong> displays saved and current source side by side.</li>
+              <li><strong>Edit and reassemble</strong> is enabled only when <code>ACORN_FILE_ASSEMBLER_COMMAND</code> contains <code>{source}</code> and <code>{output}</code>. It opens generated label-oriented assembly for review and requires confirmation before checksum-guarded replacement of the complete binary. <strong>Debug from selected address</strong> uses a configured <code>ACORN_FILE_DEBUGGER_COMMAND</code>; the return status and output are retained in project history.</li>
               <li><strong>Project → Run in configured emulator</strong> appears in source and disassembly editors. It is available when the server has an <code>ACORN_FILE_EMULATOR_COMMAND</code> containing <code>{file}</code>. Optional placeholders include <code>{image}</code>, <code>{path}</code>, <code>{load}</code> and <code>{execute}</code>. The temporary export is removed afterwards and the result is retained in project history.</li>
               <li>Labelled disassembly regions also have left-gutter folding controls. The single state-aware <strong>View</strong> command collapses or expands all labelled regions as appropriate. Visible instruction rows retain double-click-to-Hex while other regions are folded.</li>
-              <li>ZIP, TAR, compressed TAR, GZIP, BZIP2 and XZ files are marked as archives. Double-click one to browse its safe read-only file and folder hierarchy in the pane; use breadcrumbs or <strong>..</strong> to move up. Double-click a member to extract it in memory and open the normal BASIC, command-script, text, disassembly or hex viewer. Archive member editors are read-only for now; use <strong>File → Export original archive member</strong> or the row download arrow to keep the unchanged bytes. Parent traversal, non-regular TAR objects, archives over 512 MiB, members over 128 MiB and catalogues reaching 20,000 entries are rejected rather than processed without a safe bound.</li>
+              <li>ZIP, TAR, compressed TAR, GZIP, BZIP2 and XZ files are marked as archives. Double-click one to browse its safe file and folder hierarchy in the pane; use breadcrumbs or <strong>..</strong> to move up. Double-click a member to extract it in memory and open the normal BASIC, command-script, text, disassembly or hex viewer. Readable members can be edited: Save verifies both hashes, rebuilds the complete container and checkpoints the outer image. UEF tape members stay read-only because reconstruction could alter timing or loader behaviour. Parent traversal, non-regular TAR objects, archives over 512 MiB, members over 128 MiB and catalogues reaching 20,000 entries are rejected rather than processed without a safe bound.</li>
               <li>Use <strong>Tools → Open raw bytes in Hex</strong> from any file viewer when the automatic interpretation is uncertain. File saves retain Acorn load, execution and filetype metadata, reject stale edits and create an undo checkpoint.</li>
-              <li>The structural parser understands classic and structured BBC BASIC forms. BASIC V and tokenised programs with a trailing binary payload remain read-only because rewriting them as BASIC II would be unsafe, so transformation commands are disabled for those files.</li>
+              <li>The shared structural scanner understands classic and structured BBC BASIC forms, typed variables and star commands, and carries explicit BASIC I through VI capability profiles. Diagnostics flag commands that require a later detected dialect. BASIC II programs with a recognised trailing payload are editable because only the tokenised prefix is replaced and the payload is preserved byte for byte. BASIC V remains read-only because rewriting its extended tokens as BASIC II would be unsafe.</li>
               <li>Choose <strong>Check loader dependencies</strong> to resolve CHAIN, EXEC, RUN, LOAD, DIR and LIB targets beside the launcher and flag root-relative references before moving software below ADFS root.</li>
             </ol></div>
             <figure><img src="/help/file-editor-script.png" alt="Command-script editor showing a real DFS !BOOT file"><figcaption>Command scripts remain unnumbered and preserve their execution order. Save keeps the file's Acorn metadata.</figcaption></figure>
             <figure><img src="/help/file-editor-basic.png" alt="BBC BASIC editor showing a tokenised loader with syntax colour and folding controls"><figcaption>Tokenised BBC BASIC II opens as editable numbered source. Folding and visual indentation do not alter the saved program.</figcaption></figure>
-            <figure><img src="/help/file-editor-disassembly.png" alt="Annotated 6502 disassembly with address, bytes, instruction and annotation columns"><figcaption>Binary files open as bounded 6502, ARM or 68000 disassembly. Comments remain beside the instruction they describe and the original bytes remain available through Hex.</figcaption></figure>
+            <figure><img src="/help/file-editor-disassembly.png" alt="Annotated 6502 disassembly with address, bytes, instruction and annotation columns"><figcaption>Binary files open as bounded NMOS 6502, 65C02, 65816, ARM or 68000 disassembly. Comments remain beside the instruction they describe and the original bytes remain available through Hex.</figcaption></figure>
             <div class="help-task"><h4>Audit a collection</h4><ol>
               <li><strong>Test menu entries</strong> is enabled only when a menu is detected: anywhere in an MMB, or in the current ADFS directory. It checks disk or directory selection, launcher presence, action and PAGE for that applicable menu context.</li>
               <li>At an MMB's <strong>All disks</strong> level, <strong>Analyse → Check for duplicate games</strong> compares individual installed game titles across every disk name, catalogued file content, and complete slot images. This detects a game represented on differently named disks instead of relying on MMB disk titles alone.</li>
@@ -8405,6 +8409,35 @@ function disassemblyText(report) {
   }).join("\n");
 }
 
+function disassemblyAssemblySource(report) {
+  return report.rows.map(row => {
+    const instruction = `${row.mnemonic}${row.operand ? ` ${row.operand}` : ""}`;
+    const comment = disassemblyComment(row);
+    return `${row.label ? `${row.label}:\n` : ""}    ${instruction}${comment ? ` ; ${comment}` : ""}`;
+  }).join("\n");
+}
+
+function assemblySourceEditor(entry, report) {
+  return new Promise(resolve => {
+    const shade = document.createElement("div");
+    shade.className = "editor-choice-shade";
+    shade.setAttribute("role", "dialog");
+    shade.setAttribute("aria-modal", "true");
+    shade.innerHTML = `<form class="editor-choice-card editor-assembly-card"><header><div><small>EXTERNAL ASSEMBLER WORKFLOW</small><h2>Reassemble ${esc(entry.name)}</h2></div></header><div class="help-warning"><strong>Dangerous operation:</strong> a successful build replaces the whole binary. Labels and comments are generated starting points, so review assembler syntax, origin and emitted length before continuing.</div><div class="field-grid two"><div class="field"><label>Architecture</label><input name="architecture" value="${esc(report.architecture)}" readonly></div><div class="field"><label>Origin</label><input name="origin" value="0x${Number(report.origin).toString(16).toUpperCase()}"></div></div><div class="field"><label>Assembly source</label><textarea name="source" rows="22" spellcheck="false">${esc(disassemblyAssemblySource(report))}</textarea></div><div class="modal-actions"><button type="button" class="button ghost" data-assembly-cancel>Cancel</button><button type="submit" class="button danger">Assemble and replace binary…</button></div></form>`;
+    const finish = value => { shade.remove(); resolve(value); };
+    shade.querySelector("[data-assembly-cancel]").onclick = () => finish(null);
+    shade.querySelector("form").onsubmit = event => {
+      event.preventDefault();
+      const values = Object.fromEntries(new FormData(event.currentTarget));
+      if (!confirm("Replace the complete saved binary with the assembler output? The current image checkpoint can undo it.")) return;
+      finish(values);
+    };
+    shade.onkeydown = event => { if (event.key === "Escape") finish(null); else keepFocusInside(shade, event); };
+    modal.append(shade);
+    shade.querySelector("textarea").focus();
+  });
+}
+
 function disassemblySource(report) {
   return report.rows.map(row => {
     const address = Number(row.address).toString(16).toUpperCase().padStart(4, "0");
@@ -8432,14 +8465,15 @@ function disassemblyColumnStyle(report) {
   return `--disassembly-bytes-width:${bytesWidth}ch;--disassembly-instruction-width:${instructionWidth}ch`;
 }
 
-function editorMenus({ downloadUrl, downloadLabel = "Download with metadata…", canEdit = false, basic = false, readOnly = false } = {}) {
+function editorMenus({ downloadUrl, downloadLabel = "Download with metadata…", canEdit = false, canSaveAs = canEdit, canChangeProperties = false, basic = false, readOnly = false } = {}) {
   const shortcut = value => `<kbd>${value}</kbd>`;
   return `<nav class="editor-menubar" aria-label="Editor menus">
     <details class="editor-menu"><summary>File</summary><div class="editor-menu-panel">
       <button type="button" data-editor-action="save" ${canEdit ? "disabled" : "disabled"}><span>Save</span>${shortcut("Ctrl+S")}</button>
-      <button type="button" data-editor-action="save-as" ${canEdit ? "" : "disabled"}><span>Save As…</span>${shortcut("Ctrl+Shift+S")}</button>
+      <button type="button" data-editor-action="save-as" ${canSaveAs ? "" : "disabled"}><span>Save As…</span>${shortcut("Ctrl+Shift+S")}</button>
       <button type="button" data-editor-action="export"><span>Export as text…</span></button>
       ${downloadUrl ? `<a href="${esc(downloadUrl)}"><span>${esc(downloadLabel)}</span></a>` : ""}
+      <button type="button" data-editor-action="properties" ${canChangeProperties ? "" : "disabled"}><span>Properties…</span></button>
       <span class="editor-menu-separator" role="separator"></span>
       <button type="button" data-editor-action="close"><span>Close</span>${shortcut("Ctrl+W")}</button>
     </div></details>
@@ -8454,10 +8488,18 @@ function editorMenus({ downloadUrl, downloadLabel = "Download with metadata…",
       <span class="editor-menu-separator" role="separator"></span>
       <button type="button" data-editor-action="find"><span>Find…</span>${shortcut("Ctrl+F")}</button>
       <button type="button" data-editor-action="find-replace" ${canEdit ? "" : "disabled"}><span>Find and Replace…</span>${shortcut("Ctrl+H")}</button>
+      <button type="button" data-editor-action="search-image"><span>Search files in this image…</span></button>
       <button type="button" data-editor-action="find-references"><span>Find all references</span></button>
       <button type="button" data-editor-action="rename-symbol" ${canEdit ? "" : "disabled"}><span>Rename symbol…</span></button>
       <button type="button" data-editor-action="go-to-line"><span>Go to line…</span>${shortcut("Ctrl+G")}</button>
+      <button type="button" data-editor-action="complete"><span>Complete at cursor…</span>${shortcut("Ctrl+Space")}</button>
       ${basic ? `<button type="button" data-editor-action="toggle-comment" ${canEdit ? "" : "disabled"}><span>Toggle comment</span>${shortcut("Ctrl+/")}</button>` : ""}
+      <span class="editor-menu-separator" role="separator"></span>
+      <button type="button" data-editor-action="line-duplicate" ${canEdit && !basic ? "" : "disabled"}><span>Duplicate line(s)</span></button>
+      <button type="button" data-editor-action="line-up" ${canEdit && !basic ? "" : "disabled"}><span>Move line(s) up</span></button>
+      <button type="button" data-editor-action="line-down" ${canEdit && !basic ? "" : "disabled"}><span>Move line(s) down</span></button>
+      <button type="button" data-editor-action="line-join" ${canEdit && !basic ? "" : "disabled"}><span>Join selected lines</span></button>
+      <button type="button" data-editor-action="line-delete" ${canEdit ? "" : "disabled"}><span>Delete line(s)</span></button>
     </div></details>
     <details class="editor-menu"><summary>View</summary><div class="editor-menu-panel editor-view-panel">
       ${basic ? `<fieldset><legend>Visual auto-indent</legend><label>Indent with<select data-indent-style><option value="spaces">Spaces</option><option value="tabs">Tabs</option></select></label><label>Spaces<select data-indent-size><option value="2">2</option><option value="4" selected>4</option><option value="8">8</option></select></label><button type="button" data-editor-action="auto-indent-view"><span>Auto-indent view</span></button><small>Display only. Saved bytes are unchanged.</small></fieldset><span class="editor-menu-separator" role="separator"></span>` : ""}
@@ -8467,14 +8509,18 @@ function editorMenus({ downloadUrl, downloadLabel = "Download with metadata…",
     <details class="editor-menu"><summary>Tools</summary><div class="editor-menu-panel editor-tools-panel">
       ${basic ? `<fieldset ${canEdit ? "" : "disabled"}><legend>Renumber BASIC</legend><label>Start<input name="renumberStart" type="number" min="0" max="32767" value="10"></label><label>Step<input name="renumberStep" type="number" min="1" max="32767" value="10"></label><button class="basic-renumber" type="button">Renumber</button></fieldset><span class="editor-menu-separator" role="separator"></span>` : ""}
       <button type="button" data-editor-action="normalise-commands" ${canEdit ? "" : "disabled"}><span>Normalise recognised commands</span></button>
+      <button type="button" data-editor-action="format-code" ${canEdit ? "" : "disabled"}><span>Format selection or file…</span></button>
       ${basic ? `<button type="button" data-editor-action="verify-basic"><span>Verify BASIC round trip</span></button><button type="button" data-editor-action="program-outline"><span>Program outline and call graph</span></button>` : ""}
+      <button type="button" data-editor-action="dependencies"><span>Analyse file dependencies</span></button>
       <button type="button" data-editor-action="editor-history"><span>Editor history</span></button>
+      <button type="button" data-editor-action="compare-saved"><span>Compare with saved file</span></button>
       <button type="button" data-editor-action="hex"><span>Open raw bytes in Hex</span></button>
       ${basic ? `<span class="editor-menu-separator" role="separator"></span><button type="button" data-editor-action="condense-code" ${canEdit ? "" : "disabled"}><span>Condense selection or program…</span></button><button type="button" data-editor-action="refactor-code" ${canEdit ? "" : "disabled"}><span>Refactor selection or program…</span></button>` : ""}
     </div></details>
     <details class="editor-menu"><summary>Project</summary><div class="editor-menu-panel">
       <button type="button" data-editor-action="project-bookmark"><span>Add bookmark at cursor…</span></button>
       <button type="button" data-editor-action="project-notes"><span>Project notes…</span></button>
+      <button type="button" data-editor-action="project-manage"><span>Manage project metadata…</span></button>
       <button type="button" data-editor-action="run-emulator"><span>Run in configured emulator…</span></button>
     </div></details>
     <details class="editor-menu"><summary>Help</summary><div class="editor-menu-panel">
@@ -8511,6 +8557,9 @@ function disassemblyMenus(downloadUrl, exportUrl, exportLabel = "Export original
       <button type="button" data-disassembly-action="sync-bytes"><span>Show synchronized bytes</span></button>
     </div></details>
     <details class="editor-menu"><summary>Tools</summary><div class="editor-menu-panel">
+      <button type="button" data-disassembly-action="inspect-data"><span>Inspect selected data…</span></button>
+      <button type="button" data-disassembly-action="assemble"><span>Edit and reassemble…</span></button>
+      <button type="button" data-disassembly-action="debug"><span>Debug from selected address…</span></button>
       <button type="button" data-disassembly-action="hex"><span>Open raw bytes in Hex</span></button>
     </div></details>
     <details class="editor-menu"><summary>Project</summary><div class="editor-menu-panel">
@@ -8543,6 +8592,36 @@ function closeEditorMenus(root, except = null) {
   root.querySelectorAll(".editor-menu[open]").forEach(menu => {
     if (menu !== except) menu.removeAttribute("open");
   });
+}
+
+function installEditorMenuDismissal(root) {
+  if (!root || root.dataset.menuDismissal === "1") return;
+  root.dataset.menuDismissal = "1";
+  const owner = root.ownerDocument;
+  const dismissOutside = event => {
+    if (!root.isConnected) {
+      owner.removeEventListener("pointerdown", dismissOutside, true);
+      return;
+    }
+    const activeMenu = event.target.closest?.(".editor-menu");
+    if (!activeMenu || !root.contains(activeMenu)) closeEditorMenus(root);
+  };
+  const dismissSelection = event => {
+    if (event.target.closest(".editor-menu-panel button, .editor-menu-panel a")) {
+      queueMicrotask(() => closeEditorMenus(root));
+    }
+  };
+  const dismissEscape = event => {
+    if (event.key !== "Escape" || !root.querySelector(".editor-menu[open]")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    closeEditorMenus(root);
+    root.querySelector(".editor-menu summary")?.focus();
+  };
+  owner.addEventListener("pointerdown", dismissOutside, true);
+  root.addEventListener("click", dismissSelection);
+  root.addEventListener("keydown", dismissEscape);
+  modal.addEventListener("close", () => owner.removeEventListener("pointerdown", dismissOutside, true), { once: true });
 }
 
 let editorWindowController = null;
@@ -8739,54 +8818,123 @@ function updateSourceEditorStatus(root) {
   root.querySelector('[data-editor-action="save"]').disabled = editor.readOnly || !dirty;
 }
 
-function editorFind(editor) {
-  const needle = prompt("Find text:", editor.dataset.findText || "");
-  if (!needle) return;
-  editor.dataset.findText = needle;
-  let found = editor.value.toLocaleLowerCase().indexOf(needle.toLocaleLowerCase(), editor.selectionEnd);
-  if (found < 0) found = editor.value.toLocaleLowerCase().indexOf(needle.toLocaleLowerCase());
-  if (found < 0) return toast(`“${needle}” was not found.`, true);
-  editor.focus();
-  editor.setSelectionRange(found, found + needle.length);
-}
-
-async function editorFindReplace(editor) {
-  const needle = prompt("Find text:", editor.dataset.findText || "");
-  if (!needle) return;
-  const replacement = prompt("Replace it with:", editor.dataset.replaceText || "");
-  if (replacement == null) return;
-  editor.dataset.findText = needle;
-  editor.dataset.replaceText = replacement;
-  const choice = await editorChoice(
-    "Find and Replace",
-    `Replace the next occurrence of “${needle}”, or every occurrence in this file? Matching is case-insensitive.`,
-    [
-      { value: "cancel", label: "Cancel", className: "ghost" },
-      { value: "next", label: "Replace next" },
-      { value: "all", label: "Replace all", className: "primary" },
-    ],
-  );
-  if (choice === "cancel") return;
-  const foldedNeedle = needle.toLocaleLowerCase();
-  if (choice === "next") {
-    const selected = editor.value.slice(editor.selectionStart, editor.selectionEnd);
-    let found = selected.toLocaleLowerCase() === foldedNeedle ? editor.selectionStart
-      : editor.value.toLocaleLowerCase().indexOf(foldedNeedle, editor.selectionEnd);
-    if (found < 0) found = editor.value.toLocaleLowerCase().indexOf(foldedNeedle);
-    if (found < 0) return toast(`“${needle}” was not found.`, true);
-    editor.setRangeText(replacement, found, found + needle.length, "select");
-    editor.dispatchEvent(new Event("input", { bubbles: true }));
-    editor.focus();
-    return;
+function openEditorSearch(root, editor, replaceMode = false) {
+  let panel = root.querySelector(".editor-search-panel");
+  const initialSelection = { start: editor.selectionStart, end: editor.selectionEnd };
+  if (!panel) {
+    panel = document.createElement("section");
+    panel.className = "editor-search-panel";
+    panel.setAttribute("role", "search");
+    panel.innerHTML = `<div class="editor-search-fields"><label>Find<input type="search" data-search-query autocomplete="off"></label><label class="editor-replace-field">Replace<input type="text" data-search-replacement autocomplete="off"></label></div>
+      <div class="editor-search-options"><label><input type="checkbox" data-search-case> Match case</label><label><input type="checkbox" data-search-word> Whole identifier</label><label><input type="checkbox" data-search-regex> Regular expression</label><label><input type="checkbox" data-search-selection> Selection only</label></div>
+      <div class="editor-search-actions"><button type="button" data-search-action="previous" title="Previous match">↑ Previous</button><button type="button" data-search-action="next" title="Next match">↓ Next</button><button type="button" data-search-action="replace">Replace</button><button type="button" data-search-action="preview">Preview all</button><button type="button" data-search-action="replace-all">Replace all</button><button type="button" data-search-action="close" aria-label="Close search">×</button></div>
+      <output data-search-status aria-live="polite"></output><div class="editor-replace-preview" data-search-preview hidden></div>`;
+    root.querySelector(".editor-menubar").after(panel);
   }
-  let count = 0;
-  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const updated = editor.value.replace(new RegExp(escaped, "giu"), () => { count += 1; return replacement; });
-  if (!count) return toast(`“${needle}” was not found.`, true);
-  editor.setRangeText(updated, 0, editor.value.length, "end");
-  editor.dispatchEvent(new Event("input", { bubbles: true }));
-  editor.focus();
-  toast(`Replaced ${count.toLocaleString()} occurrence${count === 1 ? "" : "s"}.`);
+  panel.classList.toggle("replace-mode", replaceMode);
+  panel.dataset.selectionStart = String(initialSelection.start);
+  panel.dataset.selectionEnd = String(initialSelection.end);
+  const query = panel.querySelector("[data-search-query]");
+  const replacement = panel.querySelector("[data-search-replacement]");
+  const status = panel.querySelector("[data-search-status]");
+  const preview = panel.querySelector("[data-search-preview]");
+  query.value ||= editor.dataset.findText || "";
+  replacement.value ||= editor.dataset.replaceText || "";
+
+  const scope = () => {
+    const selectionOnly = panel.querySelector("[data-search-selection]").checked;
+    const start = selectionOnly ? Number(panel.dataset.selectionStart) : 0;
+    const end = selectionOnly ? Number(panel.dataset.selectionEnd) : editor.value.length;
+    return { start: Math.min(start, end), end: Math.max(start, end) };
+  };
+  const expression = (global = true) => {
+    if (!query.value) return null;
+    try {
+      const raw = panel.querySelector("[data-search-regex]").checked
+        ? query.value
+        : query.value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const bounded = panel.querySelector("[data-search-word]").checked
+        ? `(?<![A-Za-z0-9_$%])(?:${raw})(?![A-Za-z0-9_$%])`
+        : raw;
+      return new RegExp(bounded, `${global ? "g" : ""}u${panel.querySelector("[data-search-case]").checked ? "" : "i"}`);
+    } catch (error) {
+      status.textContent = `Invalid expression: ${error.message}`;
+      return null;
+    }
+  };
+  const matches = () => {
+    const pattern = expression(true);
+    if (!pattern) return [];
+    const range = scope();
+    return [...editor.value.slice(range.start, range.end).matchAll(pattern)]
+      .filter(match => match[0].length)
+      .map(match => ({ match, start: range.start + match.index, end: range.start + match.index + match[0].length }));
+  };
+  const refreshStatus = () => {
+    editor.dataset.findText = query.value;
+    editor.dataset.replaceText = replacement.value;
+    const found = matches();
+    status.textContent = query.value ? `${found.length.toLocaleString()} match${found.length === 1 ? "" : "es"}` : "Enter text or an expression to search";
+    preview.hidden = true;
+    return found;
+  };
+  const navigate = direction => {
+    const found = refreshStatus();
+    if (!found.length) return;
+    const row = direction > 0
+      ? found.find(item => item.start >= editor.selectionEnd) || found[0]
+      : [...found].reverse().find(item => item.end <= editor.selectionStart) || found.at(-1);
+    editor.focus();
+    editor.setSelectionRange(row.start, row.end);
+  };
+  const replaceOne = () => {
+    const found = matches();
+    const current = found.find(item => item.start === editor.selectionStart && item.end === editor.selectionEnd)
+      || found.find(item => item.start >= editor.selectionEnd) || found[0];
+    if (!current) return refreshStatus();
+    const pattern = expression(false);
+    const value = current.match[0].replace(pattern, replacement.value);
+    editor.setRangeText(value, current.start, current.end, "select");
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+    refreshStatus();
+  };
+  const previewAll = () => {
+    const found = refreshStatus();
+    const pattern = expression(false);
+    preview.innerHTML = found.length ? `<strong>Replacement preview</strong>${found.slice(0, 50).map(item => {
+      const line = editor.value.slice(0, item.start).split("\n").length;
+      return `<div><span>Line ${line}</span><del>${esc(item.match[0])}</del><ins>${esc(item.match[0].replace(pattern, replacement.value))}</ins></div>`;
+    }).join("")}${found.length > 50 ? `<small>${(found.length - 50).toLocaleString()} more matches are not shown.</small>` : ""}` : "";
+    preview.hidden = !found.length;
+  };
+  const replaceAll = () => {
+    const found = matches();
+    if (!found.length) return refreshStatus();
+    const range = scope();
+    const pattern = expression(true);
+    const section = editor.value.slice(range.start, range.end).replace(pattern, replacement.value);
+    editor.setRangeText(section, range.start, range.end, "end");
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+    toast(`Replaced ${found.length.toLocaleString()} occurrence${found.length === 1 ? "" : "s"}.`);
+    refreshStatus();
+  };
+  panel.querySelectorAll("input").forEach(input => { input.oninput = refreshStatus; input.onchange = refreshStatus; });
+  panel.querySelectorAll("[data-search-action]").forEach(button => button.onclick = () => {
+    const action = button.dataset.searchAction;
+    if (action === "close") { panel.remove(); editor.focus(); }
+    else if (action === "previous") navigate(-1);
+    else if (action === "next") navigate(1);
+    else if (action === "replace") replaceOne();
+    else if (action === "preview") previewAll();
+    else if (action === "replace-all") replaceAll();
+  });
+  panel.onkeydown = event => {
+    if (event.key === "Escape") { event.preventDefault(); panel.remove(); editor.focus(); }
+    else if (event.key === "Enter" && !event.ctrlKey && !event.metaKey) { event.preventDefault(); navigate(event.shiftKey ? -1 : 1); }
+  };
+  refreshStatus();
+  query.focus();
+  query.select();
 }
 
 function editorChoice(title, message, choices) {
@@ -8805,6 +8953,110 @@ function editorChoice(title, message, choices) {
     });
     modal.append(shade);
     shade.querySelector('[data-choice="cancel"]')?.focus();
+  });
+}
+
+function editorProperties(root, pane, path, report) {
+  return new Promise(resolve => {
+    const metadata = report.metadata || {};
+    const shade = document.createElement("div");
+    shade.className = "editor-choice-shade";
+    shade.setAttribute("role", "dialog");
+    shade.setAttribute("aria-modal", "true");
+    shade.setAttribute("aria-labelledby", "editor-properties-title");
+    const hexadecimal = value => Number.isFinite(Number(value)) ? `&${Number(value).toString(16).toUpperCase().padStart(4, "0")}` : "";
+    const locked = Boolean(Number(metadata.access || 0) & 0x08) || /L/i.test(String(metadata.attr || ""));
+    shade.innerHTML = `<form class="editor-choice-card editor-properties-card"><h2 id="editor-properties-title">File properties</h2><p>Update catalogue metadata without changing the file bytes.</p>
+      <div class="field-grid two"><div class="field"><label>Load address</label><input name="load" value="${esc(hexadecimal(metadata.load))}" pattern="(?:&amp;|0x)?[0-9A-Fa-f]{1,8}"></div><div class="field"><label>Execution address</label><input name="execute" value="${esc(hexadecimal(metadata.execute))}" pattern="(?:&amp;|0x)?[0-9A-Fa-f]{1,8}"></div></div>
+      ${pane.image.kind === "adfs" ? `<div class="field"><label>RISC OS filetype</label><input name="filetype" value="${esc(metadata.filetype || "")}" placeholder="FFF or Text"></div>` : ""}
+      <label class="check-field"><input type="checkbox" name="writable" ${locked ? "" : "checked"}> Writable</label>
+      <dl class="editor-property-summary"><dt>Size</dt><dd>${Number(report.size || 0).toLocaleString()} bytes</dd><dt>SHA-256</dt><dd><code>${esc(report.sha256)}</code></dd></dl>
+      <div class="modal-actions"><button type="button" class="button ghost" data-properties-cancel>Cancel</button><button type="submit" class="button primary">Apply properties</button></div></form>`;
+    const finish = value => { shade.remove(); resolve(value); };
+    shade.querySelector("[data-properties-cancel]").onclick = () => finish(null);
+    shade.onkeydown = event => {
+      if (event.key === "Escape") { event.preventDefault(); finish(null); }
+      keepFocusInside(shade, event);
+    };
+    shade.querySelector("form").onsubmit = event => {
+      event.preventDefault();
+      const form = new FormData(event.currentTarget);
+      finish({ load: form.get("load"), execute: form.get("execute"), filetype: form.get("filetype") || "", writable: form.has("writable") });
+    };
+    modal.append(shade);
+    shade.querySelector("[name=load]").focus();
+  });
+}
+
+function editorProjectManager(project) {
+  return new Promise(resolve => {
+    const current = structuredClone(project || {});
+    const shade = document.createElement("div");
+    shade.className = "editor-choice-shade";
+    shade.setAttribute("role", "dialog");
+    shade.setAttribute("aria-modal", "true");
+    shade.innerHTML = `<form class="editor-choice-card editor-project-card"><h2>Editor project metadata</h2><p>Notes, bookmarks and symbols are stored in the private recoverable session, not in the file bytes.</p>
+      <div class="field"><label>Project notes</label><textarea name="notes" rows="5">${esc(current.notes || "")}</textarea></div>
+      <div class="field"><label>Symbols, one <code>address = label</code> per line</label><textarea name="symbols" rows="6">${esc(Object.entries(current.symbols || {}).map(([address, label]) => `${address} = ${label}`).join("\n"))}</textarea></div>
+      <section class="editor-project-bookmarks"><header><strong>Bookmarks</strong><small>${(current.bookmarks || []).length.toLocaleString()}</small></header><div>${(current.bookmarks || []).map((row, index) => `<label><input type="checkbox" name="keepBookmark" value="${index}" checked><code>${Number(row.offset).toLocaleString()}</code><input name="bookmarkName${index}" value="${esc(row.name)}" aria-label="Bookmark name"><input name="bookmarkNote${index}" value="${esc(row.note || "")}" placeholder="Note" aria-label="Bookmark note"></label>`).join("") || "<p>No bookmarks have been saved.</p>"}</div></section>
+      <details class="editor-project-json"><summary>Portable project JSON</summary><textarea name="json" rows="8" spellcheck="false">${esc(JSON.stringify(current, null, 2))}</textarea><button type="button" class="button compact" data-project-load-json>Load JSON into form</button></details>
+      <div class="modal-actions"><button type="button" class="button ghost" data-project-cancel>Cancel</button><button type="submit" class="button primary">Save project</button></div></form>`;
+    const finish = value => { shade.remove(); resolve(value); };
+    const form = shade.querySelector("form");
+    shade.querySelector("[data-project-cancel]").onclick = () => finish(null);
+    shade.querySelector("[data-project-load-json]").onclick = () => {
+      try {
+        const parsed = JSON.parse(form.elements.json.value);
+        finish(parsed);
+      } catch (error) { toast(`Project JSON is invalid: ${error.message}`, true); }
+    };
+    form.onsubmit = event => {
+      event.preventDefault();
+      const data = new FormData(form);
+      const symbols = {};
+      String(data.get("symbols") || "").split(/\n/).forEach(line => {
+        const match = line.match(/^\s*([^=]+?)\s*=\s*(\S.*?)\s*$/);
+        if (match) symbols[match[1]] = match[2];
+      });
+      const bookmarks = [...form.querySelectorAll('[name="keepBookmark"]:checked')].map(input => {
+        const index = Number(input.value);
+        return { ...current.bookmarks[index], name: data.get(`bookmarkName${index}`), note: data.get(`bookmarkNote${index}`) };
+      });
+      finish({ ...current, notes: data.get("notes"), symbols, bookmarks });
+    };
+    modal.append(shade);
+    form.elements.notes.focus();
+  });
+}
+
+function editorImageSearch(pane) {
+  return new Promise(resolve => {
+    const shade = document.createElement("div");
+    shade.className = "editor-choice-shade";
+    shade.setAttribute("role", "dialog");
+    shade.setAttribute("aria-modal", "true");
+    shade.innerHTML = `<section class="editor-choice-card editor-image-search-card"><header><div><small>IMAGE-WIDE SOURCE SEARCH</small><h2>Search ${esc(pane.image.name)}</h2></div></header><form><input type="search" name="query" placeholder="Filename, command, variable or text" required autocomplete="off"><button type="submit" class="button primary">Search</button><button type="button" class="button ghost" data-image-search-close>Close</button></form><p class="editor-image-search-status" aria-live="polite">Searches filenames and bounded BASIC, command-script and readable text content.</p><div class="editor-image-search-results"></div></section>`;
+    const finish = value => { shade.remove(); resolve(value); };
+    const status = shade.querySelector(".editor-image-search-status");
+    const results = shade.querySelector(".editor-image-search-results");
+    shade.querySelector("[data-image-search-close]").onclick = () => finish(null);
+    shade.querySelector("form").onsubmit = async event => {
+      event.preventDefault();
+      const query = new FormData(event.currentTarget).get("query");
+      status.textContent = "Searching the mounted image…";
+      results.replaceChildren();
+      try {
+        const parameters = fileContextQuery(pane, pane.path || "$", { query, root: pane.path || "$" });
+        parameters.delete("path");
+        const report = await api(`/api/images/${pane.image.id}/inspect/search?${parameters}`);
+        status.textContent = `${report.results.length.toLocaleString()} result${report.results.length === 1 ? "" : "s"} · ${report.filesScanned.toLocaleString()} readable files scanned${report.skippedLarge ? ` · ${report.skippedLarge.toLocaleString()} large files searched by name only` : ""}${report.truncated ? " · result limit reached" : ""}`;
+        results.innerHTML = report.results.map((row, index) => `<button type="button" data-image-search-result="${index}"><span class="file-kind-icon ${esc(row.kind)}" aria-hidden="true"></span><b>${esc(row.path)}</b><small>${row.nameMatch ? "Filename match" : `${row.matches.length} content match${row.matches.length === 1 ? "" : "es"}`} · ${humanSize(row.size)}</small>${row.matches.slice(0, 3).map(match => `<code>Line ${match.line}: ${esc(match.text)}</code>`).join("")}</button>`).join("") || '<p class="code-empty-message">No matching files were found.</p>';
+        results.querySelectorAll("[data-image-search-result]").forEach(button => button.onclick = () => finish(report.results[Number(button.dataset.imageSearchResult)]));
+      } catch (error) { status.textContent = error.message; }
+    };
+    shade.onkeydown = event => { if (event.key === "Escape") finish(null); else keepFocusInside(shade, event); };
+    modal.append(shade);
+    shade.querySelector("[name=query]").focus();
   });
 }
 
@@ -8878,6 +9130,7 @@ function bytePreviewMarkup(report) {
 
 function installSourceEditorControls(index, pane, entry, path, report, canEdit, isBasic, target = null, intelligence = null) {
   const root = modalContent.querySelector(".source-editor");
+  installEditorMenuDismissal(root);
   const editor = root.querySelector(".source-content");
   const requestClose = installEditorCloseGuard(root, editor, () => modal.close());
   const saveButton = root.querySelector(".editor-save-submit");
@@ -8997,14 +9250,45 @@ function installSourceEditorControls(index, pane, entry, path, report, canEdit, 
     if (action === "save") save();
     else if (action === "save-as") await saveAs();
     else if (action === "export") downloadDocument(`${entry.name}.txt`, editor.value, "text/plain;charset=utf-8");
+    else if (action === "properties") {
+      const properties = await editorProperties(root, pane, path, report);
+      if (!properties) return;
+      const data = await api(`/api/images/${pane.image.id}/inspect/properties`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path, slot: pane.slot, side: pane.side, sha256: report.sha256, ...properties }),
+      });
+      pane.image = data.image;
+      report.metadata = data.inspection.metadata;
+      report.sha256 = data.inspection.sha256;
+      await loadDirectory(index);
+      toast(`${entry.name} properties updated without changing its bytes.`);
+    }
     else if (action === "close") requestClose();
     else if (["copy", "cut", "paste"].includes(action)) await replaceSelection(action);
     else if (action === "select-all") { editor.focus(); editor.select(); updateSourceEditorStatus(root); }
-    else if (action === "find") editorFind(editor);
-    else if (action === "find-replace") await editorFindReplace(editor);
+    else if (action === "find") openEditorSearch(root, editor, false);
+    else if (action === "find-replace") openEditorSearch(root, editor, true);
+    else if (action === "search-image") {
+      const result = await editorImageSearch(pane);
+      if (!result) return;
+      if (editor.value !== editor.dataset.savedValue && !confirm("Open the search result and discard this editor's unsaved changes?")) return;
+      const split = result.path.lastIndexOf(".");
+      const parent = split > 0 ? result.path.slice(0, split) : "$";
+      const leaf = split >= 0 ? result.path.slice(split + 1) : result.name;
+      modal.close();
+      pane.path = parent || "$";
+      await loadDirectory(index);
+      await openFileEditor(index, leaf, null, result.path);
+    }
     else if (action === "find-references") intelligence?.findReferences();
     else if (action === "rename-symbol") intelligence?.renameSymbol();
     else if (action === "go-to-line") intelligence?.goToLine();
+    else if (action === "complete") intelligence?.showCompletions();
+    else if (action === "line-duplicate") intelligence?.lineOperation("duplicate");
+    else if (action === "line-up") intelligence?.lineOperation("move-up");
+    else if (action === "line-down") intelligence?.lineOperation("move-down");
+    else if (action === "line-join") intelligence?.lineOperation("join");
+    else if (action === "line-delete") intelligence?.lineOperation("delete");
     else if (action === "fold-toggle-all") intelligence?.toggleAll();
     else if (action === "sync-bytes") {
       synchronizedBytes = !synchronizedBytes;
@@ -9017,9 +9301,15 @@ function installSourceEditorControls(index, pane, entry, path, report, canEdit, 
     else if (action === "auto-indent-view") intelligence?.toggleAutoIndent(root.querySelector("[data-indent-style]")?.value, root.querySelector("[data-indent-size]")?.value);
     else if (action === "toggle-comment") intelligence?.toggleComment();
     else if (action === "normalise-commands") intelligence?.normaliseCommands();
+    else if (action === "format-code") await intelligence?.formatCode();
     else if (action === "verify-basic") await intelligence?.verifyRoundTrip();
     else if (action === "program-outline") intelligence?.showOutline();
+    else if (action === "dependencies") {
+      const report = await api(`/api/images/${pane.image.id}/dependencies?${fileContextQuery(pane, path)}`);
+      intelligence?.showCustom("Cross-file dependencies", `<p class="code-empty-message">Indexed ${Number(report.filesIndexed || 0).toLocaleString()} files. ${report.safeForSubdirectory ? "Every direct dependency was resolved without a rooted path." : "Review unresolved, ambiguous or root-relative references before moving this launcher."}</p><div class="code-dependency-list">${report.dependencies.map(row => `<article class="${row.resolved && !row.ambiguous ? "resolved" : "warning"}"><b>${esc(row.action)} ${esc(row.target)}</b><span>${row.path ? esc(row.path) : row.ambiguous ? `${row.candidates.length} possible files` : "Not found"}</span>${row.rootRelative ? "<small>Root-relative reference</small>" : ""}</article>`).join("") || "<p>No direct CHAIN, EXEC, RUN, LOAD, DIR or LIB references were found.</p>"}</div>`);
+    }
     else if (action === "editor-history") intelligence?.showHistory();
+    else if (action === "compare-saved") intelligence?.compareWith(editor.dataset.savedValue || "");
     else if (action === "project-notes") {
       if (target) return toast("Archive-member project notes become available after extracting the member into an image.", true);
       const current = await ensureProject();
@@ -9033,6 +9323,12 @@ function installSourceEditorControls(index, pane, entry, path, report, canEdit, 
       if (offset == null) return toast("Save this new or renumbered BASIC line before bookmarking its byte offset.", true);
       const name = prompt(`Bookmark saved-file offset ${offset}:`, isBasic ? `BASIC line ${editor.value.slice(0, editor.selectionStart).split("\n").at(-1)?.match(/^\s*(\d+)/)?.[1] || "cursor"}` : `Offset ${offset}`);
       if (name) { current.bookmarks = [...(current.bookmarks || []), { offset, name, note: "" }]; project = await saveEditorProject(pane, path, current); toast("Bookmark saved."); }
+    }
+    else if (action === "project-manage") {
+      if (target) return toast("Extract this archive member before managing project metadata.", true);
+      const current = await ensureProject();
+      const edited = await editorProjectManager(current);
+      if (edited) { project = await saveEditorProject(pane, path, edited); toast("Editor project metadata saved."); }
     }
     else if (action === "run-emulator") {
       await runFileInConfiguredEmulator(pane, entry, path, target);
@@ -9073,8 +9369,8 @@ function installSourceEditorControls(index, pane, entry, path, report, canEdit, 
     else if ((key === "y" || (key === "z" && event.shiftKey)) && intelligence?.redo?.()) { event.preventDefault(); updateSourceEditorStatus(root); }
     else if (key === "s") { event.preventDefault(); event.shiftKey ? saveAs() : save(); }
     else if (key === "w") { event.preventDefault(); requestClose(); }
-    else if (key === "f") { event.preventDefault(); editorFind(editor); }
-    else if (key === "h" && canEdit) { event.preventDefault(); editorFindReplace(editor); }
+    else if (key === "f") { event.preventDefault(); openEditorSearch(root, editor, false); }
+    else if (key === "h" && canEdit) { event.preventDefault(); openEditorSearch(root, editor, true); }
     else if (key === "g") { event.preventDefault(); intelligence?.goToLine(); }
     else if (key === "/" && isBasic && canEdit) { event.preventDefault(); intelligence?.toggleComment(); }
   });
@@ -9093,7 +9389,7 @@ async function renderDisassemblyEditor(index, entry, path, inspection, architect
   if (!replaceAnalysisLoading(`<div class="analysis-dialog file-inspector disassembly-editor"><header><div><small>${esc(report.architecture.toUpperCase())} DISASSEMBLY · ${humanSize(report.size)}</small><h2>${esc(entry.name)}</h2></div></header>
     ${disassemblyMenus(downloadUrl, exportUrl, target ? "Export original archive member…" : "Export original binary…")}
     <div class="disassembly-controls">
-      <label>Processor<select name="architecture"><option value="6502" ${report.architecture === "6502" ? "selected" : ""}>6502</option><option value="arm" ${report.architecture === "arm" ? "selected" : ""}>ARM</option><option value="m68k" ${report.architecture === "m68k" ? "selected" : ""}>68000</option></select></label>
+      <label>Processor<select name="architecture"><option value="6502" ${report.architecture === "6502" ? "selected" : ""}>6502</option><option value="65c02" ${report.architecture === "65c02" ? "selected" : ""}>65C02</option><option value="65816" ${report.architecture === "65816" ? "selected" : ""}>65816</option><option value="arm" ${report.architecture === "arm" ? "selected" : ""}>ARM</option><option value="m68k" ${report.architecture === "m68k" ? "selected" : ""}>68000</option></select></label>
       <label>Origin<input name="origin" value="0x${Number(report.origin).toString(16).toUpperCase()}"></label>
       <label>File offset<input name="start" value="${Number(report.start)}"></label>
       <label>Bytes<input name="length" value="${Number(length) || 8192}"></label>
@@ -9105,6 +9401,7 @@ async function renderDisassemblyEditor(index, entry, path, inspection, architect
     ${report.truncated || report.limited ? '<div class="help-warning">Only the requested section is shown. Change File offset or Bytes to inspect another region.</div>' : ""}
     <footer class="editor-status"><span>Read-only</span><span>${report.rows.length.toLocaleString()} decoded lines · comments appear beside their instruction</span><span>${esc(report.architectureReason)}</span></footer></div>`)) return;
   const root = modalContent.querySelector(".disassembly-editor");
+  installEditorMenuDismissal(root);
   const source = root.querySelector(".disassembly-source");
   installEditorWindow(root);
   const intelligence = window.AcornCodeEditor?.enhanceDisassembly({ root, report });
@@ -9173,6 +9470,24 @@ async function renderDisassemblyEditor(index, entry, path, inspection, architect
     const endOffset = Math.max(...rows.map(row => Number(row.offset) + Math.max(1, String(row.bytes || "").split(/\s+/).filter(Boolean).length)));
     return { start: startOffset, end: endOffset, rows };
   };
+  const inspectSelectedData = async () => {
+    const range = selectedRange();
+    if (!range) return toast("Select one or more disassembly lines first.", true);
+    const length = Math.min(4096, Math.max(1, range.end - range.start));
+    const endpoint = target?.hexEndpoint || `/api/images/${pane.image.id}/file-hex`;
+    const context = target?.context || Object.fromEntries(fileContextQuery(pane, path));
+    const page = await api(`${endpoint}?${new URLSearchParams({ ...context, offset: range.start, length })}`);
+    const values = String(page.data || "").match(/../g)?.map(value => Number.parseInt(value, 16)) || [];
+    const ascii = values.map(value => value >= 32 && value < 127 ? String.fromCharCode(value) : ".").join("");
+    const littleWords = [];
+    const bigWords = [];
+    for (let offset = 0; offset + 1 < values.length && littleWords.length < 64; offset += 2) {
+      littleWords.push(`&${(values[offset] | values[offset + 1] << 8).toString(16).toUpperCase().padStart(4, "0")}`);
+      bigWords.push(`&${(values[offset] << 8 | values[offset + 1]).toString(16).toUpperCase().padStart(4, "0")}`);
+    }
+    const pixels = values.slice(0, 512).flatMap(value => Array.from({ length: 8 }, (_item, bit) => (value & (0x80 >> bit)) ? 1 : 0));
+    intelligence?.showCustom("Selected data inspector", `<div class="code-data-inspector"><p>File offsets ${range.start.toLocaleString()} to ${(range.start + values.length - 1).toLocaleString()} · ${values.length.toLocaleString()} bytes${length < range.end - range.start ? " · preview bounded to 4 KiB" : ""}</p><details open><summary>Text and byte view</summary><code>${esc(ascii)}</code><code>${values.map(value => value.toString(16).toUpperCase().padStart(2, "0")).join(" ")}</code></details><details><summary>16-bit words</summary><h4>Little endian</h4><code>${littleWords.join(" ")}</code><h4>Big endian</h4><code>${bigWords.join(" ")}</code></details><details><summary>1 bit-per-pixel preview</summary><div class="code-bitmap-preview" style="--bitmap-columns:64">${pixels.map(value => `<i class="${value ? "set" : ""}"></i>`).join("")}</div><small>64 pixels wide, most-significant bit first. Mark the range as bitmap in the project when this interpretation is correct.</small></details></div>`);
+  };
   const persistProject = async (action, detail = "") => {
     if (target) return toast("Extract this archive member before saving disassembly project data.", true);
     project.history = [...(project.history || []), { time: new Date().toISOString(), action, detail }];
@@ -9229,6 +9544,48 @@ async function renderDisassemblyEditor(index, entry, path, inspection, architect
     }
     else if (action === "fold-toggle-all") intelligence?.toggleAll();
     else if (action === "sync-bytes") { synchronizedBytes = !synchronizedBytes; syncPanel.hidden = !synchronizedBytes; control.querySelector("span").textContent = synchronizedBytes ? "Hide synchronized bytes" : "Show synchronized bytes"; if (synchronizedBytes) await updateDisassemblyBytes(); }
+    else if (action === "inspect-data") await inspectSelectedData();
+    else if (action === "assemble") {
+      if (target) return toast("Extract this archive member before replacing it with assembler output.", true);
+      const status = await api(`/api/images/${pane.image.id}/editor-assembler`);
+      if (!status.available) return toast(status.message, true);
+      const values = await assemblySourceEditor(entry, report);
+      if (!values) return;
+      analysisLoading("Assembling and validating binary", entry.name);
+      try {
+        const result = await api(`/api/images/${pane.image.id}/editor-assembler`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path, slot: pane.slot, side: pane.side, source: values.source, architecture: values.architecture, origin: values.origin, sha256: report.sha256 }),
+        });
+        pane.image = result.image;
+        modal.close();
+        await loadDirectory(index);
+        toast(`Assembler output replaced ${entry.name}: ${result.result.size.toLocaleString()} bytes, ${result.result.changedBytes.toLocaleString()} changed.`);
+      } catch (error) { toast(error.message, true); modal.close(); }
+    }
+    else if (action === "debug") {
+      if (target) return toast("Extract this archive member before starting a debugger.", true);
+      const status = await api(`/api/images/${pane.image.id}/editor-debugger`);
+      if (!status.available) return toast(status.message, true);
+      const row = reportRow(selectedLines[0]);
+      const breakpoint = prompt("Debugger breakpoint address:", `0x${Number(row?.address ?? report.origin).toString(16).toUpperCase()}`);
+      if (breakpoint == null) return;
+      analysisLoading("Running configured debugger", `${entry.name} at ${breakpoint}`);
+      try {
+        const result = await api(`/api/images/${pane.image.id}/editor-debugger`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path, slot: pane.slot, side: pane.side, breakpoint, architecture: report.architecture }),
+        });
+        await renderDisassemblyEditor(index, entry, path, inspection, report.architecture, `0x${Number(report.origin).toString(16).toUpperCase()}`, String(report.start), String(report.end - report.start), row?.offset, target);
+        const refreshed = modalContent.querySelector(".disassembly-editor");
+        const refreshedIntelligence = window.AcornCodeEditor?.enhanceDisassembly;
+        toast(`Debugger returned ${result.result.returnCode}. Output is retained in the project test history.`);
+        if (result.result.stdout || result.result.stderr) {
+          refreshed?.querySelector('[data-disassembly-action="history"]')?.focus();
+        }
+        void refreshedIntelligence;
+      } catch (error) { toast(error.message, true); modal.close(); }
+    }
     else if (action.startsWith("mark-")) await markRegion(action.slice(5));
     else if (action === "bookmark") {
       const range = selectedRange(); if (!range) return toast("Select a disassembly line first.", true);
@@ -9316,28 +9673,35 @@ async function openFileEditor(index, name, target = null, pathOverride = null) {
       modal.close();
       return openFileHexEditor(index, entry, path, null, 0, target);
     }
-    const canEdit = !target && report.editable && !report.readOnly && !pane.image.readOnly;
+    const canEdit = report.editable && !report.readOnly && !pane.image.readOnly;
     const isBasic = report.view === "basic";
     const isScript = report.view === "script";
     const downloadUrl = target?.downloadUrl || fileDownloadUrl(pane, path);
     const sourceKind = isBasic ? `${esc(report.basic.dialect)} · ${report.basic.lineCount} LINES` : isScript ? `BBC COMMAND SCRIPT · ${report.script.lineCount} LINES` : "TEXT FILE";
     const editorRows = Math.max(7, Math.min(24, report.text.split("\n").length + 1));
     if (!replaceAnalysisLoading(`<div class="analysis-dialog file-inspector source-editor"><header><div><small>${sourceKind} · ${humanSize(report.size)}</small><h2>${esc(entry.name)}</h2></div></header>
-      ${editorMenus({ downloadUrl, downloadLabel: target ? "Export original archive member…" : "Download with metadata…", canEdit, basic: isBasic, readOnly: !canEdit })}
+      ${editorMenus({ downloadUrl, downloadLabel: target ? "Export original archive member…" : "Download with metadata…", canEdit, canSaveAs: canEdit && !target, canChangeProperties: !target && !pane.image.readOnly && pane.image.kind !== "tape", basic: isBasic, readOnly: !canEdit })}
       <textarea class="inspector-content source-content${isBasic ? " basic-source" : ""}" name="inspectedText" rows="${editorRows}" spellcheck="false" wrap="off" ${canEdit ? "" : "readonly"}>${esc(report.text)}</textarea>
       <aside class="source-byte-sync" aria-live="polite" hidden></aside>
-      ${target ? '<div class="help-note">This member was extracted in memory. It is read-only until safe transactional archive rebuilding is available; exporting keeps its original bytes.</div>' : ""}
-      ${isBasic && !report.editable ? `<div class="help-warning">${report.basic.trailingBytes ? "This program has trailing binary data" : `${esc(report.basic.dialect)} cannot be safely retokenised by this editor`}. It is open read-only; the raw bytes remain available in Hex.</div>` : ""}
+      ${target ? `<div class="help-note">${canEdit ? "Saving rebuilds the containing archive transactionally and records an image undo checkpoint." : "This container cannot be rebuilt safely. Exporting keeps the original member bytes."}</div>` : ""}
+      ${isBasic && report.basic.editable && report.basic.editNote ? `<div class="help-note">${esc(report.basic.editNote)} Saving replaces only the tokenised program prefix.</div>` : ""}
+      ${isBasic && !report.editable ? `<div class="help-warning">${esc(report.basic.dialect)} cannot yet be safely retokenised by this editor${report.basic.trailingBytes ? ` and it also carries ${Number(report.basic.trailingBytes).toLocaleString()} trailing bytes` : ""}. It is open read-only; the raw bytes remain available in Hex.</div>` : ""}
       <footer class="editor-status"><span class="editor-document-state">${canEdit ? "Saved" : "Read-only"}</span><span class="editor-position">Ln 1, Col 1</span><span class="editor-size"></span></footer>
       <button class="editor-save-submit" type="submit" value="save" hidden>Save</button></div>`,
     canEdit ? async form => {
-      const data = await api(`/api/images/${pane.image.id}/inspect`, {
+      const data = await api(target?.inspectEndpoint || `/api/images/${pane.image.id}/inspect`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path, slot: pane.slot, side: pane.side, text: form.get("inspectedText"), basic: isBasic, sha256: report.sha256 })
+        body: JSON.stringify(target ? {
+          ...target.context,
+          text: form.get("inspectedText"),
+          sha256: report.sha256,
+          archiveSha256: report.archiveSha256,
+        } : { path, slot: pane.slot, side: pane.side, text: form.get("inspectedText"), basic: isBasic, sha256: report.sha256 })
       });
       pane.image = data.image;
       await loadDirectory(index);
       report.sha256 = data.inspection.sha256;
+      if (data.inspection.archiveSha256) report.archiveSha256 = data.inspection.archiveSha256;
       const editor = modalContent.querySelector(".source-content");
       editor.dataset.savedValue = editor.value;
       editor.dispatchEvent(new Event("input", { bubbles: true }));
@@ -9356,6 +9720,7 @@ async function openFileEditor(index, name, target = null, pathOverride = null) {
       textarea: editor,
       root: modalContent.querySelector(".source-editor"),
       language: isBasic ? "basic" : isScript ? "script" : "text",
+      dialect: report.basic?.dialect || "BBC BASIC II",
       inlineAssemblyLanguage: isBasic && (report.basic?.dialect === "BBC BASIC V" || pane.image?.targetHardware === "risc-os") ? "arm" : "6502",
       initialHistory: report.project?.history || [],
       validateBasic: isBasic ? async (text, baseline = "") => api(`/api/images/${pane.image.id}/inspect/basic/verify`, {

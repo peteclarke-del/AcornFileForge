@@ -14,10 +14,12 @@ from ..archive_utils import open_single_upload_image
 from ..archive_browser import (
     ArchiveError,
     MAX_ARCHIVE_BYTES,
+    archive_member_editable,
     is_archive_name,
     list_archive,
     read_archive_member,
     read_archive_member_details,
+    replace_archive_member,
 )
 from ..disk_service import (
     DestinationExistsError,
@@ -26,7 +28,13 @@ from ..disk_service import (
     EmptyDiskError,
 )
 from ..formats import ADFS_EXTENSIONS, DFS_EXTENSIONS, HFE_EXTENSIONS, MMB_EXTENSIONS, TAPE_EXTENSIONS
-from ..file_editor import MAX_DISASSEMBLY_FILE, disassemble_file_data, inspect_file_data
+from ..file_editor import (
+    MAX_DISASSEMBLY_FILE,
+    disassemble_file_data,
+    encode_editor_replacement,
+    inspect_file_data,
+    replace_file_bytes,
+)
 from ..menu_service import (
     analyse_adfs_directory,
     analyse_disk,
@@ -282,11 +290,50 @@ def create_files_blueprint(
 
     @blueprint.get("/api/images/<image_id>/archive/inspect")
     def archive_inspect(image_id):
-        _session, member, content, metadata, digest = archive_member_context(image_id)
+        session, member, content, metadata, digest = archive_member_context(image_id)
+        archive_data, filename = archive_context(image_id)
+        writable = (
+            archive_member_editable(archive_data, filename)
+            and not session.hfe_read_only
+            and session.kind != "tape"
+        )
         return jsonify(inspect_file_data(
-            content[:MAX_DISASSEMBLY_FILE], metadata, member, read_only=True,
+            content[:MAX_DISASSEMBLY_FILE], metadata, member, read_only=not writable,
             size=len(content), digest=digest,
-        ))
+        ) | {"archiveSha256": hashlib.sha256(archive_data).hexdigest(), "archiveEditable": writable})
+
+    @blueprint.put("/api/images/<image_id>/archive/inspect")
+    def save_archive_inspect(image_id):
+        body = payload()
+        session = service.get(image_id)
+        path = str(body.get("path") or "")
+        member = str(body.get("member") or "")
+        if not path or not member:
+            raise ArchiveError("Choose an archive member to update.")
+        slot = optional_int(body.get("slot"))
+        side = optional_int(body.get("side"))
+        filename = str(body.get("name") or path.rsplit(".", 1)[-1])
+        archive_data = service.read_file(session, slot, path, side)
+        archive_digest = hashlib.sha256(archive_data).hexdigest()
+        if archive_digest != str(body.get("archiveSha256") or ""):
+            raise ArchiveError("The archive changed after the member opened. Reopen it before saving.")
+        if session.hfe_read_only or session.kind == "tape" or not archive_member_editable(archive_data, filename):
+            raise ArchiveError("This container cannot be rebuilt safely in the current image.")
+        original, metadata = read_archive_member_details(archive_data, filename, member)
+        if hashlib.sha256(original).hexdigest() != str(body.get("sha256") or ""):
+            raise ArchiveError("The archive member changed after it opened. Reopen it before saving.")
+        inspection = inspect_file_data(original, metadata, member, read_only=False)
+        if not inspection["editable"]:
+            raise ArchiveError("This archive member cannot be encoded safely by the source editor.")
+        replacement = encode_editor_replacement(
+            original, str(body.get("text") or ""), bool(inspection["tokenisedBasic"]),
+        )
+        rebuilt = replace_archive_member(archive_data, filename, member, replacement)
+        image = replace_file_bytes(service, session, path, slot, side, rebuilt, archive_digest)
+        saved, saved_metadata = read_archive_member_details(rebuilt, filename, member)
+        result = inspect_file_data(saved, saved_metadata, member, read_only=False)
+        result.update(archiveSha256=hashlib.sha256(rebuilt).hexdigest(), archiveEditable=True)
+        return jsonify(image=image, inspection=result)
 
     @blueprint.get("/api/images/<image_id>/archive/disassembly")
     def archive_disassembly(image_id):

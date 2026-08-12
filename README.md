@@ -491,6 +491,25 @@ text. The BASIC program outline groups procedures and functions with their call
 sites. Diagnostics also report unused local definitions, mismatched `DEF PROC`
 and `ENDPROC` counts, and conservatively identified unreachable lines.
 
+Find and Replace is a persistent editor panel rather than a chain of browser
+prompts. It supports case matching, whole identifiers, regular expressions,
+the current selection, previous/next navigation, a replacement preview and one
+undoable Replace All. **Edit → Search files in this image** searches names and
+bounded readable content across the mounted filesystem, including MMB slots and
+ADFS subdirectories. Results report the physical line and reopen the containing
+directory before opening the file. **Tools → Analyse file dependencies** indexes
+the whole image and distinguishes exact, unique-leaf, ambiguous, missing and
+root-relative launcher references.
+
+Completion at the caret is available with Ctrl+Space. It combines language
+commands, identifiers, document symbols and small templates. Text and script
+editors provide duplicate, move, join and delete line operations; BASIC keeps
+the operations that cannot preserve line-number semantics disabled. The
+conservative formatter removes trailing whitespace and normalises proven line
+prefixes. BASIC formatting is offered only after a successful token round trip.
+The File Properties dialog updates load address, execution address, RISC OS
+filetype and writable state without changing file content.
+
 Refactor and Condense use a two-column review with the original source beside
 the proposal. Changed rows are marked, and BBC BASIC proposals are tokenised,
 detokenised and tokenised again before they can be accepted. The review reports
@@ -513,6 +532,12 @@ The outline shows labelled regions and direct callers, while Find references
 jumps to decoded users of the selected address. This metadata never changes the
 file bytes.
 
+Project metadata has a single management dialog for notes, symbols, bookmarks
+and portable JSON. **Compare with saved file** presents current and saved source
+side by side without touching the image. The selected-data inspector can show
+ASCII, hexadecimal bytes, little-endian and big-endian words, and a bounded
+1-bit bitmap interpretation of a disassembly range.
+
 An optional emulator hand-off is available when
 `ACORN_FILE_EMULATOR_COMMAND` is set. The command must include `{file}` and may
 also use `{image}`, `{path}`, `{load}` and `{execute}`. Acorn File Forge exports
@@ -526,6 +551,16 @@ environment:
 ```
 
 The application does not bundle or assume a particular emulator.
+
+Two further local-only integrations are optional. `ACORN_FILE_ASSEMBLER_COMMAND`
+must contain `{source}` and `{output}` and may use `{origin}` and
+`{architecture}`. **Edit and reassemble** starts from label-oriented assembly
+source, warns that the complete binary will be replaced, invokes the configured
+tool without a shell, checks the source file hash and writes the output through
+an undo checkpoint. `ACORN_FILE_DEBUGGER_COMMAND` must contain `{file}` and may
+use `{image}`, `{path}`, `{load}`, `{execute}`, `{breakpoint}` and
+`{architecture}`. Debugger output and return status are retained in project
+test history. Neither integration is enabled by default.
 
 BBC BASIC listings also recognise inline assembler between `[` and `]`.
 Hovering a 6502 or ARM mnemonic shows the same processor help used by the
@@ -641,8 +676,8 @@ Transformations are only enabled for dialects the installed tokeniser can write
 back without changing their byte format. BBC BASIC V remains an annotated,
 read-only listing at present; the app will not silently rewrite it as BASIC II.
 
-Every emitted disassembly row has contextual hover help across 6502, ARM and
-68000 output. This includes normal processor instructions, condition and size
+Every emitted disassembly row has contextual hover help across 6502, 65C02,
+65816, ARM and 68000 output. This includes normal processor instructions, condition and size
 variants, decoder-specific mnemonics, and data pseudo-operations such as
 `EQUB`, `EQUS`, `EQUW` and `EQUD`. The tooltip combines the operation family,
 the exact decoded operand and addressing form, encoded bytes, cross-references
@@ -669,9 +704,11 @@ current listing and updates encoded targets used by statements such as `GOTO`,
 choice between validating and normalising numbered BBC BASIC source or
 inserting the clipboard exactly as plain text. The complete listing must still
 be valid BASIC when it is saved. Existing load, execution and filetype metadata
-is retained, and every save creates an automatic undo checkpoint. BASIC V files
-and BASIC programs with trailing binary payloads open read-only because
-rewriting those formats as BASIC II would be unsafe.
+is retained, and every save creates an automatic undo checkpoint. A BASIC II
+program with a recognised trailing binary payload is editable: Save replaces
+only the tokenised prefix and appends the original payload byte for byte. BASIC
+V remains read-only because rewriting its extended token stream as BASIC II
+would be unsafe.
 
 The script editor is intended for files such as `!BOOT`, `LOADER`, `START` and
 other content that is recognisably made from OS or BASIC commands. It does not
@@ -681,8 +718,8 @@ content and conventional names, while a tokenised `!BOOT` still opens in the
 numbered BASIC editor.
 
 The machine-code viewer uses the pane's hardware profile to choose 6502 for
-8-bit Acorn targets or ARM for RISC OS. You can override that with 6502, ARM or
-68000, change the load origin and file offset, and request another block of
+8-bit Acorn targets or ARM for RISC OS. You can override that with NMOS 6502,
+65C02, 65816, ARM or 68000, change the load origin and file offset, and request another block of
 bytes. The result is shown as fixed-width source rather than a report table.
 Annotations follow values only while they can be proved along the current code
 path. Immediate A, X and Y values are shown, MOS calls explain their operation,
@@ -722,11 +759,13 @@ limits archive, member and entry counts before expansion. Double-click an
 archive to enter it, use its breadcrumbs or `..` to move around, then
 double-click a member to inspect its extracted bytes in the normal
 content-aware viewer. BASIC, command scripts and text are decoded as source;
-machine code is disassembled; uncertain data opens in Hex. The member editor
-is deliberately read-only for now. Use its File menu or the row download arrow
-to export the unchanged member. The app does not claim that an edited member
-has been saved until the whole container can be rebuilt and checkpointed
-transactionally.
+machine code is disassembled; uncertain data opens in Hex. Readable members in
+ZIP, TAR, compressed TAR, GZIP, BZIP2 and XZ containers can be edited. Save
+rebuilds the complete container, checks both member and parent SHA-256 values,
+then replaces the outer file through the normal image transaction and undo
+checkpoint. UEF members remain read-only because reconstructing a tape stream
+could alter timing or loader behaviour. Use File or the row download arrow to
+export any unchanged member.
 
 UEF detection examines the content rather than requiring a filename suffix.
 This means an ADFS file such as `$.UEF.THRUST` opens as a tape container even
@@ -2163,6 +2202,12 @@ python3 -m py_compile app/*.py app/routes/*.py
 node --check app/static/formats.js
 node --check app/static/core.js
 node --check app/static/app.js
+```
+
+Run the standalone editor language-engine regressions:
+
+```bash
+node tests/run_js_tests.js
 ```
 
 Check the running service:

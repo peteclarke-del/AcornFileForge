@@ -58,7 +58,16 @@ def basic_details(data: bytes) -> dict | None:
         "firstLine": lines[0].line_number if lines else None,
         "lastLine": lines[-1].line_number if lines else None,
         "trailingBytes": len(data) - program_length,
-        "editable": dialect is BASIC_II and len(data) <= 64 * 1024 and len(data) == program_length,
+        "programLength": program_length,
+        "compound": len(data) > program_length,
+        # The tokenised prefix can be replaced independently while retaining a
+        # known trailing payload byte-for-byte. BASIC V remains read-only until
+        # a dialect-correct tokeniser is available.
+        "editable": dialect is BASIC_II and program_length <= 64 * 1024,
+        "editNote": (
+            f"The {len(data) - program_length:,}-byte trailing payload will be preserved unchanged."
+            if len(data) > program_length else ""
+        ),
     }
 
 
