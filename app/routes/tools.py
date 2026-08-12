@@ -15,7 +15,6 @@ from ..analysis_service import (
     dependency_report,
     duplicate_report,
     health_report,
-    inspect_file,
     manifest_csv,
     menu_test_report,
     preflight_report,

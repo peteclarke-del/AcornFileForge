@@ -93,7 +93,8 @@ def script_details(data: bytes, path: str, printable_ratio: float) -> dict | Non
     }
 
 
-def _is_uef_container(data: bytes) -> bool:
+def is_uef_container(data: bytes) -> bool:
+    """Recognise raw or gzip-compressed UEF data from a bounded prefix."""
     if data.startswith(b"UEF File!\0"):
         return True
     if not data.startswith(b"\x1f\x8b"):
@@ -107,7 +108,7 @@ def _is_uef_container(data: bytes) -> bool:
 
 def analyse_content(data: bytes, path: str) -> tuple[str, dict | None, dict | None, float]:
     """Classify complete, bounded file bytes using the editor's content rules."""
-    if _is_uef_container(data):
+    if is_uef_container(data):
         return "container", None, None, 0.0
     basic = basic_details(data)
     printable = sum(value in (9, 10, 13) or 32 <= value < 127 for value in data)

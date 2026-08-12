@@ -15,6 +15,7 @@ from app.file_editor import (
     _printable_strings,
     _renumber_tokenised,
     disassemble_file,
+    disassemble_file_data,
     inspect_editable_file,
     normalise_basic_source,
     pack_basic_lines,
@@ -41,6 +42,7 @@ class FileEditorTests(unittest.TestCase):
 
         service.export_file.side_effect = export
         service.file_metadata.return_value = metadata or {"load": 0x1900, "execute": 0x1900, "length": len(content)}
+        service.editor_project.return_value = {}
         return folder, service
 
     def test_detects_and_decodes_tokenised_basic(self):
@@ -159,6 +161,15 @@ class FileEditorTests(unittest.TestCase):
         message = next(row for row in report["rows"] if row.get("regionKind") == "text")
         self.assertEqual(message["label"], "message")
         self.assertEqual(message["mnemonic"], "EQUS")
+
+    def test_68000_project_words_use_the_processor_byte_order(self):
+        report = disassemble_file_data(
+            bytes.fromhex("12344E75"), {"load": 0x8000, "execute": 0x8000},
+            SimpleNamespace(target_hardware="archimedes"), "$.CODE", architecture="m68k",
+            project={"regions": [{"start": 0, "end": 2, "kind": "words", "width": 8}]},
+        )
+        word = next(row for row in report["rows"] if row.get("regionKind") == "words")
+        self.assertEqual(word["operand"], "&1234")
 
     def test_pack_basic_lines_uses_tokenised_line_capacity(self):
         statements = ['PRINT "A"'] * 80

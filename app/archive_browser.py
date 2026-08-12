@@ -8,7 +8,7 @@ import posixpath
 import tarfile
 import zipfile
 
-from .content_kind import LISTING_SNIFF_LIMIT, analyse_content, metadata_kind
+from .content_kind import LISTING_SNIFF_LIMIT, analyse_content, is_uef_container, metadata_kind
 from .disk_service import DiskError
 from .uef import UEFError, parse_uef
 
@@ -29,19 +29,6 @@ class ArchiveError(DiskError):
 def is_archive_name(name: str) -> bool:
     lowered = str(name or "").casefold()
     return any(lowered.endswith(extension) for extension in ARCHIVE_EXTENSIONS)
-
-
-def is_uef_container(data: bytes) -> bool:
-    """Sniff raw or gzip-compressed UEF data without expanding the whole tape."""
-    if data.startswith(b"UEF File!\0"):
-        return True
-    if not data.startswith(b"\x1f\x8b"):
-        return False
-    try:
-        with gzip.GzipFile(fileobj=io.BytesIO(data)) as compressed:
-            return compressed.read(10) == b"UEF File!\0"
-    except (gzip.BadGzipFile, EOFError, OSError):
-        return False
 
 
 def _safe_name(value: str) -> str:

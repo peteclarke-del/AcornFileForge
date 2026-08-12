@@ -8843,6 +8843,26 @@ async function saveEditorProject(pane, path, project) {
   })).project;
 }
 
+async function runFileInConfiguredEmulator(pane, entry, path, target = null) {
+  if (target) {
+    toast("Extract this archive member before handing it to an emulator.", true);
+    return null;
+  }
+  const status = await api(`/api/images/${pane.image.id}/editor-emulator`);
+  if (!status.available) {
+    toast(status.message, true);
+    return null;
+  }
+  const hardware = status.hardware ? ` for ${status.hardware}` : "";
+  if (!confirm(`Run ${entry.name} using the configured emulator${hardware}?`)) return null;
+  const result = await api(`/api/images/${pane.image.id}/editor-emulator`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path, slot: pane.slot, side: pane.side }),
+  });
+  toast(`Emulator finished with return code ${result.result.returnCode}.`);
+  return result;
+}
+
 function bytePreviewMarkup(report) {
   const bytes = String(report?.data || "").match(/../g) || [];
   const ascii = bytes.map(value => {
@@ -8863,23 +8883,29 @@ function installSourceEditorControls(index, pane, entry, path, report, canEdit, 
   let syncTimer = null;
   const syncPanel = root.querySelector(".source-byte-sync");
   const ensureProject = async () => project || (project = await loadEditorProject(pane, path));
-  const sourceByteOffset = () => {
+  const ensureBasicLineRanges = async () => {
+    if (!isBasic || lineRanges.length) return;
+    const verified = await api(`/api/images/${pane.image.id}/inspect/basic/verify`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: editor.dataset.savedValue || editor.value }),
+    });
+    lineRanges = verified.lineRanges || [];
+  };
+  const sourceByteOffset = async () => {
     if (!isBasic) return editor.selectionStart;
+    await ensureBasicLineRanges();
     const lineText = editor.value.slice(0, editor.selectionStart).split("\n").at(-1) || "";
     const number = Number(lineText.match(/^\s*(\d+)/)?.[1]);
-    return lineRanges.find(row => Number(row.line) === number)?.start ?? 0;
+    return lineRanges.find(row => Number(row.line) === number)?.start ?? null;
   };
   const updateSynchronizedBytes = async () => {
     if (!synchronizedBytes || !syncPanel || target) return;
     try {
-      if (isBasic && !lineRanges.length) {
-        const verified = await api(`/api/images/${pane.image.id}/inspect/basic/verify`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: editor.value }),
-        });
-        lineRanges = verified.lineRanges || [];
+      const offset = await sourceByteOffset();
+      if (offset == null) {
+        syncPanel.innerHTML = "<span>This unsaved BASIC line has no saved byte range yet.</span>";
+        return;
       }
-      const offset = sourceByteOffset();
       const bytes = await api(`/api/images/${pane.image.id}/file-hex?${fileContextQuery(pane, path, { offset, length: 32 })}`);
       syncPanel.innerHTML = `<header><strong>Saved bytes at file offset ${Number(bytes.offset).toLocaleString()}</strong><button type="button" title="Open this location in the full hex editor">Open Hex</button></header>${bytePreviewMarkup(bytes)}`;
       syncPanel.querySelector("button").onclick = () => openFileHexEditor(index, entry, path, modalContent, bytes.offset, target);
@@ -8999,17 +9025,13 @@ function installSourceEditorControls(index, pane, entry, path, report, canEdit, 
     else if (action === "project-bookmark") {
       if (target) return toast("Extract this archive member before adding project bookmarks.", true);
       const current = await ensureProject();
-      const offset = sourceByteOffset();
+      const offset = await sourceByteOffset();
+      if (offset == null) return toast("Save this new or renumbered BASIC line before bookmarking its byte offset.", true);
       const name = prompt(`Bookmark saved-file offset ${offset}:`, isBasic ? `BASIC line ${editor.value.slice(0, editor.selectionStart).split("\n").at(-1)?.match(/^\s*(\d+)/)?.[1] || "cursor"}` : `Offset ${offset}`);
       if (name) { current.bookmarks = [...(current.bookmarks || []), { offset, name, note: "" }]; project = await saveEditorProject(pane, path, current); toast("Bookmark saved."); }
     }
     else if (action === "run-emulator") {
-      if (target) return toast("Extract this archive member before handing it to an emulator.", true);
-      const status = await api(`/api/images/${pane.image.id}/editor-emulator`);
-      if (!status.available) return toast(status.message, true);
-      if (!confirm(`Run ${entry.name} using the configured emulator command for ${status.hardware || "this profile"}?`)) return;
-      const result = await api(`/api/images/${pane.image.id}/editor-emulator`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, slot: pane.slot, side: pane.side }) });
-      toast(`Emulator finished with return code ${result.result.returnCode}.`);
+      await runFileInConfiguredEmulator(pane, entry, path, target);
     }
     else if (action === "undo" || action === "redo") {
       editor.focus();
@@ -9027,7 +9049,10 @@ function installSourceEditorControls(index, pane, entry, path, report, canEdit, 
   const updateIndentControls = () => { if (indentSize) indentSize.disabled = indentStyle?.value === "tabs"; };
   indentStyle?.addEventListener("change", updateIndentControls);
   updateIndentControls();
-  editor.addEventListener("input", () => updateSourceEditorStatus(root));
+  editor.addEventListener("input", () => {
+    lineRanges = [];
+    updateSourceEditorStatus(root);
+  });
   if (isBasic && canEdit) editor.addEventListener("paste", event => {
     event.preventDefault();
     insertPaste(event.clipboardData.getData("text"));
@@ -9218,9 +9243,8 @@ async function renderDisassemblyEditor(index, entry, path, inspection, architect
     else if (action === "outline") showDisassemblyOutline();
     else if (action === "history") showProjectHistory();
     else if (action === "run-emulator") {
-      if (target) return toast("Extract this archive member before handing it to an emulator.", true);
-      const status = await api(`/api/images/${pane.image.id}/editor-emulator`); if (!status.available) return toast(status.message, true);
-      if (confirm(`Run ${entry.name} using the configured emulator?`)) { const result = await api(`/api/images/${pane.image.id}/editor-emulator`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path, slot: pane.slot, side: pane.side }) }); project = result.project; toast(`Emulator finished with return code ${result.result.returnCode}.`); }
+      const result = await runFileInConfiguredEmulator(pane, entry, path, target);
+      if (result) project = result.project;
     }
     else if (action === "hex") openFileHexEditor(index, entry, path, modalContent, 0, target);
     else if (action === "help-overview") intelligence?.overview();
@@ -9312,6 +9336,7 @@ async function openFileEditor(index, name, target = null, pathOverride = null) {
       report.sha256 = data.inspection.sha256;
       const editor = modalContent.querySelector(".source-content");
       editor.dataset.savedValue = editor.value;
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
       updateSourceEditorStatus(modalContent.querySelector(".source-editor"));
       toast(`${entry.name} updated safely. An undo checkpoint is available.`);
       return false;
