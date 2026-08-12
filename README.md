@@ -482,7 +482,13 @@ the current line and press **F1**. The editor's **Help** menu also provides:
 Explicit star commands have their own help identity. `LOAD "PROGRAM"` is BBC
 BASIC LOAD, while `*LOAD CODE 3000` is displayed as `*LOAD` and uses the MOS
 filing-system syntax. RUN, SAVE and other overlapping names are resolved the
-same way; command normalisation preserves the leading star.
+same way; command normalisation preserves the leading star. Compact forms such
+as `COLOUR129`, `T%DIV256` and `*FX200 0` follow the real token boundaries.
+One canonical language catalogue covers 8-bit BBC BASIC tokens plus the BASIC
+IV and BASIC V/VI extensions. The selected dialect supplies availability
+diagnostics. Standard MOS, DFS and ADFS star commands have specific help;
+commands supplied by other sideways ROMs remain valid hover targets with an
+explicit ROM-dependent description rather than being mistaken for BASIC.
 
 The Edit menu can find every code reference to the symbol at the caret and can
 rename that symbol as one undoable change. Strings and comments are excluded,
@@ -569,7 +575,10 @@ absolute addresses such as `&FFEE`, and assembler directives including `OPT`,
 `EQUB`, `EQUW`, `EQUD`, `EQUS` and `ALIGN` receive contextual help too. Ordinary
 BASIC variables outside an assembler region are not mistaken for mnemonics.
 Refactor and Condense treat assembler regions as physical source and never split
-or pack their lines.
+or pack their lines. Processor membership comes from one catalogue: the 56
+official NMOS 6502 mnemonics, applicable W65C02 additions, and W65C816
+extensions are kept distinct. In particular, W65C816 does not advertise the
+W65C02 `BBRx`, `BBSx`, `RMBx` or `SMBx` instructions.
 
 The initial BBC BASIC checks find missing, duplicate and out-of-order line
 numbers, unresolved direct `GOTO`, `GOSUB` and `RESTORE` destinations, missing
