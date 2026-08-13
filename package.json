@@ -1,0 +1,10 @@
+{
+  "name": "acorn-file-forge-browser-tests",
+  "private": true,
+  "scripts": {
+    "test:browser": "node tests/browser/editor-menu-regression.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.58.2"
+  }
+}

@@ -67,9 +67,10 @@ IMAGE_MUTATIONS = {
     "menus.edit_mmb_menu": "editing the MMB menu",
     "menus.cleanup_mmb_duplicates": "cleaning duplicate MMB menu records",
     "tools.apply_manifest": "applying reviewed menu metadata",
-    "tools.save_inspected_text": "editing a text file",
+    "tools.save_inspected_text": "editing a BASIC or text file",
     "tools.repair_health": "applying a safe image-health repair",
     "hex_editor.write_hex": "editing raw image bytes",
+    "hex_editor.write_file_hex": "editing raw file bytes",
     "rom_tools.rom_project": "editing ROM project notes",
     "rom_tools.rom_patch": "applying a ROM patch",
     "rom_tools.rom_repair": "repairing ROM metadata",
@@ -136,7 +137,7 @@ def create_app() -> Flask:
     application.register_blueprint(create_catalog_blueprint(service, WORK_DIR))
     application.register_blueprint(create_mmb_blueprint(service))
     application.register_blueprint(create_hex_editor_blueprint(service))
-    application.register_blueprint(create_tools_blueprint(service, WORK_DIR, operations))
+    application.register_blueprint(create_tools_blueprint(service, operations))
     application.register_blueprint(create_rom_tools_blueprint(service, ROOT))
     application.register_blueprint(
         create_menus_blueprint(service, MENU_TEMPLATE_DIR)

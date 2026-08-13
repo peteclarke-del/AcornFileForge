@@ -8,6 +8,8 @@ import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
+from .editor_project import normalise_editor_project
+
 if TYPE_CHECKING:
     from .disk_service import ImageSession
 
@@ -56,6 +58,7 @@ class CheckpointStore:
             "romLayout": session.rom_layout,
             "romComponentNames": list(session.rom_component_names),
             "romProject": dict(session.rom_project),
+            "editorProjects": dict(session.editor_projects),
         }
 
     @classmethod
@@ -232,6 +235,10 @@ class CheckpointStore:
             str(name) for name in state.get("romComponentNames") or []
         ]
         session.rom_project = dict(state.get("romProject") or session.rom_project)
+        session.editor_projects = {
+            str(key): normalise_editor_project(value)
+            for key, value in dict(state.get("editorProjects") or session.editor_projects).items()
+        }
         return self._public(metadata)
 
     def latest_automatic(self, session: ImageSession) -> dict | None:

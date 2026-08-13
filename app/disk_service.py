@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import BinaryIO, Callable
 
 from .checkpoints import CheckpointError, CheckpointStore
+from .content_kind import LISTING_SNIFF_LIMIT, analyse_content, metadata_kind
 from .formats import ADFS_EXTENSIONS, DFS_EXTENSIONS, HFE_EXTENSIONS, MMB_EXTENSIONS, ROM_EXTENSIONS, TAPE_EXTENSIONS
 from .rom import (
     DEFAULT_BANK_SIZE,
@@ -33,6 +34,7 @@ from .rom import (
     validate_platform,
 )
 from .rom_workbench import normalise_project
+from .editor_project import editor_project_key, normalise_editor_project
 from .dfs_compat import repair_dfs_basic_wildcards
 from .hfe import HFEError, HFEHeader, parse_hfe_header
 from .uef import (
@@ -126,6 +128,8 @@ class ImageSession:
     rom_layout: str = "linear"
     rom_component_names: list[str] = field(default_factory=list)
     rom_project: dict = field(default_factory=lambda: normalise_project({}))
+    editor_projects: dict[str, dict] = field(default_factory=dict)
+    content_kind_cache: dict[tuple, str] = field(default_factory=dict)
     owner_id: str | None = field(default_factory=lambda: SESSION_OWNER.get())
     lock: threading.RLock = field(default_factory=threading.RLock)
 
@@ -200,6 +204,107 @@ class DiskService:
                             close_disc()
                 reader.close()
 
+    @contextmanager
+    def romfs_mount(self, session: ImageSession, *, writable: bool = False):
+        """Open one already-identified ROMFS image without probing it again."""
+        if session.kind != "romfs":
+            raise DiskError("This operation requires an Acorn ROMFS image.")
+        if writable:
+            self.require_writable_geometry(session)
+        try:
+            from oaknut.filesystem import create_filesystem, reader_for
+        except ImportError as exc:
+            raise DiskError("The Oaknut ROMFS filesystem API is unavailable.") from exc
+        with session.lock:
+            reader = reader_for(session.path, writable=writable)
+            try:
+                mount = create_filesystem("acorn-romfs").open(reader, None)
+                yield mount
+            except DiskError:
+                raise
+            except Exception as exc:
+                raise DiskError(self._friendly_engine_error(str(exc))) from exc
+            finally:
+                reader.close()
+
+    def romfs_details(self, session: ImageSession) -> dict:
+        """Return decoded ROMFS identity, safety and capacity information."""
+        try:
+            from oaknut.romfs.romfs import ROMFS
+            romfs = ROMFS.from_bytes(session.path.read_bytes())
+        except Exception as exc:
+            raise DiskError(f"The ROMFS catalogue is invalid: {exc}") from exc
+        warnings = []
+        if not romfs.is_complete:
+            warnings.append(
+                "The ROMFS block chain has no end marker. It may be truncated or one part of a multi-ROM set."
+            )
+        if romfs.is_complete and not romfs.is_plain:
+            warnings.append(
+                "Executable or opaque content follows the ROMFS catalogue, so this composite image is read-only."
+            )
+        fs_end = int(getattr(romfs, "_fs_end", session.path.stat().st_size))
+        total = session.path.stat().st_size
+        return {
+            "title": romfs.title,
+            "headerTitle": romfs.header_title,
+            "version": romfs.version,
+            "copyright": romfs.copyright,
+            "romType": romfs.rom_type,
+            "dataOffset": romfs.data_offset,
+            "fileCount": len(romfs.data_files),
+            "complete": romfs.is_complete,
+            "plain": romfs.is_plain,
+            "readOnly": not romfs.is_complete or not romfs.is_plain,
+            "capacity": {
+                "available": romfs.is_complete and romfs.is_plain,
+                "unit": "bytes",
+                "total": total,
+                "used": min(total, fs_end),
+                "free": max(0, total - fs_end),
+                "reason": "Composite and multi-ROM images cannot report safely writable tail space."
+                if not (romfs.is_complete and romfs.is_plain) else None,
+            },
+            "warnings": warnings,
+        }
+
+    def set_romfs_properties(
+        self,
+        session: ImageSession,
+        *,
+        title: str,
+        version: int,
+        copyright_text: str,
+    ) -> None:
+        """Update ROMFS catalogue and paged-ROM identity as one guarded edit."""
+        if session.kind != "romfs":
+            raise DiskError("This image does not contain an Acorn ROMFS filesystem.")
+        title = str(title or "").strip()
+        if not title or len(title) > 8:
+            raise DiskError("A ROMFS title can contain 1 to 8 characters.")
+        copyright_text = str(copyright_text or "").strip()
+        if not copyright_text.startswith("(C)"):
+            raise DiskError("A paged-ROM copyright must begin with (C).")
+        if len(copyright_text) > 120:
+            raise DiskError("A paged-ROM copyright can contain at most 120 characters.")
+        try:
+            version = int(version)
+        except (TypeError, ValueError) as exc:
+            raise DiskError("ROMFS version must be from 0 to 255.") from exc
+        if not 0 <= version <= 255:
+            raise DiskError("ROMFS version must be from 0 to 255.")
+        original = session.path.read_bytes()
+        try:
+            with self.romfs_mount(session, writable=True) as mount:
+                mount.set_title(title)
+            from oaknut.romfs.romfs import set_copyright, set_version
+            data = set_version(session.path.read_bytes(), version)
+            session.path.write_bytes(set_copyright(data, copyright_text))
+        except Exception as exc:
+            session.path.write_bytes(original)
+            raise DiskError(f"The ROMFS paged-ROM header could not be updated: {exc}") from exc
+        self._mark_mutated(session, None)
+
     @staticmethod
     def _append_warning(session: ImageSession, warning: str) -> None:
         if warning not in session.warnings:
@@ -239,6 +344,7 @@ class DiskService:
             "romLayout": session.rom_layout,
             "romComponentNames": session.rom_component_names,
             "romProject": session.rom_project,
+            "editorProjects": session.editor_projects,
             "dirty": session.dirty,
             "finalisedMtimeNs": session.finalised_mtime_ns,
             "ownerId": session.owner_id,
@@ -315,6 +421,10 @@ class DiskService:
                     if name
                 ],
                 rom_project=normalise_project(metadata.get("romProject")),
+                editor_projects={
+                    str(key): normalise_editor_project(value)
+                    for key, value in dict(metadata.get("editorProjects") or {}).items()
+                },
                 finalised_mtime_ns=(
                     int(metadata["finalisedMtimeNs"])
                     if metadata.get("finalisedMtimeNs") is not None
@@ -369,11 +479,26 @@ class DiskService:
             return "dfs"
         if filesystem in {"adfs", "afs"}:
             return "adfs"
+        if filesystem == "acorn-romfs":
+            return "romfs"
         raise DiskError(f"The detected {filesystem or 'unknown'} filesystem is not supported.")
 
     @staticmethod
     def validate_leaf_name(session: ImageSession, name: str, slot: int | None = None) -> str:
-        name = str(name or "").strip()
+        name = str(name or "")
+        if session.kind == "romfs":
+            if not name:
+                raise DiskError("Enter a ROMFS filename.")
+            if len(name) > 10:
+                raise DiskError("ROMFS filenames can contain at most 10 characters.")
+            try:
+                name.encode("latin-1")
+            except UnicodeEncodeError as exc:
+                raise DiskError("ROMFS filenames must use Latin-1 characters.") from exc
+            if "\0" in name or any(ord(char) < 32 for char in name):
+                raise DiskError("ROMFS filenames cannot contain NUL or control characters in the editor.")
+            return name
+        name = name.strip()
         is_dfs = session.kind == "dfs" or (session.kind == "mmb" and slot is not None)
         limit = 7 if is_dfs else 10
         label = "DFS" if is_dfs else "ADFS"
@@ -392,6 +517,22 @@ class DiskService:
                 "This HFE uses advanced track features or contains unreadable sectors. "
                 "It can be browsed and copied from, but cannot be rewritten safely."
             )
+        if session.kind == "romfs":
+            try:
+                from oaknut.romfs.romfs import ROMFS
+                romfs = ROMFS.from_bytes(session.path.read_bytes())
+            except Exception as exc:
+                raise DiskError(f"The ROMFS image cannot be edited safely: {exc}") from exc
+            if not romfs.is_complete:
+                raise DiskError(
+                    "This ROMFS image is incomplete or part of a multi-ROM set. "
+                    "It can be browsed and extracted, but not rebuilt safely."
+                )
+            if not romfs.is_plain:
+                raise DiskError(
+                    "This composite ROMFS image contains executable code after its files. "
+                    "It is read-only because moving that code could break absolute addresses."
+                )
         if (
             session.kind == "adfs"
             and session.path.suffix.lower() == ".dat"
@@ -481,6 +622,12 @@ class DiskService:
             with path.open("rb") as source:
                 if parse_sideways_header(source.read(DEFAULT_BANK_SIZE)):
                     kind = "rom"
+        if kind == "rom":
+            try:
+                if self.identify_kind(path) == "romfs":
+                    kind = "romfs"
+            except DiskError:
+                pass
         identified = kind == "unknown"
         if identified:
             kind = self.identify_kind(path)
@@ -525,6 +672,10 @@ class DiskService:
                     f"The final ROM bank is partial ({size % DEFAULT_BANK_SIZE:,} bytes). "
                     "It is preserved exactly; choose another bank size if this layout is intentional."
                 )
+        elif kind == "romfs":
+            details = self.romfs_details(session)
+            if details["readOnly"]:
+                session.warnings.extend(details["warnings"])
         elif not identified:
             detected_kind = self.identify_kind(path)
             if detected_kind != kind:
@@ -1342,6 +1493,7 @@ class DiskService:
 
     def summary(self, session: ImageSession) -> dict:
         checkpoints = self.list_checkpoints(session)
+        romfs = self.romfs_details(session) if session.kind == "romfs" else None
         return {
             "id": session.id,
             "name": session.name,
@@ -1352,7 +1504,7 @@ class DiskService:
             "descriptorName": session.descriptor_name,
             "doubleSided": session.path.name.lower().endswith(".dsd"),
             "containerFormat": "hfe" if session.hfe_original_path else None,
-            "readOnly": session.hfe_read_only,
+            "readOnly": session.hfe_read_only or bool(romfs and romfs["readOnly"]),
             "rom": ({
                 "bankSize": session.rom_bank_size,
                 "bankCount": bank_count(session.path.stat().st_size, session.rom_bank_size),
@@ -1362,6 +1514,7 @@ class DiskService:
                 "componentNames": session.rom_component_names,
                 "project": session.rom_project,
             } if session.kind == "rom" else None),
+            "romfs": romfs,
             "targetHardware": session.target_hardware,
             "hardwareProfile": session.hardware_profile,
             "warnings": [
@@ -1427,6 +1580,21 @@ class DiskService:
                 "total": len(rows),
                 "truncated": len(rows) > limit,
                 "summary": f"{len(rows)} ROM bank(s) of {session.rom_bank_size:,} bytes",
+            }
+        if session.kind == "romfs":
+            listing = self.list_directory(session, "$", None)
+            rows = listing["entries"]
+            return {
+                "entries": [{
+                    "path": row["path"],
+                    "name": row["name"],
+                    "type": "ROMFS file",
+                    "size": row["length"],
+                    "detail": f"load &{row['load']:X} · execute &{row['exec']:X} · {row['attr']}",
+                } for row in rows[:limit]],
+                "total": len(rows),
+                "truncated": len(rows) > limit,
+                "summary": f"{len(rows)} file(s) in {listing['title']} ROMFS",
             }
         if session.kind == "mmb":
             slots = [slot for slot in self.list_slots(session) if slot["formatted"]]
@@ -1608,7 +1776,49 @@ class DiskService:
                 ["--geometry", f"capacity={capacity or '20MB'}"],
             ),
         }
-        if native_format == "rom":
+        if native_format == "romfs":
+            options = options or {}
+            geometry = str(options.get("geometry") or capacity or "16k").lower().replace("ib", "").replace(" ", "")
+            geometry = {"8k": "8k", "8ki": "8k", "8192": "8k", "16k": "16k", "16ki": "16k", "16384": "16k"}.get(geometry, geometry)
+            if geometry not in {"8k", "16k"}:
+                raise DiskError("ROMFS images can be 8 KiB or 16 KiB.")
+            romfs_title = str(title or "ROMFS").strip()
+            if not romfs_title or len(romfs_title) > 8:
+                raise DiskError("A created ROMFS title can contain 1 to 8 characters.")
+            copyright_text = str(options.get("copyright") or "(C) 2026 Acorn File Forge").strip()
+            if not copyright_text.startswith("(C)"):
+                raise DiskError("A paged-ROM copyright must begin with (C).")
+            if len(copyright_text) > 120:
+                raise DiskError("A paged-ROM copyright can contain at most 120 characters.")
+            try:
+                version = int(str(options.get("version", 1)), 0)
+            except ValueError as exc:
+                raise DiskError("ROMFS version must be from 0 to 255.") from exc
+            if not 0 <= version <= 255:
+                raise DiskError("ROMFS version must be from 0 to 255.")
+            image_id = uuid.uuid4().hex
+            folder = self.work_dir / image_id
+            folder.mkdir()
+            path = folder / f"{self.safe_filename(romfs_title) or 'ROMFS'}.rom"
+            try:
+                self._run([
+                    "create", "--filesystem", "acorn-romfs", "--geometry", geometry,
+                    "--title", romfs_title, str(path),
+                ])
+                from oaknut.romfs.romfs import set_copyright, set_version
+                data = set_version(path.read_bytes(), version)
+                data = set_copyright(data, copyright_text)
+                path.write_bytes(data)
+                session = ImageSession(
+                    image_id, path.name, "romfs", path, dirty=True,
+                    target_hardware=self._target_hardware(target_hardware),
+                )
+            except Exception as exc:
+                shutil.rmtree(folder, ignore_errors=True)
+                if isinstance(exc, DiskError):
+                    raise
+                raise DiskError(f"The ROMFS image could not be created: {exc}") from exc
+        elif native_format == "rom":
             options = options or {}
             try:
                 bank_size = validate_bank_size(int(options.get("bankSize", DEFAULT_BANK_SIZE)))
@@ -1767,6 +1977,9 @@ class DiskService:
             "hfe-adfs-m",
             "hfe-adfs-l",
         }
+        if format_name == "romfs":
+            requested = str(requested or "auto")
+            return requested if requested in {"auto", "electron-plus3", "bbc-master"} else "auto"
         if format_name in selectable_adfs:
             return str(requested or "auto")
         return "auto"
@@ -2174,6 +2387,21 @@ class DiskService:
         session.slot_cache[slot] = path
         return path
 
+    def slot_download(self, session: ImageSession, slot: int) -> tuple[bytes, str]:
+        """Return one formatted MMB slot as a standalone DFS SSD image."""
+        if session.kind != "mmb":
+            raise DiskError("This image is not an MMB container.")
+        checked = self._check_slot(session, int(slot))
+        entry = self.list_slots(session)[checked]
+        if not entry["formatted"]:
+            raise DiskError("That MMB slot is empty.")
+        stem = self.safe_filename(str(entry.get("name") or f"slot-{checked:03d}"))
+        if stem.lower().endswith(".ssd"):
+            stem = stem[:-4]
+        with session.lock:
+            data = self._slot_path(session, checked).read_bytes()
+        return data, f"{stem or f'slot-{checked:03d}'}.ssd"
+
     def _sync_slot(self, session: ImageSession, slot: int) -> None:
         slot_path = self._slot_path(session, slot)
         data = slot_path.read_bytes()
@@ -2197,6 +2425,7 @@ class DiskService:
         else:
             session.dirty = True
         session.hfe_export_path = None
+        session.content_kind_cache.clear()
 
     def resolve(self, session: ImageSession, slot: int | None) -> Path:
         if session.kind != "mmb":
@@ -2207,6 +2436,8 @@ class DiskService:
 
     @staticmethod
     def inner_for(session: ImageSession, inner: str, side: int | None) -> str:
+        if session.kind == "romfs":
+            return "" if inner in {"", "$"} else inner
         if not session.path.name.lower().endswith(".dsd"):
             return inner
         drive = 2 if side == 2 else 0
@@ -2238,8 +2469,39 @@ class DiskService:
             "free": free,
         }
 
-    @staticmethod
-    def _list_adfs_mount(mount, inner: str, session_name: str) -> dict:
+    def _listing_content_kind(
+        self,
+        session: ImageSession,
+        slot: int | None,
+        side: int | None,
+        path: str,
+        row: dict,
+        reader: Callable[[], bytes],
+    ) -> str | None:
+        """Classify one listed file without remounting or reading large payloads."""
+        hint = metadata_kind(str(row.get("name") or ""), row.get("filetype"))
+        if hint:
+            return hint
+        length = int(row.get("length") or 0)
+        if length <= 0 or length > LISTING_SNIFF_LIMIT:
+            return None
+        key = (
+            slot, side, str(path).casefold(), length,
+            int(row.get("load") or 0), int(row.get("exec") or 0), str(row.get("filetype") or ""),
+        )
+        cached = session.content_kind_cache.get(key)
+        if cached:
+            return cached
+        try:
+            kind = analyse_content(reader(), path)[0]
+        except Exception:
+            # A damaged or unusually encoded file must not prevent its parent
+            # directory from being listed. It can still be inspected on open.
+            return None
+        session.content_kind_cache[key] = kind
+        return kind
+
+    def _list_adfs_mount(self, mount, inner: str, session: ImageSession) -> dict:
         """Return the same stable row schema as ``disc ls --as json``."""
         try:
             from oaknut.disc.cli import _natural_name_key
@@ -2287,7 +2549,7 @@ class DiskService:
                 value = mount.datestamp(child.path)
                 if value is not None:
                     datestamp = value.isoformat(sep="T", timespec="milliseconds")
-            rows.append({
+            row = {
                 "name": child.name,
                 "type": "file",
                 "load": load,
@@ -2296,13 +2558,20 @@ class DiskService:
                 "datestamp": datestamp,
                 "length": int(child.length),
                 "attr": attr,
-            })
+            }
+            content_kind = self._listing_content_kind(
+                session, None, None, str(child.path), row,
+                lambda child_path=str(child.path): mount.read_bytes(child_path),
+            )
+            if content_kind:
+                row["contentKind"] = content_kind
+            rows.append(row)
 
         capacity = DiskService._capacity_from_mount(mount)
         free = capacity.get("free")
         return {
             "entries": rows,
-            "title": str(getattr(mount, "title", "") or session_name),
+            "title": str(getattr(mount, "title", "") or session.name),
             "description": f"Free: {free:,} bytes" if isinstance(free, int) else "",
             "path": target,
             "capacity": capacity,
@@ -2320,10 +2589,43 @@ class DiskService:
             listing = self.list_directory(session, "$", None)
             listing["capacity"] = self.capacity(session, None)
             return listing
+        if session.kind == "romfs":
+            listing = self.list_directory(session, "$", None)
+            listing["capacity"] = self.capacity(session, None)
+            return listing
         if session.kind == "adfs" and slot is None:
             with self.adfs_mount(session) as mount:
-                return self._list_adfs_mount(mount, inner or "$", session.name)
+                return self._list_adfs_mount(mount, inner or "$", session)
         listing = self.list_directory(session, inner, slot, side)
+        is_open_dfs_disk = session.kind == "dfs" or (session.kind == "mmb" and slot is not None)
+        if is_open_dfs_disk:
+            if inner == "$":
+                root_rows = []
+                for row in listing["entries"]:
+                    root_rows.append({**row, "path": f"$.{row['name']}", "cataloguePrefix": "$"})
+                grouped_rows = []
+                seen_prefixes: set[str] = set()
+                for row in sorted(
+                    self.list_dfs_catalogue_files(session, slot, side),
+                    key=lambda item: (str(item.get("prefix", "$")).casefold(), str(item.get("name", "")).casefold()),
+                ):
+                    prefix = str(row.get("prefix") or "$")
+                    if prefix == "$":
+                        continue
+                    grouped_rows.append({
+                        **row,
+                        "leafName": row["name"],
+                        "name": f"{prefix}.{row['name']}",
+                        "cataloguePrefix": prefix,
+                        "catalogueBreak": prefix not in seen_prefixes,
+                    })
+                    seen_prefixes.add(prefix)
+                listing["entries"] = root_rows + grouped_rows
+                group_count = len(seen_prefixes) + 1
+                listing["description"] = (
+                    f"{len(listing['entries'])} files in {group_count} DFS catalogue "
+                    f"group{'s' if group_count != 1 else ''}"
+                )
         listing["capacity"] = self.capacity(session, slot)
         return listing
 
@@ -2544,6 +2846,94 @@ class DiskService:
         self._persist_session(session)
         return session.rom_project
 
+    def editor_project(self, session: ImageSession, path: str, slot: int | None, side: int | None) -> dict:
+        key = editor_project_key(path, slot, side)
+        return normalise_editor_project(session.editor_projects.get(key))
+
+    def save_editor_project(
+        self, session: ImageSession, path: str, slot: int | None, side: int | None, document: dict,
+    ) -> dict:
+        key = editor_project_key(path, slot, side)
+        project = normalise_editor_project(document)
+        with session.lock:
+            session.editor_projects[key] = project
+            self._persist_session(session)
+        return project
+
+    def move_editor_projects(
+        self,
+        session: ImageSession,
+        moves: list[dict],
+        slot: int | None,
+        side: int | None,
+    ) -> int:
+        """Follow file and directory moves without orphaning editor annotations."""
+        replacements = sorted(
+            (
+                (str(item.get("source") or "").rstrip("."), str(item.get("destination") or "").rstrip("."))
+                for item in moves
+                if item.get("source") and item.get("destination")
+            ),
+            key=lambda item: len(item[0]),
+            reverse=True,
+        )
+        if not replacements:
+            return 0
+        changed: dict[str, dict] = {}
+        removed: list[str] = []
+        slot_key = str(slot) if slot is not None else "-"
+        side_key = str(side) if side is not None else "-"
+        for key, project in list(session.editor_projects.items()):
+            key_slot, separator, remainder = key.partition("|")
+            key_side, separator2, path = remainder.partition("|")
+            if not separator or not separator2 or key_slot != slot_key or key_side != side_key:
+                continue
+            folded = path.casefold()
+            for source, destination in replacements:
+                source_folded = source.casefold()
+                if folded != source_folded and not folded.startswith(source_folded + "."):
+                    continue
+                suffix = path[len(source):]
+                changed[editor_project_key(destination + suffix, slot, side)] = project
+                removed.append(key)
+                break
+        if not removed:
+            return 0
+        with session.lock:
+            for key in removed:
+                session.editor_projects.pop(key, None)
+            session.editor_projects.update(changed)
+            self._persist_session(session)
+        return len(removed)
+
+    def delete_editor_projects(
+        self,
+        session: ImageSession,
+        paths: list[str],
+        slot: int | None,
+        side: int | None,
+    ) -> int:
+        """Remove annotations belonging to deleted files or directory trees."""
+        prefixes = [str(path or "").rstrip(".").casefold() for path in paths if path]
+        slot_key = str(slot) if slot is not None else "-"
+        side_key = str(side) if side is not None else "-"
+        removed = []
+        for key in session.editor_projects:
+            key_slot, separator, remainder = key.partition("|")
+            key_side, separator2, path = remainder.partition("|")
+            if not separator or not separator2 or key_slot != slot_key or key_side != side_key:
+                continue
+            folded = path.casefold()
+            if any(folded == prefix or folded.startswith(prefix + ".") for prefix in prefixes):
+                removed.append(key)
+        if not removed:
+            return 0
+        with session.lock:
+            for key in removed:
+                session.editor_projects.pop(key, None)
+            self._persist_session(session)
+        return len(removed)
+
     def rom_component_exports(self, session: ImageSession) -> list[tuple[Path, str]]:
         """Create byte-wide chip files for a documented interleaved ROM set."""
         if session.kind != "rom" or not session.rom_layout.startswith("byte-interleaved-"):
@@ -2590,33 +2980,76 @@ class DiskService:
                 + (f" · final bank has {partial:,} bytes" if partial else "")
             )
             return {"entries": rows, "title": session.name, "description": description, "path": "$"}
+        if session.kind == "romfs":
+            if inner not in {"", "$"}:
+                raise DiskError("ROMFS is flat and does not contain directories.")
+            rows = []
+            with self.romfs_mount(session) as mount:
+                for entry in mount.iter_entries(""):
+                    metadata = mount.acorn_meta(entry.name)
+                    access = int(metadata.access or 0)
+                    row = {
+                        "name": entry.name,
+                        "path": entry.name,
+                        "type": "file",
+                        "load": int(metadata.load_address or 0),
+                        "exec": int(metadata.exec_address or 0),
+                        "filetype": "",
+                        "datestamp": "",
+                        "length": int(entry.length or 0),
+                        "attr": "RUN" if access & 0x40 else "LOAD",
+                        "runOnly": bool(access & 0x40),
+                    }
+                    content_kind = self._listing_content_kind(
+                        session, None, None, entry.name, row,
+                        lambda name=entry.name: mount.read_bytes(name),
+                    )
+                    if content_kind:
+                        row["contentKind"] = content_kind
+                    rows.append(row)
+                title = str(mount.title or session.name)
+            details = self.romfs_details(session)
+            return {
+                "entries": rows,
+                "title": title,
+                "description": (
+                    f"ROMFS {session.path.stat().st_size // 1024} KiB · "
+                    f"{len(rows)} file{'s' if len(rows) != 1 else ''} · "
+                    f"version {details['version']}"
+                ),
+                "path": "$",
+            }
         if session.kind == "tape":
             tape = self._tape(session)
             if inner not in {"", "$"}:
                 raise DiskError("UEF tapes do not contain directories.")
+            entries = []
+            for item in tape.files:
+                row = {
+                    "name": item.name,
+                    "type": "file",
+                    "load": item.load,
+                    "exec": item.execute,
+                    "filetype": "",
+                    "datestamp": "",
+                    "length": len(item.data),
+                    "attr": "R/" if item.complete else "R/?",
+                    "blocks": item.blocks,
+                    "complete": item.complete,
+                }
+                content_kind = metadata_kind(item.name, None) or analyse_content(item.data, item.name)[0]
+                if content_kind:
+                    row["contentKind"] = content_kind
+                entries.append(row)
             return {
-                "entries": [
-                    {
-                        "name": item.name,
-                        "type": "file",
-                        "load": item.load,
-                        "exec": item.execute,
-                        "filetype": "",
-                        "datestamp": "",
-                        "length": len(item.data),
-                        "attr": "R/" if item.complete else "R/?",
-                        "blocks": item.blocks,
-                        "complete": item.complete,
-                    }
-                    for item in tape.files
-                ],
+                "entries": entries,
                 "title": session.name,
                 "description": f"UEF {tape.version} · {len(tape.files)} tape files",
                 "path": "$",
             }
         if session.kind == "adfs" and slot is None:
             with self.adfs_mount(session) as mount:
-                return self._list_adfs_mount(mount, inner or "$", session.name)
+                return self._list_adfs_mount(mount, inner or "$", session)
         disk_path = self.resolve(session, slot)
         requested_inner = "$" if inner is None else inner
         resolved_inner = self.inner_for(session, requested_inner, side)
@@ -2651,6 +3084,9 @@ class DiskService:
             rows = self._restore_dfs_catalogue_names(
                 self.compound(disk_path, resolved_inner),
                 rows,
+                session,
+                slot,
+                side,
             )
         if is_dfs and requested_inner == "":
             directories = [
@@ -2729,6 +3165,7 @@ class DiskService:
                     self.inner_for(session, item["destination"], side),
                 ])
             self._mark_mutated(session, slot)
+        self.move_editor_projects(session, checked, slot, side)
         return checked
 
     def list_dfs_catalogue_files(
@@ -2756,7 +3193,9 @@ class DiskService:
             raise DiskError("The Oaknut DFS catalogue API is unavailable.") from exc
 
         disk_path = self.resolve(session, slot)
-        root = self.inner_for(session, "$", side)
+        # Resolve the drive/catalogue root rather than ``$`` itself so DFS
+        # exposes every one-character prefix, not just the default group.
+        root = self.inner_for(session, "", side)
         files: list[dict] = []
         try:
             with session.lock, resolve_mount(self.compound(disk_path, root)) as resolved:
@@ -2790,6 +3229,12 @@ class DiskService:
                             "prefix": prefix,
                             "path": path,
                         })
+                        content_kind = self._listing_content_kind(
+                            session, slot, side, path, files[-1],
+                            lambda path=path: mount.read_bytes(path),
+                        )
+                        if content_kind:
+                            files[-1]["contentKind"] = content_kind
         except Exception:
             # Retain the command-backed path for unusual third-party DFS
             # variants and for a useful engine error on damaged images.
@@ -2804,9 +3249,15 @@ class DiskService:
                     })
         return files
 
-    @staticmethod
-    def _restore_dfs_catalogue_names(compound_path: str, rows: list[dict]) -> list[dict]:
-        """Restore literal dots that Oaknut's tabular DFS report treats as path separators."""
+    def _restore_dfs_catalogue_names(
+        self,
+        compound_path: str,
+        rows: list[dict],
+        session: ImageSession,
+        slot: int | None,
+        side: int | None,
+    ) -> list[dict]:
+        """Restore literal dots and classify files in the same DFS mount."""
         try:
             from oaknut.disc.mount import resolve_mount
 
@@ -2814,7 +3265,7 @@ class DiskService:
                 mount = resolved.mount
                 directory = resolved.path
                 prefix = f"{directory}." if directory else ""
-                names: dict[tuple[str, int, int, int], list[str]] = {}
+                names: dict[tuple[str, int, int, int], list[tuple[str, str]]] = {}
                 for entry in mount.iter_entries(directory):
                     if entry.is_dir:
                         continue
@@ -2827,21 +3278,32 @@ class DiskService:
                         int(metadata.exec_address or 0),
                         int(entry.length or 0),
                     )
-                    names.setdefault(key, []).append(literal_name)
+                    names.setdefault(key, []).append((literal_name, path))
+
+                restored = []
+                for row in rows:
+                    key = (
+                        str(row.get("name", "")).casefold(),
+                        int(row.get("load") or 0),
+                        int(row.get("exec") or 0),
+                        int(row.get("length") or 0),
+                    )
+                    matches = names.get(key)
+                    candidate = dict(row)
+                    source_path = str(row.get("name") or "")
+                    if matches:
+                        literal_name, source_path = matches.pop(0)
+                        candidate["name"] = literal_name
+                    content_kind = self._listing_content_kind(
+                        session, slot, side, source_path, candidate,
+                        lambda source_path=source_path: mount.read_bytes(source_path),
+                    )
+                    if content_kind:
+                        candidate["contentKind"] = content_kind
+                    restored.append(candidate)
+                return restored
         except (AttributeError, ImportError, OSError, RuntimeError, ValueError):
             return rows
-
-        restored = []
-        for row in rows:
-            key = (
-                str(row.get("name", "")).casefold(),
-                int(row.get("load") or 0),
-                int(row.get("exec") or 0),
-                int(row.get("length") or 0),
-            )
-            matches = names.get(key)
-            restored.append({**row, "name": matches.pop(0)} if matches else row)
-        return restored
 
     def stat(self, session: ImageSession, slot: int | None) -> dict:
         disk_path = self.resolve(session, slot)
@@ -2864,6 +3326,8 @@ class DiskService:
                 "available": False,
                 "reason": "Tape images do not have a fixed free-space capacity.",
             }
+        if session.kind == "romfs":
+            return self.romfs_details(session)["capacity"]
         if session.kind == "mmb" and slot is None:
             slots = self.list_slots(session)
             used = sum(bool(item["formatted"]) for item in slots)
@@ -2918,6 +3382,15 @@ class DiskService:
             tape = self._tape(session)
             suffix = f" · {len(tape.warnings)} warning(s)" if tape.warnings else ""
             return f"Valid UEF {tape.version} · {len(tape.files)} reconstructed file(s){suffix}"
+        if session.kind == "romfs":
+            details = self.romfs_details(session)
+            state = "plain and writable" if not details["readOnly"] else (
+                "incomplete and read-only" if not details["complete"] else "composite and read-only"
+            )
+            return (
+                f"Valid ROMFS · all block CRCs passed · {details['fileCount']} file(s) · "
+                f"{session.path.stat().st_size // 1024} KiB · {state}"
+            )
         disk_path = self.resolve(session, slot)
         self._run(["validate", str(disk_path)])
         return "No structural errors found"
@@ -2967,6 +3440,31 @@ class DiskService:
         except ImportError as exc:
             raise DiskError("The Oaknut access API is unavailable.") from exc
 
+        if session.kind == "romfs":
+            with self.romfs_mount(session, writable=True) as mount:
+                original = session.path.read_bytes()
+                try:
+                    for target in targets:
+                        if not mount.exists(target):
+                            raise DiskError(f"“{target}” no longer exists.")
+                    for target in targets:
+                        meta = mount.acorn_meta(target)
+                        current = Access(meta.access) if meta.access is not None else Access(0)
+                        access = current & ~Access.X if writable else current | Access.X
+                        mount.set_acorn_meta(
+                            target,
+                            AcornMeta(
+                                load_address=meta.load_address,
+                                exec_address=meta.exec_address,
+                                access=int(access),
+                            ),
+                        )
+                except Exception:
+                    session.path.write_bytes(original)
+                    raise
+            self._mark_mutated(session, None)
+            return targets
+
         with session.lock:
             disk_path = self.resolve(session, slot)
             root = self.compound(disk_path, self.inner_for(session, "$", side))
@@ -3015,6 +3513,34 @@ class DiskService:
         if session.kind == "tape":
             raise DiskError("Files cannot be added directly to a UEF tape.")
         self.require_writable_geometry(session)
+        if session.kind == "romfs":
+            destination = self.validate_leaf_name(session, destination, slot)
+            try:
+                from oaknut.file import AcornMeta, parse_address
+            except ImportError as exc:
+                raise DiskError("The Oaknut ROMFS metadata API is unavailable.") from exc
+            if filetype:
+                raise DiskError("ROMFS stores load and execution addresses, not RISC OS filetypes.")
+            parsed_load = parse_address(load) if load else 0
+            parsed_execute = parse_address(execute) if execute else 0
+            with self.romfs_mount(session, writable=True) as mount:
+                original = session.path.read_bytes()
+                try:
+                    mount.write_bytes(destination, host_path.read_bytes())
+                    current = mount.acorn_meta(destination)
+                    mount.set_acorn_meta(
+                        destination,
+                        AcornMeta(
+                            load_address=parsed_load,
+                            exec_address=parsed_execute,
+                            access=current.access,
+                        ),
+                    )
+                except Exception:
+                    session.path.write_bytes(original)
+                    raise
+            self._mark_mutated(session, None)
+            return
         if session.kind == "dfs" or (session.kind == "mmb" and slot is not None):
             if "." not in destination:
                 raise DiskError("Choose a DFS catalogue group before adding a file.")
@@ -3077,11 +3603,14 @@ class DiskService:
             raise DiskError("Open a writable disk before importing a host folder.")
         self.require_writable_geometry(session)
         is_dfs = session.kind == "dfs" or (session.kind == "mmb" and slot is not None)
+        is_romfs = session.kind == "romfs"
+        if preserve_directories and is_romfs:
+            raise DiskError("ROMFS is flat. Import the selected files without preserving host folders.")
         if preserve_directories and is_dfs:
             raise DiskError("DFS cannot preserve host folders; import their files into one catalogue group instead.")
         if is_dfs:
             destination_dir = self.validate_dfs_prefix(destination_dir)
-        elif not destination_dir.startswith("$"):
+        elif not is_romfs and not destination_dir.startswith("$"):
             raise DiskError("Choose a valid ADFS destination directory.")
         if not items:
             raise DiskError("No relevant files were selected for import.")
@@ -3093,11 +3622,11 @@ class DiskService:
             parts = [part for part in relative.split("/") if part]
             if not parts or any(part in {".", ".."} for part in parts):
                 raise DiskError("A selected folder contains an invalid relative path.")
-            if is_dfs and len(parts) != 1:
-                raise DiskError("DFS folder imports must use flat target filenames.")
+            if (is_dfs or is_romfs) and len(parts) != 1:
+                raise DiskError(f"{'ROMFS' if is_romfs else 'DFS'} folder imports must use flat target filenames.")
             for part in parts:
                 self.validate_leaf_name(session, part, slot)
-            destination = ".".join([destination_dir.rstrip("."), *parts])
+            destination = parts[0] if is_romfs else ".".join([destination_dir.rstrip("."), *parts])
             key = destination.casefold()
             if key in seen:
                 raise DiskError(f"More than one selected file maps to {destination}.")
@@ -3114,12 +3643,16 @@ class DiskService:
             disk_path = self.resolve(session, slot)
             root = self.compound(disk_path, self.inner_for(session, "$", side))
             mount_context = (
+                self.romfs_mount(session, writable=True)
+                if is_romfs
+                else
                 self.adfs_mount(session)
                 if session.kind == "adfs" and slot is None
                 else resolve_mount(root, writable=True)
             )
             with mount_context as opened:
-                mount = opened if session.kind == "adfs" and slot is None else opened.mount
+                mount = opened if (session.kind == "adfs" and slot is None) or is_romfs else opened.mount
+                original_romfs = session.path.read_bytes() if is_romfs else None
                 conflicts: list[str] = []
                 directories: set[str] = set()
                 if preserve_directories:
@@ -3144,22 +3677,27 @@ class DiskService:
                 def parse_address(value, fallback):
                     return int(str(value), 0) if value else fallback
 
-                for plan in plans:
-                    mount.write_bytes(plan["destination"], Path(plan["hostPath"]).read_bytes())
-                    metadata = plan.get("metadata") or {}
-                    if metadata.get("load") or metadata.get("execute"):
-                        current = mount.acorn_meta(plan["destination"])
-                        mount.set_acorn_meta(
-                            plan["destination"],
-                            AcornMeta(
-                                load_address=parse_address(metadata.get("load"), current.load_address),
-                                exec_address=parse_address(metadata.get("execute"), current.exec_address),
-                                access=current.access,
-                            ),
-                        )
-                    if metadata.get("filetype") and hasattr(mount, "set_filetype"):
-                        mount.set_filetype(plan["destination"], metadata["filetype"])
-                    imported.append(plan["destination"])
+                try:
+                    for plan in plans:
+                        mount.write_bytes(plan["destination"], Path(plan["hostPath"]).read_bytes())
+                        metadata = plan.get("metadata") or {}
+                        if metadata.get("load") or metadata.get("execute"):
+                            current = mount.acorn_meta(plan["destination"])
+                            mount.set_acorn_meta(
+                                plan["destination"],
+                                AcornMeta(
+                                    load_address=parse_address(metadata.get("load"), current.load_address),
+                                    exec_address=parse_address(metadata.get("execute"), current.exec_address),
+                                    access=current.access,
+                                ),
+                            )
+                        if metadata.get("filetype") and hasattr(mount, "set_filetype"):
+                            mount.set_filetype(plan["destination"], metadata["filetype"])
+                        imported.append(plan["destination"])
+                except Exception:
+                    if original_romfs is not None:
+                        session.path.write_bytes(original_romfs)
+                    raise
             self._mark_mutated(session, slot)
         return {"imported": imported, "conflicts": []}
 
@@ -3206,7 +3744,11 @@ class DiskService:
             if "." not in target_inner:
                 raise DiskError("Choose a DFS catalogue group before copying a file.")
             self.validate_dfs_prefix(target_inner.split(".", 1)[0])
-        self.validate_leaf_name(target, target_inner.rsplit(".", 1)[-1], target_slot)
+        self.validate_leaf_name(
+            target,
+            target_inner if target.kind == "romfs" else target_inner.rsplit(".", 1)[-1],
+            target_slot,
+        )
         if source.kind == "tape":
             tape_file = self._tape_file(source, source_inner)
             temp_path = self.work_dir / f"tape-copy-{uuid.uuid4().hex}"
@@ -4452,6 +4994,9 @@ class DiskService:
             return self.rom_bank_bytes(session, inner)
         if session.kind == "tape":
             return self._tape_file(session, inner).data
+        if session.kind == "romfs":
+            with self.romfs_mount(session) as mount:
+                return mount.read_bytes(inner)
         if session.kind == "adfs" and slot is None:
             with self.adfs_mount(session) as mount:
                 return mount.read_bytes(inner)
@@ -4477,6 +5022,16 @@ class DiskService:
                 "access": 0,
                 "length": len(item.data),
             }
+        if session.kind == "romfs":
+            with self.romfs_mount(session) as mount:
+                stat = mount.stat(inner)
+                metadata = mount.acorn_meta(inner)
+                return {
+                    "load": int(metadata.load_address or 0),
+                    "execute": int(metadata.exec_address or 0),
+                    "access": int(metadata.access or 0),
+                    "length": int(stat.length or 0),
+                }
         try:
             from oaknut.disc.mount import resolve_mount
         except ImportError as exc:
@@ -4519,6 +5074,10 @@ class DiskService:
         if session.kind == "tape":
             target.write_bytes(self._tape_file(session, inner).data)
             return target
+        if session.kind == "romfs":
+            with self.romfs_mount(session) as mount:
+                target.write_bytes(mount.read_bytes(inner))
+            return target
         if session.kind == "adfs" and slot is None:
             with self.adfs_mount(session) as mount:
                 target.write_bytes(mount.read_bytes(inner))
@@ -4543,6 +5102,8 @@ class DiskService:
         return target
 
     def compact(self, session: ImageSession, slot: int | None, order: str | None = None) -> None:
+        if session.kind == "romfs":
+            raise DiskError("ROMFS is rebuilt into storage order after every edit and does not need compaction.")
         if session.kind == "tape":
             raise DiskError("UEF tapes cannot be compacted; convert to a disk image first.")
         self.require_writable_geometry(session)

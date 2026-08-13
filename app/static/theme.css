@@ -74,6 +74,14 @@
   --folder-icon-text: #654a08;
   --disk-icon-background: #d8aaa0;
   --disk-icon-text: #7e2d24;
+  --basic-icon-background: #c9dcae;
+  --basic-icon-text: #35551f;
+  --script-icon-background: #c9d9de;
+  --script-icon-text: #285467;
+  --text-icon-background: #ded3b7;
+  --text-icon-text: #5f5137;
+  --binary-icon-background: #d2c8dd;
+  --binary-icon-text: #55436c;
   --adfs-format: #6f9d79;
   --tape-format: #75678f;
   --format-icon-text: #241f19;
@@ -109,6 +117,15 @@
   --hex-active-changed: #8b6419;
   --hex-scrollbar: #5d6656;
   --hex-loading: rgba(21, 24, 19, .82);
+  --syntax-keyword: #7fd49d;
+  --syntax-string: #e7c66b;
+  --syntax-number: #8fc7dd;
+  --syntax-comment: #a59b84;
+  --syntax-symbol: #d9a8dc;
+  --syntax-api: #ee9a78;
+  --syntax-selection: rgba(60, 101, 118, .58);
+  --diagnostic-error: #ff947e;
+  --diagnostic-warning: #f0c75a;
 }
 
 html[data-theme="dark"] {
@@ -177,6 +194,14 @@ html[data-theme="dark"] {
   --folder-icon-text: #f0cd67;
   --disk-icon-background: #543129;
   --disk-icon-text: #ff9b82;
+  --basic-icon-background: #2f4825;
+  --basic-icon-text: #a9db80;
+  --script-icon-background: #263f49;
+  --script-icon-text: #99d0e2;
+  --text-icon-background: #453e2d;
+  --text-icon-text: #dfca91;
+  --binary-icon-background: #3d334a;
+  --binary-icon-text: #c9afe4;
   --adfs-format: #5c8d68;
   --tape-format: #73678e;
   --format-icon-text: #141710;
@@ -200,6 +225,15 @@ html[data-theme="dark"] {
   --hex-active-changed: #8f681d;
   --hex-scrollbar: #586553;
   --hex-loading: rgba(9, 12, 9, .86);
+  --syntax-keyword: #8edbaa;
+  --syntax-string: #f0ce72;
+  --syntax-number: #93cce2;
+  --syntax-comment: #a99f89;
+  --syntax-symbol: #dcb2e2;
+  --syntax-api: #ff9f7f;
+  --syntax-selection: rgba(53, 92, 108, .72);
+  --diagnostic-error: #ff9b86;
+  --diagnostic-warning: #f0c75a;
 }
 
 html { background: var(--html-background); }
