@@ -1,6 +1,7 @@
 window.AcornCodeEditor = (() => {
   const BASIC_LANGUAGE = window.AcornBasicLanguage;
   const ASSEMBLY_LANGUAGE = window.AcornAssemblyLanguage;
+  const CALL_CATALOGUE = window.AcornCallCatalogue;
   const esc = value => String(value ?? "").replace(/[&<>"']/g, character => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;",
   }[character]));
@@ -181,36 +182,8 @@ window.AcornCodeEditor = (() => {
     return null;
   };
 
-  const FX_REASON_HELP = Object.freeze({
-    0: "reports the operating-system version",
-    4: "controls cursor-key editing behaviour",
-    5: "selects the printer destination",
-    6: "selects the character ignored by the printer driver",
-    11: "sets keyboard auto-repeat delay",
-    12: "sets keyboard auto-repeat rate",
-    15: "flushes the selected input buffer",
-    21: "flushes the selected buffer; with no extra parameter this normally clears the keyboard buffer",
-    124: "clears the Escape condition", 125: "sets the Escape condition",
-    126: "acknowledges the Escape condition", 127: "checks for end of file",
-    128: "reads ADC or buffer status", 129: "reads a key with a time limit",
-    130: "reads the machine's high-order address", 131: "reads OSHWM, the bottom of user memory",
-    132: "reads the top of user memory", 134: "reads the text cursor position",
-    135: "reads the character at the text cursor", 143: "issues a sideways-ROM service call",
-    200: "controls Escape, Break and memory-clear behaviour on common BBC MOS versions",
-  });
-  const VDU_REASON_HELP = Object.freeze({
-    0: "perform no operation", 1: "send the next byte to the printer only",
-    2: "enable printer output", 3: "disable printer output", 4: "select the text cursor",
-    5: "select the graphics cursor", 6: "enable VDU output", 7: "sound the bell",
-    12: "clear the text area", 13: "return the cursor to the start of its line",
-    14: "enable paged scrolling", 15: "disable paged scrolling", 16: "clear the graphics area",
-    17: "select a logical text colour", 19: "define a logical colour", 22: "select a screen mode",
-    18: "select a graphics colour and plot action", 20: "restore default colours",
-    21: "disable VDU output", 23: "send a VDU-variable, cursor-control or character-definition sequence",
-    24: "define the graphics viewport", 25: "perform a graphics plot operation",
-    26: "restore the default text and graphics windows", 28: "define the text window",
-    29: "set the graphics origin", 30: "move the text cursor home", 31: "move the text cursor",
-  });
+  const FX_REASON_HELP = Object.freeze(Object.fromEntries(Object.entries(CALL_CATALOGUE?.OSBYTE || {}).map(([reason, spec]) => [reason, spec.summary])));
+  const VDU_REASON_HELP = Object.freeze(Object.fromEntries(Object.entries(CALL_CATALOGUE?.VDU || {}).map(([reason, spec]) => [reason, spec.summary])));
 
   const OSWORD_REASON_HELP = Object.freeze({
     0: "read an edited input line", 1: "read the system clock", 2: "write the system clock",
@@ -229,9 +202,47 @@ window.AcornCodeEditor = (() => {
   });
 
   const sourceNumber = value => {
-    const match = String(value || "").trim().match(/^(?:&([0-9a-f]+)|0x([0-9a-f]+)|(\d+))/i);
-    return match ? Number.parseInt(match[1] || match[2] || match[3], match[1] || match[2] ? 16 : 10) : null;
+    const match = String(value || "").trim().match(/^(-?)(?:&([0-9a-f]+)|0x([0-9a-f]+)|(\d+))/i);
+    if (!match) return null;
+    const number = Number.parseInt(match[2] || match[3] || match[4], match[2] || match[3] ? 16 : 10);
+    return match[1] ? -number : number;
   };
+
+  function constantNumbers(value) {
+    const numbers = [];
+    let remaining = String(value || "").trim();
+    while (remaining) {
+      const match = remaining.match(/^(-?(?:&[0-9a-f]+|0x[0-9a-f]+|\d+))/i);
+      if (!match) break;
+      numbers.push(sourceNumber(match[1]));
+      const separator = remaining.slice(match[0].length).match(/^(\s*,\s*|\s+)/);
+      if (!separator) break;
+      remaining = remaining.slice(match[0].length + separator[0].length);
+    }
+    return numbers;
+  }
+
+  function vduBytes(value) {
+    const bytes = [];
+    let remaining = String(value || "").trim();
+    let complete = true;
+    while (remaining) {
+      const match = remaining.match(/^(-?(?:&[0-9a-f]+|0x[0-9a-f]+|\d+))/i);
+      if (!match) { complete = false; break; }
+      const number = sourceNumber(match[1]);
+      remaining = remaining.slice(match[0].length);
+      const separator = remaining.match(/^\s*([,;])/);
+      const delimiter = separator?.[1] || "";
+      bytes.push(number & 0xFF);
+      if (delimiter === ";") bytes.push((number >>> 8) & 0xFF);
+      if (!separator) {
+        if (remaining.trim()) complete = false;
+        break;
+      }
+      remaining = remaining.slice(separator[0].length).trimStart();
+    }
+    return { bytes, complete };
+  }
 
   function preceding6502Registers(line, relativeStart) {
     const registers = {};
@@ -240,7 +251,43 @@ window.AcornCodeEditor = (() => {
     return registers;
   }
 
-  function sourceContextHelp(source, language, start, end, key) {
+  const PLATFORM_NAMES = Object.freeze({ bbc: "BBC Micro", master: "BBC Master", electron: "Acorn Electron", "risc-os": "Archimedes / RISC OS" });
+
+  function configuredPlatform(profile = {}) {
+    const machine = String(profile.machine || "").toLowerCase();
+    if (/risc[ -]?os|archimedes|a3\d\d\d|a4\d\d|a5\d\d\d/.test(machine)) return "risc-os";
+    if (/electron|plus\s*3/.test(machine)) return "electron";
+    if (/master/.test(machine)) return "master";
+    if (/bbc|beeb/.test(machine)) return "bbc";
+    const description = String(profile.targetHardware || "").toLowerCase();
+    if (/risc[ -]?os|archimedes|a3\d\d\d|a4\d\d|a5\d\d\d/.test(description)) return "risc-os";
+    if (/electron|plus\s*3/.test(description)) return "electron";
+    if (/master/.test(description)) return "master";
+    if (/bbc|beeb/.test(description)) return "bbc";
+    return "auto";
+  }
+
+  function platformHelp(result, profile = {}) {
+    const platform = configuredPlatform(profile);
+    const targetName = platform === "auto" ? "the automatic target" : PLATFORM_NAMES[platform];
+    const documented = result?.platforms || [];
+    const requirements = result?.requires ? ` Requirements: ${result.requires}.` : "";
+    if (platform === "auto") return `The workbench target is automatic, so compatibility cannot be confirmed.${requirements}`;
+    if (!documented.length) return `The catalogue cannot prove that this machine-specific operation is supported by the configured ${targetName} target.${requirements}`;
+    if (!documented.includes(platform)) {
+      const designedFor = documented.map(item => PLATFORM_NAMES[item] || item).join(", ");
+      return `Target warning: this operation is documented for ${designedFor}, not the configured ${targetName} target. It was not designed for the current platform and, if accepted at all, may cause unexpected behaviour.${requirements}`;
+    }
+    return `The configured ${targetName} target is within the documented platform scope.${requirements}`;
+  }
+
+  function catalogueText(result, profile) {
+    if (!result) return "";
+    const detail = (result.details || []).filter(Boolean).join(". ");
+    return `${result.summary}.${detail ? ` ${detail}.` : ""} ${platformHelp(result, profile)}`;
+  }
+
+  function sourceContextHelp(source, language, start, end, key, targetProfile = {}) {
     const base = lookup(language, key);
     if (!base) return base;
     const lineStart = source.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
@@ -252,23 +299,32 @@ window.AcornCodeEditor = (() => {
     const normal = normaliseHelpKey(key);
     const additions = [];
     if ((isStarHelpKey(key) && normal === "FX") || (normal === "OSCLI" && ["basic", "script"].includes(language))) {
-      const fxText = normal === "OSCLI"
-        ? tail.match(/^\s*"\s*FX\s*([0-9]+)/i)?.[1]
-        : tail.match(/^\s*([0-9]+)/)?.[1];
-      const reason = fxText == null ? null : Number(fxText);
-      if (reason != null) additions.push(`This call uses OSBYTE reason ${reason}, which ${FX_REASON_HELP[reason] || "has a target-dependent purpose"}.`);
+      const command = normal === "OSCLI" ? tail.match(/^\s*"([^\"]*)"/)?.[1] : tail;
+      const fxArguments = command == null ? [] : constantNumbers(normal === "OSCLI" ? command.replace(/^\s*FX\s*/i, "") : command);
+      const [reason, suppliedX, suppliedY] = fxArguments;
+      // The MOS *FX command syntax supplies zero for omitted numeric operands.
+      // Direct OSBYTE assembly calls are handled separately because their
+      // register contents must never be guessed.
+      const x = reason == null ? null : suppliedX ?? 0;
+      const y = reason == null ? null : suppliedY ?? 0;
+      if (reason != null) additions.push(`This call uses OSBYTE reason ${reason}: ${catalogueText(CALL_CATALOGUE?.explainOsbyte(reason, x, y), targetProfile)}`);
     }
     if (normal === "OSCLI" && ["basic", "script"].includes(language)) {
       const command = tail.match(/^\s*"([^"]*)"/)?.[1];
       if (command) additions.push(`This call executes the MOS command ${JSON.stringify(command)}.`);
     }
     if (normal === "VDU") {
-      const reason = Number(tail.match(/^\s*([0-9]+)/)?.[1]);
-      if (Number.isFinite(reason)) {
-        const statement = tail.split(":", 1)[0];
-        const values = [...statement.matchAll(/(?:^|[,;])\s*(&[0-9a-f]+|0x[0-9a-f]+|\d+)/gi)].map(match => sourceNumber(match[1])).filter(value => value != null);
-        additions.push(`The first VDU byte is ${reason}: ${VDU_REASON_HELP[reason] || "interpret it using the target machine's VDU protocol"}.${values.length > 1 ? ` Constant parameters: ${values.slice(1).map(value => `&${value.toString(16).toUpperCase()}`).join(", ")}.` : ""}`);
+      const statement = tail.split(":", 1)[0];
+      const parsed = vduBytes(statement);
+      const reason = parsed.bytes[0];
+      if (reason != null) {
+        additions.push(`The first VDU byte is ${reason}: ${catalogueText(CALL_CATALOGUE?.explainVdu(parsed.bytes, parsed.complete), targetProfile)}`);
       }
+    }
+    if (["SOUND", "ENVELOPE"].includes(normal) && language === "basic") {
+      const statement = tail.split(":", 1)[0];
+      const decoded = CALL_CATALOGUE?.explainBasicCall(normal, constantNumbers(statement));
+      if (decoded) additions.push(catalogueText(decoded, targetProfile));
     }
     if (normal === "MODE") {
       const mode = Number(tail.match(/^\s*([0-9]+)/)?.[1]);
@@ -282,7 +338,7 @@ window.AcornCodeEditor = (() => {
     }
     if (["OSBYTE", "OSWORD", "OSCLI", "OSWRCH", "VDUCHR"].includes(normal) && ["6502", "65c02", "65816"].includes(language)) {
       const registers = preceding6502Registers(line, relativeStart);
-      if (normal === "OSBYTE" && registers.A != null) additions.push(`A=&${registers.A.toString(16).toUpperCase().padStart(2, "0")} selects ${FX_REASON_HELP[registers.A] || "an undocumented or machine-specific OSBYTE reason"}; X=${registers.X == null ? "unknown" : `&${registers.X.toString(16).toUpperCase().padStart(2, "0")}`}; Y=${registers.Y == null ? "unknown" : `&${registers.Y.toString(16).toUpperCase().padStart(2, "0")}`}.`);
+      if (normal === "OSBYTE" && registers.A != null) additions.push(`A=&${registers.A.toString(16).toUpperCase().padStart(2, "0")} selects OSBYTE reason ${registers.A}: ${catalogueText(CALL_CATALOGUE?.explainOsbyte(registers.A, registers.X, registers.Y), targetProfile)}`);
       if (normal === "OSWORD" && registers.A != null) additions.push(`A=&${registers.A.toString(16).toUpperCase().padStart(2, "0")} selects ${OSWORD_REASON_HELP[registers.A] || "a filing-system or machine-specific OSWORD reason"}; the parameter block pointer is ${registers.X == null || registers.Y == null ? "not provable" : `&${((registers.Y << 8) | registers.X).toString(16).toUpperCase().padStart(4, "0")}`} in XY.`);
       if (normal === "OSCLI") additions.push(registers.X == null || registers.Y == null ? "The command-string pointer in XY is not provable from immediate loads on this source line." : `XY points to command string address &${((registers.Y << 8) | registers.X).toString(16).toUpperCase().padStart(4, "0")}.`);
       if (["OSWRCH", "VDUCHR"].includes(normal) && registers.A != null) additions.push(`A=&${registers.A.toString(16).toUpperCase().padStart(2, "0")} is ${VDU_REASON_HELP[registers.A] ? `VDU ${registers.A}: ${VDU_REASON_HELP[registers.A]}` : registers.A >= 32 && registers.A < 127 ? `the character ${JSON.stringify(String.fromCharCode(registers.A))}` : "a raw VDU byte"}.`);
@@ -293,6 +349,7 @@ window.AcornCodeEditor = (() => {
         const swi = argument[1].toUpperCase();
         additions.push(`${argument[1]} will ${RISC_OS_SWI_HELP[swi] || "invoke a module or operating-system SWI whose register contract should be checked"}.`);
       } else if (argument?.[2]) additions.push(`This calls SWI &${sourceNumber(argument[2]).toString(16).toUpperCase()}; use a symbolic SWI name when possible so its contract remains visible.`);
+      additions.push(platformHelp({ platforms: ["risc-os"], requires: "RISC OS and the named SWI or module" }, targetProfile));
     }
     if (!additions.length) return base;
     return { ...base, notes: [base.notes, ...additions].filter(Boolean).join(" ") };
@@ -1134,7 +1191,7 @@ window.AcornCodeEditor = (() => {
     root.addEventListener("code-editor-destroy", hide, { once: true });
   }
 
-  function enhance({ textarea, root, language = "text", dialect = "BBC BASIC II", inlineAssemblyLanguage = "6502", validateBasic = null, packBasic = null, initialHistory = [] }) {
+  function enhance({ textarea, root, language = "text", dialect = "BBC BASIC II", inlineAssemblyLanguage = "6502", validateBasic = null, packBasic = null, initialHistory = [], targetProfile = {} }) {
     if (!textarea || !root || textarea.closest(".code-editor-surface")) return null;
     const surface = document.createElement("div");
     surface.className = "code-editor-surface";
@@ -1362,7 +1419,7 @@ window.AcornCodeEditor = (() => {
       const lineStart = textarea.value.lastIndexOf("\n", Math.max(0, offset - 1)) + 1;
       const found = state.tokens.find(item => item.start <= offset && item.end >= offset && item.helpKey)
         || state.tokens.filter(item => item.start >= lineStart && item.end <= offset && item.helpKey).at(-1);
-      const item = found ? sourceContextHelp(textarea.value, found.helpLanguage || language, found.start, found.end, found.helpKey) : null;
+      const item = found ? sourceContextHelp(textarea.value, found.helpLanguage || language, found.start, found.end, found.helpKey, targetProfile) : null;
       renderDrawer(item?.key || "Help at cursor", helpMarkup(item));
     };
     const showProblems = () => renderDrawer("Problems", state.issues.length ? `<div class="code-problem-list">${state.issues.map(item => `<button type="button" data-code-offset="${item.offset}"><b class="${esc(item.severity)}">${esc(item.severity)}</b><span>Line ${item.line}: ${esc(item.message)}</span></button>`).join("")}</div>` : '<p class="code-empty-message">No problems were found by the live checks.</p>');
@@ -1841,7 +1898,7 @@ window.AcornCodeEditor = (() => {
         const tokenLanguage = element.dataset.helpLanguage || language;
         const tokenStart = Number(element.dataset.tokenStart);
         const tokenEnd = Number(element.dataset.tokenEnd);
-        const contextualHelp = sourceContextHelp(textarea.value, tokenLanguage, tokenStart, tokenEnd, element.dataset.helpKey);
+        const contextualHelp = sourceContextHelp(textarea.value, tokenLanguage, tokenStart, tokenEnd, element.dataset.helpKey, targetProfile);
         attachTooltip(root, tokenLanguage, element, element.dataset.helpKey, contextualHelp);
         element.addEventListener("pointerdown", event => {
           event.preventDefault();

@@ -40,6 +40,7 @@
   --modal-backdrop: rgba(35, 29, 22, .56);
   --overlay-backdrop: rgba(20, 17, 14, .76);
   --loading-background: rgba(245, 238, 220, .82);
+  --emulator-background: #11140f;
   --inset-shadow: rgba(0, 0, 0, .14);
 
   --danger: #9d3025;
@@ -160,6 +161,7 @@ html[data-theme="dark"] {
   --modal-backdrop: rgba(0, 0, 0, .74);
   --overlay-backdrop: rgba(0, 0, 0, .8);
   --loading-background: rgba(15, 18, 14, .82);
+  --emulator-background: #080a08;
   --inset-shadow: rgba(0, 0, 0, .28);
 
   --danger: #ff8d76;

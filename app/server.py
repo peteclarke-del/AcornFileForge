@@ -69,6 +69,7 @@ IMAGE_MUTATIONS = {
     "tools.apply_manifest": "applying reviewed menu metadata",
     "tools.save_inspected_text": "editing a BASIC or text file",
     "tools.repair_health": "applying a safe image-health repair",
+    "tools.repair_adfs_installations": "repairing installed ADFS software",
     "hex_editor.write_hex": "editing raw image bytes",
     "hex_editor.write_file_hex": "editing raw file bytes",
     "rom_tools.rom_project": "editing ROM project notes",
