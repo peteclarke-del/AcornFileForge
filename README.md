@@ -286,6 +286,13 @@ through one writable filesystem mount, which avoids repeatedly reopening a
 large BeebSCSI DAT image. Run the audit again after repair to confirm that only
 intentional warnings remain.
 
+Saved image notices retain actual compatibility changes, but do not retain old
+point-in-time loader diagnoses forever. Opening an older working session
+consolidates repeated ADFS directory and Tube notices, and directs the user to
+the HDD audit for current path-aware loader results. The pane reports the notice
+count and latest item instead of placing the complete history in one oversized
+toast. Retained byte-level repair history remains available in the generated README.
+
 RISC OS Open packages install only into ADFS or RISC OS images. The installer
 preserves application directory structure and SparkFS load, execute and
 filetype metadata, while omitting the package manager's `RiscPkg` control

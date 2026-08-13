@@ -142,6 +142,21 @@ class UEFTests(unittest.TestCase):
         self.assertEqual(repairs, [])
         self.assertEqual(warnings, [])
 
+    def test_legacy_adfs_notices_are_consolidated(self):
+        warnings = DiskService._normalise_warnings([
+            "Repaired 4 old-ADFS directory sequence fields for 8-bit hardware.",
+            "Repaired 10 old-ADFS directory sequence fields for 8-bit hardware.",
+            "$.GAMES.QBIX: HAVEN: loader contains 1 ambiguous abbreviated command(s) (R.+AP2)",
+            "$.GAMES.QBIX: the selected hardware profile has a Tube second processor enabled.",
+            "$.GAMES.ZALAGA: ADFS compatibility change made: LOADER: expanded L. ZALAGA to LOAD ZALAGA.",
+        ])
+
+        self.assertEqual(len(warnings), 4)
+        self.assertEqual(sum("directory sequence" in item for item in warnings), 1)
+        self.assertEqual(sum("Tube second processor" in item for item in warnings), 1)
+        self.assertEqual(sum("current path-aware results" in item for item in warnings), 1)
+        self.assertTrue(any("ZALAGA" in item for item in warnings))
+
     def test_loader_repair_follows_boot_target_without_scanning_data_files(self):
         contents = parse_uef(sample_uef("Chuckulus-Electron-V1-0.uef"))
         chuck = contents.files[1]
