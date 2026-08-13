@@ -2860,6 +2860,80 @@ class DiskService:
             self._persist_session(session)
         return project
 
+    def move_editor_projects(
+        self,
+        session: ImageSession,
+        moves: list[dict],
+        slot: int | None,
+        side: int | None,
+    ) -> int:
+        """Follow file and directory moves without orphaning editor annotations."""
+        replacements = sorted(
+            (
+                (str(item.get("source") or "").rstrip("."), str(item.get("destination") or "").rstrip("."))
+                for item in moves
+                if item.get("source") and item.get("destination")
+            ),
+            key=lambda item: len(item[0]),
+            reverse=True,
+        )
+        if not replacements:
+            return 0
+        changed: dict[str, dict] = {}
+        removed: list[str] = []
+        slot_key = str(slot) if slot is not None else "-"
+        side_key = str(side) if side is not None else "-"
+        for key, project in list(session.editor_projects.items()):
+            key_slot, separator, remainder = key.partition("|")
+            key_side, separator2, path = remainder.partition("|")
+            if not separator or not separator2 or key_slot != slot_key or key_side != side_key:
+                continue
+            folded = path.casefold()
+            for source, destination in replacements:
+                source_folded = source.casefold()
+                if folded != source_folded and not folded.startswith(source_folded + "."):
+                    continue
+                suffix = path[len(source):]
+                changed[editor_project_key(destination + suffix, slot, side)] = project
+                removed.append(key)
+                break
+        if not removed:
+            return 0
+        with session.lock:
+            for key in removed:
+                session.editor_projects.pop(key, None)
+            session.editor_projects.update(changed)
+            self._persist_session(session)
+        return len(removed)
+
+    def delete_editor_projects(
+        self,
+        session: ImageSession,
+        paths: list[str],
+        slot: int | None,
+        side: int | None,
+    ) -> int:
+        """Remove annotations belonging to deleted files or directory trees."""
+        prefixes = [str(path or "").rstrip(".").casefold() for path in paths if path]
+        slot_key = str(slot) if slot is not None else "-"
+        side_key = str(side) if side is not None else "-"
+        removed = []
+        for key in session.editor_projects:
+            key_slot, separator, remainder = key.partition("|")
+            key_side, separator2, path = remainder.partition("|")
+            if not separator or not separator2 or key_slot != slot_key or key_side != side_key:
+                continue
+            folded = path.casefold()
+            if any(folded == prefix or folded.startswith(prefix + ".") for prefix in prefixes):
+                removed.append(key)
+        if not removed:
+            return 0
+        with session.lock:
+            for key in removed:
+                session.editor_projects.pop(key, None)
+            self._persist_session(session)
+        return len(removed)
+
     def rom_component_exports(self, session: ImageSession) -> list[tuple[Path, str]]:
         """Create byte-wide chip files for a documented interleaved ROM set."""
         if session.kind != "rom" or not session.rom_layout.startswith("byte-interleaved-"):
@@ -3091,6 +3165,7 @@ class DiskService:
                     self.inner_for(session, item["destination"], side),
                 ])
             self._mark_mutated(session, slot)
+        self.move_editor_projects(session, checked, slot, side)
         return checked
 
     def list_dfs_catalogue_files(

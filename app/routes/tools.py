@@ -182,6 +182,7 @@ def create_tools_blueprint(
             service, session, str(request.args.get("query") or ""),
             optional_int(request.args.get("slot")), optional_int(request.args.get("side")),
             str(request.args.get("root") or "$"),
+            str(request.args.get("allSlots") or "false").lower() in {"1", "true", "yes"},
         ))
 
     @blueprint.put("/api/images/<image_id>/inspect")
@@ -399,10 +400,11 @@ def create_tools_blueprint(
             available=bool(command and "{file}" in command),
             hardware=session.target_hardware,
             message=(
-                "Configured by ACORN_FILE_DEBUGGER_COMMAND."
+                "Configured by ACORN_FILE_DEBUGGER_COMMAND. The adapter may use {action}, {breakpoint} and {expression}."
                 if command and "{file}" in command
                 else "Set ACORN_FILE_DEBUGGER_COMMAND with a {file} placeholder."
             ),
+            actions=["launch", "continue", "step", "next", "registers", "memory", "stop"],
         )
 
     @blueprint.post("/api/images/<image_id>/editor-debugger")
@@ -416,6 +418,10 @@ def create_tools_blueprint(
             raise DiskError("No external debugger command is configured.")
         content = service.read_file(session, slot, path, side)
         metadata = service.file_metadata(session, slot, path, side)
+        action = str(data.get("action") or "launch").strip().lower()
+        if action not in {"launch", "continue", "step", "next", "registers", "memory", "stop"}:
+            raise DiskError("Choose a supported debugger action.")
+        expression = str(data.get("expression") or "").strip()[:500]
         with tempfile.NamedTemporaryFile(dir=service.work_dir, prefix="debug-file-", suffix=f"-{Path(path).name}") as temporary:
             temporary.write(content)
             temporary.flush()
@@ -424,6 +430,7 @@ def create_tools_blueprint(
                 "{load}": str(metadata.get("load") or 0), "{execute}": str(metadata.get("execute") or 0),
                 "{breakpoint}": str(data.get("breakpoint") or metadata.get("execute") or 0),
                 "{architecture}": str(data.get("architecture") or "6502"),
+                "{action}": action, "{expression}": expression,
             }
             arguments = shlex.split(template)
             for key, value in replacements.items():
@@ -436,6 +443,7 @@ def create_tools_blueprint(
             "time": datetime.now(timezone.utc).isoformat(), "command": arguments[0],
             "returnCode": completed.returncode, "stdout": completed.stdout[-50000:],
             "stderr": completed.stderr[-50000:], "breakpoint": replacements["{breakpoint}"],
+            "action": action, "expression": expression,
         }
         project = service.editor_project(session, path, slot, side)
         project["tests"] = [*project.get("tests", []), {**result, "kind": "debugger"}][-100:]

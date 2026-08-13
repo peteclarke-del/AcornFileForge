@@ -51,6 +51,7 @@ window.AcornCodeEditor = (() => {
     COLOUR: help("Selects the logical text foreground or background colour.", "COLOUR logical-colour", "The available logical colours depend on the current display mode.", "Values from 128 select the text background colour; flashing and tint behaviour vary by machine and BASIC version."),
     MODE: help("Changes the display mode and normally clears the screen.", "MODE number", "The selected mode must exist on the target machine and leave enough memory for the program."),
     VDU: help("Sends one or more bytes directly to the VDU driver.", "VDU value[,value…]", "Sequences and mode capabilities vary across BBC, Electron and RISC OS targets."),
+    SYS: help("Calls a RISC OS software interrupt by name or number.", 'SYS "SWI_Name"[,input…] [TO output…]', "BBC BASIC V or later and the named SWI must be available on the target RISC OS system.", "Register arguments are positional. Check the SWI contract before passing pointers or writable buffers."),
     SOUND: help("Queues a sound using the four BBC sound parameters.", "SOUND channel,amplitude,pitch,duration", "Sound hardware and envelope behaviour vary by target."),
     ENVELOPE: help("Defines a numbered sound envelope.", "ENVELOPE number,step,pitch…,amplitude…", "The envelope number is later referenced through a negative SOUND amplitude."),
     REM: help("Introduces a comment; the rest of the BASIC line is not executed.", "REM comment", "None."),
@@ -181,6 +182,7 @@ window.AcornCodeEditor = (() => {
   };
 
   const FX_REASON_HELP = Object.freeze({
+    0: "reports the operating-system version",
     4: "controls cursor-key editing behaviour",
     5: "selects the printer destination",
     6: "selects the character ignored by the printer driver",
@@ -188,40 +190,85 @@ window.AcornCodeEditor = (() => {
     12: "sets keyboard auto-repeat rate",
     15: "flushes the selected input buffer",
     21: "flushes the selected buffer; with no extra parameter this normally clears the keyboard buffer",
+    124: "clears the Escape condition", 125: "sets the Escape condition",
+    126: "acknowledges the Escape condition", 127: "checks for end of file",
+    128: "reads ADC or buffer status", 129: "reads a key with a time limit",
+    130: "reads the machine's high-order address", 131: "reads OSHWM, the bottom of user memory",
+    132: "reads the top of user memory", 134: "reads the text cursor position",
+    135: "reads the character at the text cursor", 143: "issues a sideways-ROM service call",
     200: "controls Escape, Break and memory-clear behaviour on common BBC MOS versions",
   });
   const VDU_REASON_HELP = Object.freeze({
+    0: "perform no operation", 1: "send the next byte to the printer only",
     2: "enable printer output", 3: "disable printer output", 4: "select the text cursor",
     5: "select the graphics cursor", 6: "enable VDU output", 7: "sound the bell",
     12: "clear the text area", 13: "return the cursor to the start of its line",
     14: "enable paged scrolling", 15: "disable paged scrolling", 16: "clear the graphics area",
     17: "select a logical text colour", 19: "define a logical colour", 22: "select a screen mode",
-    23: "send a VDU-variable, cursor-control or character-definition sequence",
+    18: "select a graphics colour and plot action", 20: "restore default colours",
+    21: "disable VDU output", 23: "send a VDU-variable, cursor-control or character-definition sequence",
     24: "define the graphics viewport", 25: "perform a graphics plot operation",
     26: "restore the default text and graphics windows", 28: "define the text window",
     29: "set the graphics origin", 30: "move the text cursor home", 31: "move the text cursor",
   });
 
+  const OSWORD_REASON_HELP = Object.freeze({
+    0: "read an edited input line", 1: "read the system clock", 2: "write the system clock",
+    3: "read the interval timer", 4: "write the interval timer", 5: "read a byte from I/O memory",
+    6: "write a byte to I/O memory", 7: "perform a SOUND command", 8: "define an ENVELOPE",
+    9: "read a pixel colour", 10: "read a character definition",
+  });
+  const RISC_OS_SWI_HELP = Object.freeze({
+    "OS_WRITEC": "write the character in R0", "OS_WRITE0": "write the zero-terminated string addressed by R0",
+    "OS_NEWLINE": "write a newline", "OS_READC": "read a character", "OS_CLI": "execute the command string addressed by R0",
+    "OS_BYTE": "perform a register-based operating-system operation", "OS_WORD": "perform a parameter-block operating-system operation",
+    "OS_FILE": "perform a whole-file operation", "OS_FIND": "open or close a file", "OS_GBPB": "transfer blocks or enumerate filing-system objects",
+    "OS_ARGS": "read or change filing-system arguments", "OS_BGET": "read a byte from an open file", "OS_BPUT": "write a byte to an open file",
+    "OS_GETENV": "read the command tail, time and memory limit", "OS_EXIT": "terminate the current application",
+    "WIMP_INITIALISE": "register a desktop task with the Window Manager", "WIMP_POLL": "wait for the next Window Manager event",
+  });
+
+  const sourceNumber = value => {
+    const match = String(value || "").trim().match(/^(?:&([0-9a-f]+)|0x([0-9a-f]+)|(\d+))/i);
+    return match ? Number.parseInt(match[1] || match[2] || match[3], match[1] || match[2] ? 16 : 10) : null;
+  };
+
+  function preceding6502Registers(line, relativeStart) {
+    const registers = {};
+    const prefix = line.slice(0, relativeStart);
+    for (const match of prefix.matchAll(/\bLD([AXY])\s*#\s*(&[0-9a-f]+|0x[0-9a-f]+|\d+)/gi)) registers[match[1].toUpperCase()] = sourceNumber(match[2]);
+    return registers;
+  }
+
   function sourceContextHelp(source, language, start, end, key) {
     const base = lookup(language, key);
-    if (!base || !["basic", "script"].includes(language)) return base;
+    if (!base) return base;
     const lineStart = source.lastIndexOf("\n", Math.max(0, start - 1)) + 1;
     const lineEnd = source.indexOf("\n", end);
     const line = source.slice(lineStart, lineEnd < 0 ? source.length : lineEnd);
+    const relativeStart = start - lineStart;
     const relativeEnd = end - lineStart;
     const tail = line.slice(relativeEnd);
     const normal = normaliseHelpKey(key);
     const additions = [];
-    if ((isStarHelpKey(key) && normal === "FX") || normal === "OSCLI") {
+    if ((isStarHelpKey(key) && normal === "FX") || (normal === "OSCLI" && ["basic", "script"].includes(language))) {
       const fxText = normal === "OSCLI"
         ? tail.match(/^\s*"\s*FX\s*([0-9]+)/i)?.[1]
         : tail.match(/^\s*([0-9]+)/)?.[1];
       const reason = fxText == null ? null : Number(fxText);
       if (reason != null) additions.push(`This call uses OSBYTE reason ${reason}, which ${FX_REASON_HELP[reason] || "has a target-dependent purpose"}.`);
     }
+    if (normal === "OSCLI" && ["basic", "script"].includes(language)) {
+      const command = tail.match(/^\s*"([^"]*)"/)?.[1];
+      if (command) additions.push(`This call executes the MOS command ${JSON.stringify(command)}.`);
+    }
     if (normal === "VDU") {
       const reason = Number(tail.match(/^\s*([0-9]+)/)?.[1]);
-      if (Number.isFinite(reason)) additions.push(`The first VDU byte is ${reason}: ${VDU_REASON_HELP[reason] || "interpret it using the target machine's VDU protocol"}.`);
+      if (Number.isFinite(reason)) {
+        const statement = tail.split(":", 1)[0];
+        const values = [...statement.matchAll(/(?:^|[,;])\s*(&[0-9a-f]+|0x[0-9a-f]+|\d+)/gi)].map(match => sourceNumber(match[1])).filter(value => value != null);
+        additions.push(`The first VDU byte is ${reason}: ${VDU_REASON_HELP[reason] || "interpret it using the target machine's VDU protocol"}.${values.length > 1 ? ` Constant parameters: ${values.slice(1).map(value => `&${value.toString(16).toUpperCase()}`).join(", ")}.` : ""}`);
+      }
     }
     if (normal === "MODE") {
       const mode = Number(tail.match(/^\s*([0-9]+)/)?.[1]);
@@ -232,6 +279,20 @@ window.AcornCodeEditor = (() => {
       if (Number.isFinite(colour)) additions.push(colour >= 128
         ? `Value ${colour} selects logical background colour ${colour - 128} on classic BBC VDU drivers.`
         : `Value ${colour} selects logical foreground colour ${colour} on classic BBC VDU drivers.`);
+    }
+    if (["OSBYTE", "OSWORD", "OSCLI", "OSWRCH", "VDUCHR"].includes(normal) && ["6502", "65c02", "65816"].includes(language)) {
+      const registers = preceding6502Registers(line, relativeStart);
+      if (normal === "OSBYTE" && registers.A != null) additions.push(`A=&${registers.A.toString(16).toUpperCase().padStart(2, "0")} selects ${FX_REASON_HELP[registers.A] || "an undocumented or machine-specific OSBYTE reason"}; X=${registers.X == null ? "unknown" : `&${registers.X.toString(16).toUpperCase().padStart(2, "0")}`}; Y=${registers.Y == null ? "unknown" : `&${registers.Y.toString(16).toUpperCase().padStart(2, "0")}`}.`);
+      if (normal === "OSWORD" && registers.A != null) additions.push(`A=&${registers.A.toString(16).toUpperCase().padStart(2, "0")} selects ${OSWORD_REASON_HELP[registers.A] || "a filing-system or machine-specific OSWORD reason"}; the parameter block pointer is ${registers.X == null || registers.Y == null ? "not provable" : `&${((registers.Y << 8) | registers.X).toString(16).toUpperCase().padStart(4, "0")}`} in XY.`);
+      if (normal === "OSCLI") additions.push(registers.X == null || registers.Y == null ? "The command-string pointer in XY is not provable from immediate loads on this source line." : `XY points to command string address &${((registers.Y << 8) | registers.X).toString(16).toUpperCase().padStart(4, "0")}.`);
+      if (["OSWRCH", "VDUCHR"].includes(normal) && registers.A != null) additions.push(`A=&${registers.A.toString(16).toUpperCase().padStart(2, "0")} is ${VDU_REASON_HELP[registers.A] ? `VDU ${registers.A}: ${VDU_REASON_HELP[registers.A]}` : registers.A >= 32 && registers.A < 127 ? `the character ${JSON.stringify(String.fromCharCode(registers.A))}` : "a raw VDU byte"}.`);
+    }
+    if (normal === "SYS" && language === "basic") {
+      const argument = tail.match(/^\s*(?:"([^"]+)"|(&[0-9a-f]+|0x[0-9a-f]+|\d+))/i);
+      if (argument?.[1]) {
+        const swi = argument[1].toUpperCase();
+        additions.push(`${argument[1]} will ${RISC_OS_SWI_HELP[swi] || "invoke a module or operating-system SWI whose register contract should be checked"}.`);
+      } else if (argument?.[2]) additions.push(`This calls SWI &${sourceNumber(argument[2]).toString(16).toUpperCase()}; use a symbolic SWI name when possible so its contract remains visible.`);
     }
     if (!additions.length) return base;
     return { ...base, notes: [base.notes, ...additions].filter(Boolean).join(" ") };

@@ -1693,6 +1693,7 @@ def move_adfs_items(
         }
 
     session.dirty = True
+    service.move_editor_projects(session, moves, None, None)
     service._persist_session(session)
     return {
         "moved": moves,
@@ -1815,6 +1816,12 @@ def delete_adfs_items(
         }
 
     session.dirty = True
+    service.delete_editor_projects(
+        session,
+        [item["path"] for item in deleted_items],
+        None,
+        None,
+    )
     service._persist_session(session)
     result = {
         "deletedItems": deleted_items,

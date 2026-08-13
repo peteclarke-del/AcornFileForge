@@ -55,6 +55,12 @@ def normalise_editor_project(document: dict | None) -> dict:
             "name": str(row.get("name") or f"Offset {offset}")[:120],
             "note": str(row.get("note") or "")[:2000],
         })
+    comments = {}
+    for offset, value in dict(source.get("comments") or {}).items():
+        numeric = _number(offset, -1)
+        text = str(value or "").strip()[:2000]
+        if numeric >= 0 and text:
+            comments[str(numeric)] = text
     history = [
         {
             "time": str(row.get("time") or "")[:40],
@@ -71,6 +77,7 @@ def normalise_editor_project(document: dict | None) -> dict:
         "symbols": symbols,
         "regions": regions[-2048:],
         "bookmarks": bookmarks[-1024:],
+        "comments": dict(list(comments.items())[-4096:]),
         "history": history,
         "tests": tests,
     }

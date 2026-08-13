@@ -404,6 +404,7 @@ def create_files_blueprint(
                 }],
             )
         else:
+            side = optional_int(data.get("side"))
             service.mutate(
                 session,
                 slot,
@@ -413,7 +414,13 @@ def create_files_blueprint(
                     "{image}:" + data["source"],
                     data["destination"],
                 ],
-                optional_int(data.get("side")),
+                side,
+            )
+            service.move_editor_projects(
+                session,
+                [{"source": data["source"], "destination": data["destination"]}],
+                slot,
+                side,
             )
             result = {}
         return jsonify(image=service.summary(session), **result)
@@ -463,6 +470,8 @@ def create_files_blueprint(
                 [item["path"] for item in items],
             )
         else:
+            slot = optional_int(data.get("slot"))
+            side = optional_int(data.get("side"))
             args = ["rm", "--force"]
             if any(item.get("recursive") for item in items):
                 args.append("--recursive")
@@ -473,9 +482,15 @@ def create_files_blueprint(
             )
             service.mutate(
                 session,
-                optional_int(data.get("slot")),
+                slot,
                 args,
-                optional_int(data.get("side")),
+                side,
+            )
+            service.delete_editor_projects(
+                session,
+                [item["path"] for item in items],
+                slot,
+                side,
             )
             result = {
                 "deletedItems": [

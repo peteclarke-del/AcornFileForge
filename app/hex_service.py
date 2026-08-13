@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import mmap
 import os
+from io import BytesIO
 from pathlib import Path
+from typing import BinaryIO
 
 from .disk_service import DiskError, DiskService, ImageSession
 
@@ -10,6 +12,9 @@ from .disk_service import DiskError, DiskService, ImageSession
 MAX_HEX_READ = 4096
 MAX_HEX_WRITE = 1024 * 1024
 MAX_SEARCH_PATTERN = 256
+MAX_COMPARE_BYTES = 1024 * 1024 * 1024
+MAX_COMPARE_OFFSETS = 100_000
+MAX_COMPARE_RANGES = 20_000
 
 
 def _target_path(session: ImageSession, target: str) -> Path:
@@ -23,6 +28,70 @@ def _target_path(session: ImageSession, target: str) -> Path:
 def _version(path: Path) -> str:
     stat = path.stat()
     return f"{stat.st_size:x}-{stat.st_mtime_ns:x}"
+
+
+def _compare_streams(source: BinaryIO, source_size: int, candidate: BinaryIO, candidate_size: int) -> dict:
+    limit = min(source_size, candidate_size, MAX_COMPARE_BYTES)
+    offset = 0
+    count = abs(source_size - candidate_size)
+    common_differences = 0
+    offsets: list[int] = []
+    ranges: list[list[int]] = []
+    ranges_truncated = False
+    open_start: int | None = None
+    open_end = 0
+    while offset < limit:
+        length = min(1024 * 1024, limit - offset)
+        left = source.read(length)
+        right = candidate.read(length)
+        compared = min(len(left), len(right))
+        if not compared:
+            break
+        for index, (current, other) in enumerate(zip(left[:compared], right[:compared])):
+            absolute = offset + index
+            if current == other:
+                if open_start is not None:
+                    if len(ranges) < MAX_COMPARE_RANGES:
+                        ranges.append([open_start, open_end])
+                    else:
+                        ranges_truncated = True
+                    open_start = None
+                continue
+            count += 1
+            common_differences += 1
+            if len(offsets) < MAX_COMPARE_OFFSETS:
+                offsets.append(absolute)
+            if open_start is None:
+                open_start = absolute
+            open_end = absolute
+        offset += compared
+    if open_start is not None and len(ranges) < MAX_COMPARE_RANGES:
+        ranges.append([open_start, open_end])
+    elif open_start is not None:
+        ranges_truncated = True
+    return {
+        "count": count,
+        "sourceSize": source_size,
+        "candidateSize": candidate_size,
+        "compared": offset,
+        "differences": offsets,
+        "ranges": ranges,
+        "navigationTruncated": common_differences > len(offsets),
+        "rangesTruncated": ranges_truncated,
+        "truncated": limit < min(source_size, candidate_size),
+    }
+
+
+def compare_raw_image(session: ImageSession, candidate: BinaryIO, candidate_size: int, target: str = "image") -> dict:
+    path = _target_path(session, target)
+    with session.lock, path.open("rb") as source:
+        report = _compare_streams(source, path.stat().st_size, candidate, candidate_size)
+    report["version"] = _version(path)
+    return report
+
+
+def compare_data(data: bytes, candidate: BinaryIO, candidate_size: int) -> dict:
+    return _compare_streams(BytesIO(data), len(data), candidate, candidate_size)
 
 
 def raw_image_range(

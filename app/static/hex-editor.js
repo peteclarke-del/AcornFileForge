@@ -6,6 +6,7 @@ window.AcornHexEditor = (() => {
   const clamp = (value, minimum, maximum) => Math.max(minimum, Math.min(maximum, value));
   const hex = (value, width = 2) => Number(value).toString(16).toUpperCase().padStart(width, "0");
   const printable = value => value >= 32 && value <= 126 ? String.fromCharCode(value) : ".";
+  const escapeHtml = value => String(value ?? "").replace(/[&<>"']/g, character => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 
   function parseAddress(value) {
     const text = String(value || "").trim();
@@ -100,6 +101,13 @@ window.AcornHexEditor = (() => {
           <button type="button" class="hex-menu-find-next"><span>Find Next</span><kbd>Enter</kbd></button>
           <button type="button" class="hex-menu-goto"><span>Go to Offset…</span><kbd>Ctrl+G</kbd></button>
         </div></details>
+        <details class="editor-menu"><summary>Analyse</summary><div class="editor-menu-panel">
+          <button type="button" class="hex-menu-compare"><span>Compare with binary file…</span></button>
+          <button type="button" class="hex-menu-next-difference" disabled><span>Next difference</span></button>
+          <span class="editor-menu-separator" role="separator"></span>
+          <label class="hex-template-menu">Structure template<select class="hex-template"><option value="auto">Automatic</option><option value="generic">Generic values</option><option value="sideways-rom">BBC sideways ROM header</option><option value="risc-os-module">RISC OS module header</option><option value="dfs-catalogue">DFS catalogue sectors</option><option value="adfs-map">ADFS free-space map</option><option value="mmb-index">MMB slot record</option><option value="beebscsi-dsc">BeebSCSI DSC geometry</option><option value="uef-chunk">UEF header and chunk</option><option value="romfs-header">ROMFS header</option><option value="custom" hidden>Custom JSON template</option></select></label>
+          <button type="button" class="hex-menu-load-template"><span>Load custom JSON template…</span></button><input class="hex-template-file" type="file" accept="application/json,.json" hidden>
+        </div></details>
       </nav>
       <div class="hex-toolbar">
         <label ${scope === "file" ? "hidden" : ""}>Component<select class="hex-target"><option value="image">${image.name}</option>${descriptorOption}</select></label>
@@ -137,6 +145,8 @@ window.AcornHexEditor = (() => {
           <section><small>EDIT MODE</small><div class="hex-mode"><button type="button" data-mode="hex" class="active">HEX</button><button type="button" data-mode="ascii">ASCII</button></div><p>Type to replace bytes. Use Shift and the arrow keys to extend the selection.</p></section>
           <section><small>SELECTION TOOLS</small><div class="hex-side-actions"><button type="button" class="hex-copy-hex">Copy hex</button><button type="button" class="hex-copy-text">Copy text</button><button type="button" class="hex-paste">Paste</button><button type="button" class="hex-fill">Fill…</button><button type="button" class="hex-revert-selection">Revert selection</button><button type="button" class="hex-revert-all">Revert all</button></div></section>
           <section class="hex-change-list-section"><small>STAGED CHANGES</small><div class="hex-change-list"><em>None</em></div></section>
+          <section class="hex-structure-section"><small>STRUCTURED VIEW</small><strong class="hex-structure-name">Generic values</strong><dl class="hex-structure-values"></dl></section>
+          <section class="hex-comparison-section"><small>BINARY COMPARISON</small><strong class="hex-comparison-name">No comparison loaded</strong><span class="hex-comparison-summary"></span></section>
         </aside>
       </div>
       <footer class="hex-status"><span class="hex-position"></span><span class="hex-image-size"></span><span>Offsets are hexadecimal · append <b>d</b> for decimal</span></footer>
@@ -173,6 +183,9 @@ window.AcornHexEditor = (() => {
       future: [],
       loading: false,
       closed: false,
+      template: "auto",
+      customTemplate: null,
+      comparison: null,
     };
     let resolveClosed;
     const closed = new Promise(resolve => { resolveClosed = resolve; });
@@ -250,6 +263,120 @@ window.AcornHexEditor = (() => {
       return rows.map(([label, value]) => `<dt>${label}</dt><dd>${value}</dd>`).join("");
     }
 
+    const loadedValues = (offset, count) => Array.from({ length: count }, (_item, index) => effectiveByte(offset + index));
+    const word = (values, offset, little = true) => values[offset] == null || values[offset + 1] == null ? null : little ? values[offset] | values[offset + 1] << 8 : values[offset] << 8 | values[offset + 1];
+    const dword = (values, offset, little = true) => {
+      const part = values.slice(offset, offset + 4); if (part.some(value => value == null) || part.length < 4) return null;
+      return little ? (part[0] | part[1] << 8 | part[2] << 16 | part[3] << 24) >>> 0 : (part[0] * 0x1000000 + part[1] * 0x10000 + part[2] * 0x100 + part[3]) >>> 0;
+    };
+    const textValue = values => values.filter(value => value != null && value !== 0).map(value => printable(value)).join("").trim();
+    function detectedTemplate() {
+      const first = loadedValues(0, 16);
+      const lowerName = String(image.name || "").toLowerCase();
+      if (lowerName.endsWith(".uef") || textValue(first.slice(0, 10)) === "UEF File!") return "uef-chunk";
+      if (lowerName.endsWith(".dsc")) return "beebscsi-dsc";
+      if (lowerName.endsWith(".mmb")) return "mmb-index";
+      if (lowerName.endsWith(".rfs") || lowerName.endsWith(".romfs")) return "romfs-header";
+      if (first[0] === 0x4C && first[3] === 0x4C && first[6] != null && first[7] != null) return "sideways-rom";
+      if (scope === "image" && state.size === 204800) return "dfs-catalogue";
+      return "generic";
+    }
+    function renderStructure() {
+      const template = state.template === "auto" ? detectedTemplate() : state.template;
+      const fixedTemplate = ["dfs-catalogue", "adfs-map", "sideways-rom", "risc-os-module", "beebscsi-dsc", "uef-chunk", "romfs-header"].includes(template);
+      const base = fixedTemplate ? 0 : template === "mmb-index" ? Math.max(16, 16 + Math.floor(Math.max(0, state.active - 16) / 16) * 16) : state.active;
+      const values = loadedValues(base, 256);
+      const row = (name, value) => value == null || value === "" ? "" : `<dt>${escapeHtml(name)}</dt><dd>${escapeHtml(value)}</dd>`;
+      let name = "Generic values";
+      let rows = valuesMarkup();
+      if (template === "sideways-rom") {
+        name = "BBC sideways ROM header";
+        const copyrightOffset = values[7];
+        rows = [row("Language entry", word(values, 1)), row("Service entry", word(values, 4)), row("ROM type", values[6] == null ? null : `&${hex(values[6])}`), row("Copyright offset", copyrightOffset), row("Binary version", values[8]), row("Title", textValue(values.slice(9, Math.min(copyrightOffset || 64, 80))))].join("");
+      } else if (template === "risc-os-module") {
+        name = "RISC OS module header";
+        rows = ["Start", "Initialise", "Finalise", "Service", "Title", "Help", "Commands", "SWI chunk", "SWI handler", "SWI names"].map((label, index) => row(label, dword(values, index * 4))).join("");
+      } else if (template === "dfs-catalogue") {
+        name = "DFS catalogue sectors";
+        const sector1 = loadedValues(256, 16);
+        rows = [row("Title", textValue(values.slice(0, 8)) + textValue(sector1.slice(0, 4))), row("Cycle", sector1[4]), row("Catalogue bytes", sector1[5]), row("Boot option", sector1[6] == null ? null : (sector1[6] >> 4) & 3), row("Sectors", sector1[7] == null ? null : ((sector1[6] & 3) << 8) | sector1[7])].join("");
+      } else if (template === "adfs-map") {
+        name = "ADFS free-space map";
+        rows = [row("Map zone/check byte", values[0] == null ? null : `&${hex(values[0])}`), row("Map sequence", values[1]), row("Disc identifier", word(values, 2)), row("Disc size (low word)", word(values, 4))].join("");
+      } else if (template === "mmb-index") {
+        name = `MMB slot record at &${hex(base, 8)}`;
+        const slot = Math.max(0, Math.floor((base - 16) / 16));
+        rows = [row("Slot", slot), row("Title bytes", textValue(values.slice(0, 12))), row("Status", values[15] == null ? null : `&${hex(values[15])}`), row("Disk data offset", `&${hex(8192 + slot * 204800, 8)}`)].join("");
+      } else if (template === "beebscsi-dsc") {
+        name = "BeebSCSI DSC geometry descriptor";
+        rows = [row("Descriptor bytes", Math.min(state.size, 256)), row("Identifier", textValue(values.slice(0, 16))), row("Little-endian word 0", word(values, 0)), row("Little-endian word 1", word(values, 2)), row("Little-endian size field", dword(values, 4)), row("Raw header", values.slice(0, Math.min(32, state.size)).map(value => value == null ? "??" : hex(value)).join(" "))].join("");
+      } else if (template === "uef-chunk") {
+        name = "UEF container header and first chunk";
+        rows = [row("Signature", textValue(values.slice(0, 10))), row("Minor version", values[10]), row("Major version", values[11]), row("First chunk ID", word(values, 12) == null ? null : `&${hex(word(values, 12), 4)}`), row("First chunk length", dword(values, 14))].join("");
+      } else if (template === "romfs-header") {
+        name = "ROMFS / sideways ROM header";
+        const copyrightOffset = values[7];
+        rows = [row("Language entry", word(values, 1)), row("Service entry", word(values, 4)), row("ROM type", values[6] == null ? null : `&${hex(values[6])}`), row("Copyright offset", copyrightOffset), row("Version", values[8]), row("Title", textValue(values.slice(9, Math.min(copyrightOffset || 64, 80)))), row("Catalogue marker", textValue(values.slice(0, 128)).match(/ROMFS|RFS|FILES?/i)?.[0] || "No explicit marker in the first 128 bytes")].join("");
+      } else if (template === "custom" && state.customTemplate) {
+        name = state.customTemplate.name;
+        const typeValue = (field, fieldValues) => {
+          if (field.type === "u8") return fieldValues[0];
+          if (field.type === "u16le") return word(fieldValues, 0, true);
+          if (field.type === "u16be") return word(fieldValues, 0, false);
+          if (field.type === "u32le") return dword(fieldValues, 0, true);
+          if (field.type === "u32be") return dword(fieldValues, 0, false);
+          if (field.type === "hex") return fieldValues.map(value => value == null ? "??" : hex(value)).join(" ");
+          return textValue(fieldValues);
+        };
+        rows = state.customTemplate.fields.map(field => row(field.name, typeValue(field, loadedValues(base + field.offset, field.length)))).join("");
+      }
+      $(".hex-structure-name").textContent = name;
+      $(".hex-structure-values").innerHTML = rows || "<dt>Data</dt><dd>Load the header page to decode it.</dd>";
+    }
+
+    async function loadCustomTemplate(file) {
+      if (!file) return;
+      let document;
+      try { document = JSON.parse(await file.text()); }
+      catch (error) { return notify(`Custom template JSON is invalid: ${error.message}`, true); }
+      const fields = Array.isArray(document.fields) ? document.fields.slice(0, 128).map(field => ({
+        name: String(field?.name || "Field").slice(0, 80),
+        offset: Number(field?.offset),
+        type: String(field?.type || "hex").toLowerCase(),
+        length: Number(field?.length || (["u16le", "u16be"].includes(field?.type) ? 2 : ["u32le", "u32be"].includes(field?.type) ? 4 : 1)),
+      })) : [];
+      if (!fields.length || fields.some(field => !Number.isInteger(field.offset) || field.offset < 0 || field.offset > 4095 || !Number.isInteger(field.length) || field.length < 1 || field.length > 256 || !["u8", "u16le", "u16be", "u32le", "u32be", "ascii", "hex"].includes(field.type))) {
+        return notify("A custom template needs valid fields with offset, type and bounded length values.", true);
+      }
+      state.customTemplate = { name: String(document.name || file.name || "Custom template").slice(0, 120), fields };
+      state.template = "custom";
+      $(".hex-template").value = "custom";
+      const extent = Math.max(...fields.map(field => field.offset + field.length));
+      await ensureRange(state.active, Math.min(state.size - 1, state.active + extent - 1));
+      renderStructure();
+      notify(`${state.customTemplate.name} loaded. Offsets are relative to the selected byte.`);
+    }
+
+    function renderComparison() {
+      const comparison = state.comparison;
+      $(".hex-menu-next-difference").disabled = !comparison?.differences.length;
+      $(".hex-comparison-name").textContent = comparison ? comparison.name : "No comparison loaded";
+      $(".hex-comparison-summary").textContent = comparison ? `${comparison.count.toLocaleString()} differing byte${comparison.count === 1 ? "" : "s"}${comparison.sizeMismatch ? ` · sizes differ (${state.size.toLocaleString()} vs ${comparison.size.toLocaleString()})` : ""}${comparison.truncated ? " · compared first 1 GiB" : ""}${comparison.navigationTruncated ? " · navigation shows the first 100,000 differences" : ""}` : "";
+    }
+
+    function comparisonContains(offset) {
+      const ranges = state.comparison?.ranges || [];
+      let low = 0; let high = ranges.length - 1;
+      while (low <= high) {
+        const middle = (low + high) >> 1;
+        const range = ranges[middle];
+        if (offset < range[0]) high = middle - 1;
+        else if (offset > range[1]) low = middle + 1;
+        else return true;
+      }
+      return false;
+    }
+
     function renderChanges() {
       const changes = [...state.changes.entries()].sort((a, b) => a[0] - b[0]);
       $(".hex-change-count").textContent = changes.length ? `${changes.length.toLocaleString()} changed byte${changes.length === 1 ? "" : "s"}` : "No staged changes";
@@ -292,6 +419,7 @@ window.AcornHexEditor = (() => {
             offset >= selectionStart && offset <= selectionEnd ? "selected" : "",
             offset === state.active ? "active" : "",
             state.changes.has(offset) ? "changed" : "",
+            comparisonContains(offset) ? "different" : "",
           ].filter(Boolean).join(" ");
           byteCells.push(`<button type="button" class="hex-byte ${classes}" data-offset="${offset}" data-cell-mode="hex" role="gridcell">${hex(value)}</button>`);
           asciiCells.push(`<button type="button" class="hex-char ${classes}" data-offset="${offset}" data-cell-mode="ascii" role="gridcell">${printable(value)}</button>`);
@@ -322,6 +450,8 @@ window.AcornHexEditor = (() => {
     function render() {
       renderGrid();
       renderChanges();
+      renderStructure();
+      renderComparison();
       const [start, end] = selectedRange();
       const count = Math.max(0, end - start + 1);
       $(".hex-selection-label").textContent = count > 1 ? `&${hex(start)} to &${hex(end)}` : `&${hex(state.active)}`;
@@ -581,6 +711,32 @@ window.AcornHexEditor = (() => {
       }
     }
 
+    async function compareWithFile() {
+      const picker = document.createElement("input");
+      picker.type = "file";
+      picker.accept = ".bin,.rom,.img,.dat,.dsc,.ssd,.dsd,.adf,*/*";
+      picker.onchange = async () => {
+        const file = picker.files?.[0];
+        if (!file) return;
+        $(".hex-comparison-name").textContent = `Comparing ${file.name}…`;
+        try {
+          const form = new FormData(); form.append("file", file);
+          const comparison = await request(endpointUrl("/compare", { target: state.target }), { method: "POST", body: form });
+          if (state.version && comparison.version && comparison.version !== state.version) throw new Error("The image changed outside the hex editor. Close it and reopen before continuing.");
+          state.comparison = { ...comparison, name: file.name, size: comparison.candidateSize, sizeMismatch: comparison.sourceSize !== comparison.candidateSize };
+          render();
+          if (comparison.differences.length) await goTo(comparison.differences[0]);
+        } catch (error) { notify(`Binary comparison failed: ${error.message}`, true); }
+      };
+      picker.click();
+    }
+
+    async function nextDifference() {
+      const differences = state.comparison?.differences || [];
+      if (!differences.length) return;
+      await goTo(differences.find(offset => offset > state.active) ?? differences[0]);
+    }
+
     async function fillSelection() {
       if (image.readOnly) return;
       const value = prompt("Fill the selected bytes with which hex value?", "00");
@@ -656,15 +812,43 @@ window.AcornHexEditor = (() => {
     $(".hex-menu-find-previous").onclick = () => find("backward");
     $(".hex-menu-find-next").onclick = () => find("forward");
     $(".hex-menu-goto").onclick = () => $(".hex-goto").focus();
-    overlay.querySelectorAll(".editor-menu").forEach(menu => menu.addEventListener("toggle", () => {
-      if (!menu.open) return;
-      overlay.querySelectorAll(".editor-menu[open]").forEach(other => {
-        if (other !== menu) other.removeAttribute("open");
-      });
-    }));
-    overlay.querySelectorAll(".editor-menu-panel button, .editor-menu-panel a").forEach(control => {
-      control.addEventListener("click", () => control.closest("details")?.removeAttribute("open"));
+    $(".hex-menu-compare").onclick = compareWithFile;
+    $(".hex-menu-next-difference").onclick = nextDifference;
+    $(".hex-template").onchange = async event => {
+      state.template = event.target.value;
+      if (["sideways-rom", "risc-os-module", "dfs-catalogue", "adfs-map", "beebscsi-dsc", "uef-chunk", "romfs-header"].includes(state.template)) {
+        await ensureRange(0, Math.min(state.size - 1, state.template === "dfs-catalogue" ? 511 : 255));
+      } else if (state.template === "mmb-index") {
+        const base = Math.max(16, 16 + Math.floor(Math.max(0, state.active - 16) / 16) * 16);
+        await ensureRange(base, Math.min(state.size - 1, base + 15));
+      }
+      renderStructure();
+    };
+    $(".hex-menu-load-template").onclick = () => $(".hex-template-file").click();
+    $(".hex-template-file").onchange = event => loadCustomTemplate(event.target.files?.[0]);
+    const hexMenus = [...overlay.querySelectorAll(".editor-menu")];
+    const closeHexMenus = except => hexMenus.forEach(menu => {
+      if (menu !== except) menu.removeAttribute("open");
     });
+    const transferHexMenu = menu => {
+      if (!overlay.querySelector(".editor-menu[open]") || menu.open) return;
+      closeHexMenus(menu);
+      menu.open = true;
+    };
+    hexMenus.forEach(menu => {
+      menu.addEventListener("toggle", () => { if (menu.open) closeHexMenus(menu); });
+      menu.addEventListener("pointerenter", () => transferHexMenu(menu));
+      menu.addEventListener("focusin", () => transferHexMenu(menu));
+    });
+    overlay.querySelectorAll(".editor-menu-panel button, .editor-menu-panel a").forEach(control => {
+      control.addEventListener("click", () => closeHexMenus());
+    });
+    const dismissHexMenus = event => {
+      if (!overlay.isConnected) return document.removeEventListener("pointerdown", dismissHexMenus, true);
+      if (!event.target.closest?.(".hex-editor .editor-menu")) closeHexMenus();
+    };
+    document.addEventListener("pointerdown", dismissHexMenus, true);
+    closed.finally(() => document.removeEventListener("pointerdown", dismissHexMenus, true));
     $(".hex-go").onclick = () => goTo(parseAddress($(".hex-goto").value));
     $(".hex-goto").onkeydown = event => { if (event.key === "Enter") { event.preventDefault(); $(".hex-go").click(); } };
     $(".hex-first").onclick = () => goTo(0);

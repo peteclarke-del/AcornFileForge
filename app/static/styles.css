@@ -114,6 +114,7 @@ dialog.hex-editor-modal-host > .hex-editor-overlay { border-radius: 15px; }
 .hex-byte:hover, .hex-char:hover { background: var(--hex-hover); }
 .hex-byte.selected, .hex-char.selected { background: var(--hex-selected); color: var(--on-accent); }
 .hex-byte.changed, .hex-char.changed { color: var(--hex-changed); font-weight: 800; }
+.hex-byte.different, .hex-char.different { box-shadow: inset 0 -2px var(--orange); }
 .hex-byte.active, .hex-char.active { outline: 1px solid var(--hex-address); outline-offset: -1px; background: var(--hex-active); color: var(--on-accent); }
 .hex-byte.active.changed, .hex-char.active.changed { background: var(--hex-active-changed); }
 .hex-blank { height: 21px; }
@@ -137,6 +138,12 @@ dialog.hex-editor-modal-host > .hex-editor-overlay { border-radius: 15px; }
 .hex-change-list button { display: flex; justify-content: space-between; gap: 7px; border: 0; border-bottom: 1px solid var(--line); padding: 5px 2px; background: transparent; cursor: pointer; text-align: left; }
 .hex-change-list button b { color: var(--blue); font: 8px DM Mono, monospace; }
 .hex-change-list button span { color: var(--muted); font: 8px DM Mono, monospace; }
+.hex-template-menu { display: grid; gap: 4px; padding: 6px 9px; color: var(--muted); font: 9px DM Mono, monospace; }
+.hex-template-menu select { min-width: 190px; }
+.hex-structure-section dl { display: grid; grid-template-columns: 76px minmax(0,1fr); gap: 4px 6px; margin: 5px 0 0; font: 8px/1.4 DM Mono, monospace; }
+.hex-structure-section dt { color: var(--hex-muted); }
+.hex-structure-section dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.hex-comparison-section span { display: block; margin-top: 4px; color: var(--hex-muted); font: 8px/1.4 DM Mono, monospace; }
 .hex-status { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; padding: 7px 11px; border-top: 1px solid var(--line); background: var(--cream); color: var(--muted); font: 8px DM Mono, monospace; }
 .hex-status span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hex-confirm-shade { position: fixed; z-index: 1000; inset: 0; display: grid; place-items: center; padding: 18px; background: var(--overlay-backdrop); backdrop-filter: blur(3px); }
@@ -477,6 +484,15 @@ dialog.editor-window .disassembly-source { flex: 1 1 160px; min-height: 110px; h
 .editor-window-controls button:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 1px; }
 .editor-window-controls svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; }
 .editor-window-controls .editor-window-close:hover { background: var(--danger); color: var(--on-accent); }
+.editor-document-tabs { display: flex; flex: 0 0 auto; align-items: stretch; justify-content: space-between; min-width: 0; border-bottom: 1px solid var(--line); background: var(--surface); }
+.editor-document-tabs > div { display: flex; min-width: 0; overflow-x: auto; }
+.editor-document-tabs button { display: flex; align-items: center; gap: 7px; min-width: 90px; max-width: 210px; padding: 6px 9px; border: 0; border-right: 1px solid var(--line); background: transparent; color: var(--muted); cursor: pointer; font: 10px DM Sans, sans-serif; }
+.editor-document-tabs button.active { background: var(--paper); color: var(--ink); box-shadow: inset 0 -2px var(--teal); }
+.editor-document-tabs button > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor-document-tabs button > i { color: var(--orange); font-style: normal; }
+.editor-document-tabs button > b { margin-left: auto; color: var(--muted); font: 14px/1 DM Sans, sans-serif; }
+.editor-document-tabs > button:last-child { flex: 0 0 auto; max-width: none; border-right: 0; border-left: 1px solid var(--line); }
+.editor-document-tabs button:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: -3px; }
 .editor-resize-handle { position: absolute; z-index: 100; display: block; touch-action: none; }
 .editor-resize-handle:focus-visible { border-radius: 4px; outline: 3px solid var(--focus-ring); outline-offset: -1px; }
 .editor-resize-n, .editor-resize-s { left: 10px; right: 10px; height: 9px; cursor: ns-resize; }
@@ -603,6 +619,11 @@ dialog.editor-window-maximised .editor-resize-handle { display: none; }
 .editor-project-bookmarks > div { display: grid; max-height: 230px; overflow: auto; }
 .editor-project-bookmarks label { display: grid; grid-template-columns: auto 70px minmax(120px, 1fr) minmax(140px, 2fr); gap: 6px; align-items: center; padding: 5px; border-top: 1px solid var(--line); }
 .editor-project-bookmarks input[type="checkbox"] { width: auto; }
+.editor-project-comments { margin-top: 10px; border: 1px solid var(--line); border-radius: 5px; }
+.editor-project-comments > header { display: flex; justify-content: space-between; padding: 7px; background: var(--cream); }
+.editor-project-comments > div { display: grid; max-height: 230px; overflow: auto; }
+.editor-project-comments label { display: grid; grid-template-columns: auto 70px minmax(180px, 1fr); gap: 6px; align-items: center; padding: 5px; border-top: 1px solid var(--line); }
+.editor-project-comments input[type="checkbox"] { width: auto; }
 .editor-project-json { margin-top: 10px; }
 .editor-project-json summary { cursor: pointer; font-weight: 700; }
 .editor-project-json textarea { width: 100%; margin-top: 6px; font: 9px DM Mono, monospace; }
@@ -621,6 +642,7 @@ dialog.editor-window-maximised .editor-resize-handle { display: none; }
 .editor-image-search-results > button { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 3px 8px; padding: 7px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); color: var(--ink); text-align: left; cursor: pointer; }
 .editor-image-search-results > button:hover { border-color: var(--teal); }
 .editor-image-search-results b { overflow: hidden; text-overflow: ellipsis; }
+.editor-image-search-results b em { display: block; margin-bottom: 2px; color: var(--teal); font-size: 8px; font-style: normal; letter-spacing: .04em; text-transform: uppercase; }
 .editor-image-search-results small { color: var(--muted); }
 .editor-image-search-results code { grid-column: 2 / -1; overflow: hidden; color: var(--syntax-string); font: 9px DM Mono, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .code-help-detail h3 { margin: 0 0 7px; color: var(--teal); font: 800 15px DM Mono, monospace; }
@@ -1171,5 +1193,17 @@ dialog:has(.online-library-heading), dialog:has(.online-source-list) { width: mi
 .code-reference-results code { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .code-history-list article { display:grid; grid-template-columns:auto auto 1fr; gap:.65rem; padding:.45rem; border-bottom:1px solid var(--line); }
 .code-history-list time,.code-verification dt { color:var(--muted); }
+.editor-test-results { display: grid; gap: 8px; }
+.editor-test-results article { overflow: hidden; border: 1px solid var(--line); border-left: 3px solid var(--danger); border-radius: 5px; background: var(--paper); }
+.editor-test-results article.pass { border-left-color: var(--success); }
+.editor-test-results header { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 8px; padding: 7px; background: var(--surface); }
+.editor-test-results time, .editor-test-results small { color: var(--muted); font: 8px DM Mono, monospace; }
+.editor-test-results article > small { display: block; padding: 6px 8px; }
+.editor-test-results details { border-top: 1px solid var(--line); }
+.editor-test-results summary { padding: 6px 8px; cursor: pointer; font-weight: 700; }
+.editor-test-results pre { max-height: 220px; overflow: auto; margin: 0; padding: 8px; background: var(--hex-background); color: var(--hex-text); white-space: pre-wrap; font: 9px/1.45 DM Mono, monospace; }
+.debugger-workspace { width: min(820px, calc(100vw - 32px)); }
+.debugger-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+.debugger-transcript { min-height: 220px; max-height: 40vh; overflow: auto; padding: 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--hex-background); color: var(--hex-text); white-space: pre-wrap; font: 9px/1.45 DM Mono, monospace; }
 .code-verification dl { display:grid; grid-template-columns:auto 1fr; gap:.25rem .7rem; }
 .code-verification dd { margin:0; }

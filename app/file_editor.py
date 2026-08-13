@@ -121,6 +121,7 @@ def search_image_files(
     slot: int | None,
     side: int | None,
     root: str = "$",
+    all_slots: bool = False,
 ) -> dict:
     """Search names and readable source across one mounted filesystem context."""
     needle = str(query or "").strip()
@@ -128,12 +129,26 @@ def search_image_files(
         raise DiskError("Enter text to search for in this image.")
     if len(needle) > 200:
         raise DiskError("Search text is limited to 200 characters.")
-    if session.kind == "mmb" and slot is None:
+    if session.kind == "mmb" and slot is None and not all_slots:
         raise DiskError("Open an MMB slot before searching its files.")
 
     files: list[dict] = []
-    if session.kind in {"dfs", "mmb"}:
+    if session.kind == "mmb" and all_slots:
+        failed_slots = 0
+        for disk in service.list_slots(session):
+            if not disk.get("formatted") or len(files) >= MAX_IMAGE_SEARCH_FILES:
+                continue
+            disk_slot = int(disk["slot"])
+            try:
+                rows = service.list_dfs_catalogue_files(session, disk_slot, None)
+            except Exception:
+                failed_slots += 1
+                continue
+            files.extend({**row, "slot": disk_slot, "diskTitle": disk.get("name", "")} for row in rows)
+        files = files[:MAX_IMAGE_SEARCH_FILES]
+    elif session.kind in {"dfs", "mmb"}:
         files = service.list_dfs_catalogue_files(session, slot, side)
+        failed_slots = 0
     elif session.kind in {"romfs", "tape"}:
         files = [
             {**row, "path": str(row.get("path") or row.get("name") or "")}
@@ -162,12 +177,16 @@ def search_image_files(
                         break
     else:
         raise DiskError("Image-wide file search is not available for this media view.")
+    if session.kind != "mmb":
+        failed_slots = 0
 
     folded = needle.casefold()
     results = []
     scanned = 0
     skipped_large = 0
     for row in files[:MAX_IMAGE_SEARCH_FILES]:
+        row_slot = int(row["slot"]) if row.get("slot") is not None else slot
+        row_side = int(row["side"]) if row.get("side") is not None else side
         path = str(row.get("path") or row.get("name") or "")
         name = str(row.get("name") or path.rsplit(".", 1)[-1])
         name_match = folded in path.casefold()
@@ -176,7 +195,7 @@ def search_image_files(
         kind = str(row.get("contentKind") or "")
         if length <= MAX_IMAGE_SEARCH_BYTES:
             try:
-                data = service.read_file(session, slot, path, side)
+                data = service.read_file(session, row_slot, path, row_side)
                 scanned += 1
                 content_kind, basic, script, printable_ratio = analyse_content(data, path)
                 kind = kind or content_kind
@@ -199,6 +218,8 @@ def search_image_files(
             results.append({
                 "path": path, "name": name, "kind": kind or "file",
                 "size": length, "nameMatch": name_match, "matches": matches,
+                **({"slot": row_slot, "diskTitle": row.get("diskTitle", "")} if row_slot is not None else {}),
+                **({"side": row_side} if row_side is not None else {}),
             })
             if len(results) >= MAX_IMAGE_SEARCH_RESULTS:
                 break
@@ -208,6 +229,8 @@ def search_image_files(
         "filesConsidered": len(files),
         "filesScanned": scanned,
         "skippedLarge": skipped_large,
+        "failedSlots": failed_slots,
+        "allSlots": bool(session.kind == "mmb" and all_slots),
         "truncated": len(files) >= MAX_IMAGE_SEARCH_FILES or len(results) >= MAX_IMAGE_SEARCH_RESULTS,
         "results": results,
     }
@@ -588,6 +611,13 @@ def _apply_editor_project(report: dict, project: dict, data: bytes, origin: int,
         note = str(bookmark.get("note") or "").strip()
         row["comment"] = "; ".join(part for part in [str(row.get("comment") or ""), note] if part)
         row["bookmarked"] = True
+    for offset_text, comment in dict(project.get("comments") or {}).items():
+        offset = int(offset_text)
+        row = next((item for item in rows if int(item.get("offset") or 0) <= offset <
+                    int(item.get("offset") or 0) + _row_byte_length(item)), None)
+        if row is not None:
+            row["comment"] = "; ".join(part for part in [str(row.get("comment") or ""), str(comment).strip()] if part)
+            row["userComment"] = str(comment).strip()
     report["rows"] = rows
 
 

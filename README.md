@@ -535,7 +535,19 @@ disassembly row and displays the corresponding saved bytes and printable text.
 It is deliberately labelled as saved data when the source has unsaved edits.
 The strip can open the same offset in the full Hex editor.
 
-The Project menu stores notes, bookmarks, symbols and code/data decisions with
+The tab strip keeps several files from the same mounted image open in one
+editor workspace. Draft source, selection and scroll position survive a tab
+switch and browser refresh, dirty tabs carry a visible marker, and closing one asks before
+discarding edits. **Open from image…** searches filenames and bounded readable
+content, restores the result's directory, MMB slot and side, and opens it in a
+new tab. For an MMB it searches every populated slot and identifies each result
+by slot number and disk title. Draft recovery is bounded and private to the
+current browser tab.
+
+![Current BBC BASIC editor workspace with tabs and folding](app/static/help/editor-workspace-current.png)
+
+The Project menu stores notes, bookmarks, symbols, offset-bound comments and
+code/data decisions with
 the recoverable working session and its checkpoints. In disassembly, shift-click
 selects a range. It can be marked as code, text, bytes, 16-bit words, an address
 table or bitmap data, then redisassembled using that decision. Symbols can be
@@ -562,7 +574,10 @@ environment:
   ACORN_FILE_EMULATOR_COMMAND: 'my-emulator --run {file}'
 ```
 
-The application does not bundle or assume a particular emulator.
+The application does not bundle or assume a particular emulator. Emulator and
+debugger stdout, stderr, return status and breakpoint are available from the
+retained test-results view, so a failed hand-off is not lost when the result
+dialog closes.
 
 Two further local-only integrations are optional. `ACORN_FILE_ASSEMBLER_COMMAND`
 must contain `{source}` and `{output}` and may use `{origin}` and
@@ -585,6 +600,13 @@ or pack their lines. Processor membership comes from one catalogue: the 56
 official NMOS 6502 mnemonics, applicable W65C02 additions, and W65C816
 extensions are kept distinct. In particular, W65C816 does not advertise the
 W65C02 `BBRx`, `BBSx`, `RMBx` or `SMBx` instructions.
+
+Constant call operands receive context rather than a generic entry-point
+description. The editor decodes common VDU bytes, `*FX` and OSBYTE reason
+codes, OSWORD blocks, OSCLI pointers, OSWRCH characters and BASIC V/VI `SYS`
+SWI names. Inline assembler uses preceding constant A, X and Y loads when they
+can be proved on the same physical line. Dynamic values remain explicitly
+unknown instead of being guessed.
 
 The initial BBC BASIC checks find missing, duplicate and out-of-order line
 numbers, unresolved direct `GOTO`, `GOSUB` and `RESTORE` destinations, missing
@@ -828,6 +850,8 @@ The editor provides:
 - hexadecimal or ASCII typing modes;
 - copy as hex or text, paste, fill, revert selection and revert all;
 - editor-local undo and redo before anything reaches the image;
+- structured decoding for ROM, ROMFS, RISC OS module, DFS, ADFS, MMB,
+  BeebSCSI DSC and UEF data, plus bounded custom JSON templates;
 - unsigned 8, 16 and 32-bit value views in little and big-endian order;
 - a staged-change list with direct navigation to every changed offset.
 
@@ -2169,7 +2193,7 @@ Backend routes are split by responsibility:
 - `app/file_editor.py` owns editable-file inspection, checked source writes,
   BASIC round trips, byte ranges and annotated file disassembly.
 - `app/editor_project.py` validates and bounds per-file notes, symbols,
-  regions, bookmarks, history and emulator results.
+  comments, regions, bookmarks, history and emulator results.
 - `app/rom_workbench.py` owns raw ROM decoding, 6502/ARM/68000 disassembly,
   guarded patches, builds, programmer transforms and ROM project metadata.
 - `app/checksum.py` provides the shared sparse-aware image checksum implementation.
@@ -2223,6 +2247,18 @@ Run the standalone editor language-engine regressions:
 ```bash
 node tests/run_js_tests.js
 ```
+
+Run the permanent browser regression against the service on port 8666:
+
+```bash
+npm install
+npx playwright install chromium
+npm run test:browser
+```
+
+Set `ACORN_FILE_FORGE_URL` when the service is listening elsewhere. The test
+checks desktop editor menu transfer, command selection and outside-click
+dismissal in a real Chromium page.
 
 Check the running service:
 

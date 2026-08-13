@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from io import BytesIO
 from pathlib import Path
 
 from app.disk_service import DiskError, DiskService, ImageSession
-from app.hex_service import raw_image_range, search_raw_image, write_raw_image
+from app.hex_service import compare_data, raw_image_range, search_raw_image, write_raw_image
 
 
 class HexServiceTests(unittest.TestCase):
@@ -99,6 +100,18 @@ class HexServiceTests(unittest.TestCase):
                 [{"offset": self.path.stat().st_size, "data": "00"}],
                 True,
             )
+
+    def test_binary_comparison_reports_ranges_offsets_and_size(self):
+        source = b"abcdefghi"
+        candidate = b"abXXefgYY-extra"
+
+        report = compare_data(source, BytesIO(candidate), len(candidate))
+
+        self.assertEqual(report["count"], 10)
+        self.assertEqual(report["differences"], [2, 3, 7, 8])
+        self.assertEqual(report["ranges"], [[2, 3], [7, 8]])
+        self.assertEqual(report["sourceSize"], len(source))
+        self.assertEqual(report["candidateSize"], len(candidate))
 
 
 if __name__ == "__main__":

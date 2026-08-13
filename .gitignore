@@ -12,6 +12,8 @@ __pycache__/
 .pytest_cache/
 .coverage
 htmlcov/
+node_modules/
+test-results/
 
 # Local editor and operating-system files
 .DS_Store
