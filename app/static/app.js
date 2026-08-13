@@ -3280,7 +3280,15 @@ async function acceptImage(index, image) {
   } else {
     await loadDirectory(index);
   }
-  if (image.warnings?.length) toast(image.warnings.join(" "), true);
+  if (image.warnings?.length) {
+    const latest = image.warnings.at(-1);
+    toast(
+      image.warnings.length === 1
+        ? latest
+        : `${image.warnings.length} image notices are recorded. Latest: ${latest}`,
+      true,
+    );
+  }
 }
 
 async function loadDirectory(index, preserveSelection = false) {
@@ -7988,6 +7996,7 @@ function showHelp() {
                 <li>ADFS directory paths are resolved against the installed tree before commands are classified. A real path such as <code>R.+AP2</code>, meaning file <code>+AP2</code> inside directory <code>R</code>, is preserved rather than mistaken for abbreviated <code>RUN</code>.</li>
                 <li>Select the deterministic repairs to apply and choose <strong>Repair selected</strong>, or choose <strong>Cancel</strong> to leave the image untouched. An automatic undo checkpoint is made before a repair.</li>
                 <li>Run the check again. Proven current-directory path and loader-command issues should be clear. Explicit filing-system changes and direct-sector I/O remain warnings because automatically changing those behaviours would be unsafe.</li>
+                <li>Older sessions may contain loader diagnoses made before the current path-aware audit. Those point-in-time messages are replaced by one review notice, repeated directory and Tube notices are consolidated, and actual byte-level compatibility changes remain in the saved history.</li>
               </ol>
             </div>
             <p>Where both formats support it, Acorn File Forge preserves load/execute addresses, RISC OS filetypes, datestamps and access flags. Old ADFS names are normally limited to ten characters.</p>

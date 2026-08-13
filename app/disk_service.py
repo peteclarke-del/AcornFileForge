@@ -311,11 +311,57 @@ class DiskService:
             session.warnings.append(warning)
 
     @staticmethod
+    def _normalise_warnings(warnings: list[str]) -> list[str]:
+        """Keep durable image history concise and discard superseded diagnostics."""
+        result: list[str] = []
+        directory_fields_repaired = False
+        tube_warning = False
+        loader_review = False
+        for value in warnings:
+            warning = str(value).strip()
+            if not warning:
+                continue
+            if re.match(r"^Repaired \d+ old-ADFS directory sequence field", warning):
+                directory_fields_repaired = True
+                continue
+            if "selected hardware profile has a Tube second processor enabled" in warning:
+                tube_warning = True
+                continue
+            if (
+                "contains ambiguous ADFS command" in warning
+                or "loader contains" in warning
+                and "ambiguous abbreviated command" in warning
+            ):
+                # These are point-in-time analysis results. The current HDD
+                # audit resolves them against the current directory tree and
+                # is the authoritative place to show any which remain.
+                loader_review = True
+                continue
+            if warning not in result:
+                result.append(warning)
+        if directory_fields_repaired:
+            result.append(
+                "Maintained old-ADFS directory sequence fields for 8-bit hardware."
+            )
+        if tube_warning:
+            result.append(
+                "The selected hardware profile has a Tube second processor enabled. "
+                "Some 8-bit software requires the Tube to be disabled unless it explicitly supports it."
+            )
+        if loader_review:
+            result.append(
+                "Installed ADFS loader diagnostics have changed since this image was edited. "
+                "Run Tools > Check installed disk software for the current path-aware results."
+            )
+        return result
+
+    @staticmethod
     def safe_filename(name: str) -> str:
         name = Path(name or "image").name
         return re.sub(r"[^A-Za-z0-9._() +!-]", "_", name)[:180] or "image"
 
     def _persist_session(self, session: ImageSession) -> None:
+        session.warnings = self._normalise_warnings(session.warnings)
         metadata = {
             "id": session.id,
             "name": session.name,
@@ -431,11 +477,9 @@ class DiskService:
                     else None
                 ),
                 owner_id=metadata.get("ownerId"),
-                warnings=[
-                    str(warning)
-                    for warning in metadata.get("warnings", [])
-                    if "contains ambiguous ADFS command" not in str(warning)
-                ],
+                warnings=self._normalise_warnings(
+                    [str(warning) for warning in metadata.get("warnings", [])]
+                ),
             )
             if session.hfe_original_path and not session.hfe_original_path.is_file():
                 raise ValueError
@@ -1524,7 +1568,7 @@ class DiskService:
             "targetHardware": session.target_hardware,
             "hardwareProfile": session.hardware_profile,
             "warnings": [
-                *session.warnings,
+                *self._normalise_warnings(session.warnings),
                 *(list(session.tape.warnings) if session.tape else []),
             ],
             "checkpoints": {
