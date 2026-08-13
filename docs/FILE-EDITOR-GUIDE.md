@@ -147,10 +147,19 @@ strings or dynamic line expressions.
 The shared scanner carries explicit BASIC I through VI capability profiles.
 The live analyser reports missing, duplicated or out-of-order line numbers,
 unresolved direct destinations, missing local procedures, unmatched procedure
-boundaries, array use before DIM, FOR/NEXT mismatches, mixed typed-variable
-families, unused assignments, dialect-incompatible commands, unclosed strings
+boundaries, array use before DIM, FOR/NEXT mismatches,
+dialect-incompatible commands, unclosed strings
 and conservatively identified unreachable lines.
 It also builds a procedure and function outline with direct call sites.
+
+Array checks use token identities rather than raw name-and-parenthesis patterns,
+so compact forms such as `PRINTTAB(0,15)` remain `PRINT TAB(...)` and are not
+reported as arrays. The analyser deliberately does not claim that an assignment
+is unused. BBC BASIC pseudo-variables have immediate effects, assembler and
+machine-code calls consume conventional variables implicitly, and chained
+programs can share globals, so textual absence of a later read is not proof of
+a defect. `A`, `A%` and `A$` are separate, valid BBC BASIC variables and are
+not reported merely because they share a base name.
 
 Commands with reference data have dotted hover targets. Hovering displays the
 command's purpose, syntax, context and relevant cautions. Put the caret in a
