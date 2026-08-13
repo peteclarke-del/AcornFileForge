@@ -571,35 +571,30 @@ window.AcornCodeEditor = (() => {
 
   function advancedBasicDiagnostics(text) {
     const issues = [];
-    const tokens = BASIC_LANGUAGE.scan(text).filter(item => item.type === "identifier");
-    const byBase = new Map();
-    tokens.forEach(item => {
-      const base = item.text.replace(/[$%]$/, "").toUpperCase();
-      const suffix = item.text.match(/[$%]$/)?.[0] || "numeric";
-      if (!byBase.has(base)) byBase.set(base, new Set());
-      byBase.get(base).add(suffix);
-    });
-    byBase.forEach((suffixes, base) => {
-      if (suffixes.size < 2) return;
-      const token = tokens.find(item => item.text.replace(/[$%]$/, "").toUpperCase() === base);
-      issues.push({ severity: "info", line: token.line, offset: token.start, message: `${base} is used with multiple BASIC types (${[...suffixes].join(", ")}). Confirm that these are deliberately separate variables.` });
-    });
-
+    const scannedTokens = BASIC_LANGUAGE.scan(text);
     const masked = BASIC_LANGUAGE.maskStringsAndComments(text);
     const dimmed = new Set();
-    const assignments = new Map();
-    const reads = new Map();
     const forStack = [];
     const lineOffsets = [];
     text.split("\n").reduce((offset, line) => { lineOffsets.push(offset); return offset + line.length + 1; }, 0);
     text.split("\n").forEach((line, index) => {
       const lineOffset = lineOffsets[index];
       const code = masked.slice(lineOffset, lineOffset + line.length).replace(/^\s*\d+\s*/, "");
-      for (const match of code.matchAll(/\bDIM\s*([A-Za-z][A-Za-z0-9_]*[$%]?)\s*\(/gi)) dimmed.add(match[1].toUpperCase());
-      for (const match of code.matchAll(/\b([A-Za-z][A-Za-z0-9_]*[$%]?)\s*\(/g)) {
-        const name = match[1].toUpperCase();
-        if (["DIM", "FN", "PROC", "TAB", "SPC", "POINT", "INSTR", "LEFT$", "MID$", "RIGHT$", "STRING$"].includes(name)) continue;
-        if (!dimmed.has(name)) issues.push({ severity: "warning", line: index + 1, offset: lineOffset + match.index, message: `${match[1]} is used as an array before a preceding DIM was found.` });
+      const lineEnd = lineOffset + line.length;
+      const lineTokens = scannedTokens.filter(token => token.start >= lineOffset && token.start < lineEnd);
+      for (const [tokenIndex, token] of lineTokens.entries()) {
+        if (token.type !== "identifier" || !/^\s*\(/.test(masked.slice(token.end, lineEnd))) continue;
+        const name = token.text.toUpperCase();
+        const previous = lineTokens[tokenIndex - 1];
+        const followsDim = previous?.type === "keyword" && previous.name === "DIM";
+        // PROCname(...) and FNname(...) are indivisible user symbols in the
+        // scanner, not arrays. Built-in functions such as TAB(...) are keyword
+        // tokens, which also prevents compact PRINTTAB(...) being mistaken for
+        // an array reference.
+        if (followsDim) dimmed.add(name);
+        else if (!/^(?:PROC|FN).+/i.test(token.text) && !dimmed.has(name)) {
+          issues.push({ severity: "warning", line: index + 1, offset: token.start, message: `${token.text} is used as an array before a preceding DIM was found.` });
+        }
       }
       for (const match of code.matchAll(/\bFOR\s*([A-Za-z][A-Za-z0-9_]*[$%]?)/gi)) forStack.push({ name: match[1].toUpperCase(), line: index + 1 });
       for (const match of code.matchAll(/\bNEXT\s*([A-Za-z][A-Za-z0-9_]*[$%]?)/gi)) {
@@ -607,18 +602,13 @@ window.AcornCodeEditor = (() => {
         if (active && active.name !== match[1].toUpperCase()) issues.push({ severity: "warning", line: index + 1, offset: lineOffset + match.index, message: `NEXT ${match[1]} closes the active FOR ${active.name} from line ${active.line}.` });
       }
     });
-    tokens.forEach(item => {
-      const following = masked.slice(item.end).match(/^\s*/)?.[0].length || 0;
-      const assigned = masked[item.end + following] === "=";
-      const key = item.text.toUpperCase();
-      const target = assigned ? assignments : reads;
-      target.set(key, (target.get(key) || 0) + 1);
-    });
-    assignments.forEach((count, name) => {
-      if (reads.has(name) || /^I%$/.test(name)) return;
-      const token = tokens.find(item => item.text.toUpperCase() === name);
-      issues.push({ severity: "info", line: token.line, offset: token.start, message: `${name} is assigned ${count} time${count === 1 ? "" : "s"} but no later code reference was found.` });
-    });
+    // A, A% and A$ are deliberately distinct variables in BBC BASIC, so
+    // sharing a base name across types is not itself suspicious. Likewise, do
+    // not report apparently unused assignments. BBC BASIC exposes state
+    // through pseudo-variables such as HIMEM, PAGE, PTR and TIME; A%, X%, Y%,
+    // P% and O% also have implicit CALL, USR and assembler meanings. Programs
+    // can pass any global to chained overlays or machine code, so absence of a
+    // later textual read is not evidence of a defect.
     return issues.slice(0, 500);
   }
 
@@ -1968,5 +1958,5 @@ window.AcornCodeEditor = (() => {
     return { overview, reference, showSymbols, showCustom: show, expandAll, collapseAll, toggleAll, helpAtCursor: overview, showProblems: () => show("Disassembly cautions", '<p class="code-empty-message">No writable source diagnostics apply. Treat unknown opcodes, unreachable regions and embedded data as cautions rather than automatic errors.</p>') };
   }
 
-  return { enhance, enhanceDisassembly, lookup, contextHelp: sourceContextHelp };
+  return { enhance, enhanceDisassembly, lookup, contextHelp: sourceContextHelp, diagnostics };
 })();

@@ -53,3 +53,27 @@ test("BASIC V SYS help names recognised RISC OS calls", () => {
   const item = window.AcornCodeEditor.contextHelp(source, "basic", start, start + 3, "SYS");
   assert.match(item.notes, /zero-terminated string/);
 });
+
+test("compact PRINT TAB is not mistaken for an undimensioned array", () => {
+  const source = `10 MODE6
+20 PRINTTAB(0,15)"Insert disk"
+30 HIMEM=&72B8
+40 DIM names$(10)
+50 PRINT names$(0)`;
+  const issues = window.AcornCodeEditor.diagnostics(source, "basic", "BBC BASIC II");
+  assert.equal(issues.some(issue => /PRINTTAB.*array/i.test(issue.message)), false);
+  assert.equal(issues.some(issue => /HIMEM.*assigned/i.test(issue.message)), false);
+  assert.equal(issues.some(issue => /names\$.*DIM/i.test(issue.message)), false);
+});
+
+test("a genuine array reference without DIM is still reported", () => {
+  const issues = window.AcornCodeEditor.diagnostics("10 PRINT scores%(1)", "basic", "BBC BASIC II");
+  assert.equal(issues.some(issue => /scores%.*array before a preceding DIM/i.test(issue.message)), true);
+});
+
+test("BBC BASIC typed names and implicit system state do not create speculative warnings", () => {
+  const source = `10 a$="900":A%=0
+20 P%=&900:[OPT 2:RTS:]
+30 HIMEM=&72B8`;
+  assert.deepEqual(window.AcornCodeEditor.diagnostics(source, "basic", "BBC BASIC II"), []);
+});
