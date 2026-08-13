@@ -233,6 +233,14 @@ logic can remain unresolved.
 Project symbols use `address = label`, for example `0x8036 = ServiceEntry`.
 Known regions use `start-end = meaning`, for example
 `0x9000-0x91ff = Command table`. Save them in Project and disassemble again.
+Symbols are applied consistently to 6502, ARM and 68000 listings. Address keys
+may use decimal, `0x` hexadecimal or Acorn `&` hexadecimal notation. A word or
+address region uses the processor's native byte order: little-endian for 6502
+and ARM, big-endian for 68000.
+
+For file-level disassembly, bookmarks, synchronized bytes, region
+classification and emulator hand-off, see the
+[file editor and code analysis handbook](FILE-EDITOR-GUIDE.md).
 
 ### Compare and guarded patches
 

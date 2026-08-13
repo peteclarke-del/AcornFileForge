@@ -16,10 +16,12 @@ from app.uef import (
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def sample_uef(archive_name: str) -> bytes:
-    fixture = ROOT / "samples" / archive_name
+def sample_uef(fixture_name: str) -> bytes:
+    fixture = ROOT / "samples" / fixture_name
     if not fixture.is_file():
-        raise unittest.SkipTest(f"Optional UEF fixture is not bundled: {archive_name}")
+        raise unittest.SkipTest(f"Optional UEF fixture is not bundled: {fixture_name}")
+    if fixture.suffix.casefold() == ".uef":
+        return fixture.read_bytes()
     with zipfile.ZipFile(fixture) as archive:
         member = next(name for name in archive.namelist() if name.lower().endswith(".uef"))
         return archive.read(member)
@@ -87,7 +89,7 @@ class UEFTests(unittest.TestCase):
         self.assertTrue(any('CHAIN ""' in change for change in changes))
 
     def test_chuckulus_dfs_loader_abbreviations_are_made_adfs_safe(self):
-        contents = parse_uef((ROOT / "samples" / "Chuckulus-Electron-V1-0.uef").read_bytes())
+        contents = parse_uef(sample_uef("Chuckulus-Electron-V1-0.uef"))
         chuck = contents.files[1]
         occupied = [
             (item.load & 0xFFFF, (item.load & 0xFFFF) + len(item.data))
@@ -119,7 +121,7 @@ class UEFTests(unittest.TestCase):
         self.assertEqual(len(repairs), 2)
 
     def test_loader_repair_follows_boot_target_without_scanning_data_files(self):
-        contents = parse_uef((ROOT / "samples" / "Chuckulus-Electron-V1-0.uef").read_bytes())
+        contents = parse_uef(sample_uef("Chuckulus-Electron-V1-0.uef"))
         chuck = contents.files[1]
         items = [
             {

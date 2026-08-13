@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import os
+import shlex
+import subprocess
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import Blueprint, Response, jsonify, request
@@ -11,12 +16,24 @@ from ..analysis_service import (
     dependency_report,
     duplicate_report,
     health_report,
-    inspect_file,
     manifest_csv,
     menu_test_report,
     preflight_report,
 )
 from ..disk_service import DiskError, DiskService
+from ..file_editor import (
+    disassemble_file,
+    inspect_editable_file,
+    normalise_basic_source,
+    pack_basic_lines,
+    prepare_basic_source,
+    replace_file_bytes,
+    save_editor_text,
+    save_editor_text_as,
+    search_image_files,
+    update_file_properties,
+    verify_basic_source,
+)
 from ..operations import OperationCancelled, OperationRegistry
 from ..menu_service import (
     audit_adfs_menu_pages,
@@ -30,7 +47,6 @@ from .common import optional_int, payload
 
 def create_tools_blueprint(
     service: DiskService,
-    work_dir: Path,
     operations: OperationRegistry,
 ) -> Blueprint:
     blueprint = Blueprint("tools", __name__)
@@ -137,7 +153,7 @@ def create_tools_blueprint(
         path = request.args.get("path", "")
         if not path:
             raise DiskError("Choose a file to inspect.")
-        return jsonify(inspect_file(
+        return jsonify(inspect_editable_file(
             service,
             session,
             path,
@@ -159,6 +175,16 @@ def create_tools_blueprint(
             optional_int(request.args.get("side")),
         ))
 
+    @blueprint.get("/api/images/<image_id>/inspect/search")
+    def search_inspected_files(image_id):
+        session = service.get(image_id)
+        return jsonify(search_image_files(
+            service, session, str(request.args.get("query") or ""),
+            optional_int(request.args.get("slot")), optional_int(request.args.get("side")),
+            str(request.args.get("root") or "$"),
+            str(request.args.get("allSlots") or "false").lower() in {"1", "true", "yes"},
+        ))
+
     @blueprint.put("/api/images/<image_id>/inspect")
     def save_inspected_text(image_id):
         data = payload()
@@ -166,35 +192,289 @@ def create_tools_blueprint(
         path = str(data.get("path") or "")
         slot = optional_int(data.get("slot"))
         side = optional_int(data.get("side"))
-        current = inspect_file(service, session, path, slot, side)
-        if not current["editable"] or current["tokenisedBasic"]:
-            raise DiskError("Only small plain-text files can be edited directly. Tokenised BASIC remains protected.")
-        text = str(data.get("text") or "").replace("\r\n", "\n").replace("\n", "\r")
-        encoded = text.encode("latin-1", "strict")
-        parent, leaf = path.rsplit(".", 1)
-        row = next(
-            (item for item in service.list_directory(session, parent, slot, side)["entries"] if str(item.get("name", "")).casefold() == leaf.casefold()),
-            None,
-        )
-        if row is None:
-            raise DiskError("The file changed while the inspector was open. Refresh and try again.")
-        with tempfile.NamedTemporaryFile(dir=work_dir, prefix="inspect-edit-", delete=False) as temporary:
-            temporary.write(encoded)
-            temporary_path = Path(temporary.name)
-        try:
-            service.mutate(session, slot, ["rm", "--force", "{image}:" + path], side)
-            service.put(
-                session,
-                slot,
-                path,
-                temporary_path,
-                str(row.get("loadHex") or row.get("load") or ""),
-                str(row.get("executeHex") or row.get("exec") or ""),
-                row.get("filetype"),
-                side,
+        current = inspect_editable_file(service, session, path, slot, side)
+        if not current["editable"] or current["readOnly"]:
+            raise DiskError("This file cannot be edited safely in the current image.")
+        if data.get("newName") not in (None, ""):
+            image, saved_path = save_editor_text_as(
+                service, session, path, slot, side, str(data.get("newName") or ""),
+                str(data.get("text") or ""), bool(current["tokenisedBasic"]),
+                str(data.get("sha256") or ""),
             )
-        finally:
-            temporary_path.unlink(missing_ok=True)
-        return jsonify(image=service.summary(session), inspection=inspect_file(service, session, path, slot, side))
+            return jsonify(
+                image=image,
+                path=saved_path,
+                inspection=inspect_editable_file(service, session, saved_path, slot, side),
+            )
+        image = save_editor_text(
+            service, session, path, slot, side, str(data.get("text") or ""),
+            bool(current["tokenisedBasic"]), str(data.get("sha256") or ""),
+        )
+        return jsonify(image=image, path=path, inspection=inspect_editable_file(service, session, path, slot, side))
+
+    @blueprint.put("/api/images/<image_id>/inspect/properties")
+    def save_inspected_properties(image_id):
+        data = payload()
+        session = service.get(image_id)
+        path = str(data.get("path") or "")
+        slot = optional_int(data.get("slot"))
+        side = optional_int(data.get("side"))
+        if not path or session.kind in {"rom", "tape"} or session.hfe_read_only:
+            raise DiskError("This file's catalogue properties cannot be changed in the current image.")
+        image = update_file_properties(
+            service, session, path, slot, side, str(data.get("sha256") or ""),
+            load=str(data.get("load") or ""),
+            execute=str(data.get("execute") or ""),
+            filetype=str(data.get("filetype") or ""),
+            writable=bool(data.get("writable", True)),
+        )
+        return jsonify(image=image, inspection=inspect_editable_file(service, session, path, slot, side))
+
+    @blueprint.post("/api/images/<image_id>/inspect/basic/renumber")
+    def renumber_basic(image_id):
+        service.get(image_id)
+        data = payload()
+        try:
+            start = int(data.get("start", 10))
+            step = int(data.get("step", 10))
+        except (TypeError, ValueError) as exc:
+            raise DiskError("The BASIC start and step must be whole numbers.") from exc
+        return jsonify(prepare_basic_source(str(data.get("text") or ""), start, step))
+
+    @blueprint.post("/api/images/<image_id>/inspect/basic/normalise")
+    def normalise_basic(image_id):
+        service.get(image_id)
+        return jsonify(normalise_basic_source(str(payload().get("text") or "")))
+
+    @blueprint.post("/api/images/<image_id>/inspect/basic/verify")
+    def verify_basic(image_id):
+        service.get(image_id)
+        data = payload()
+        return jsonify(verify_basic_source(str(data.get("text") or ""), str(data.get("baseline") or "")))
+
+    @blueprint.get("/api/images/<image_id>/editor-project")
+    def editor_project(image_id):
+        session = service.get(image_id)
+        path = str(request.args.get("path") or "")
+        if not path:
+            raise DiskError("Choose a file project to open.")
+        return jsonify(project=service.editor_project(
+            session, path, optional_int(request.args.get("slot")), optional_int(request.args.get("side")),
+        ))
+
+    @blueprint.put("/api/images/<image_id>/editor-project")
+    def save_editor_project(image_id):
+        session = service.get(image_id)
+        data = payload()
+        path = str(data.get("path") or "")
+        if not path:
+            raise DiskError("Choose a file project to save.")
+        project = service.save_editor_project(
+            session, path, optional_int(data.get("slot")), optional_int(data.get("side")),
+            dict(data.get("project") or {}),
+        )
+        return jsonify(project=project)
+
+    @blueprint.get("/api/images/<image_id>/editor-emulator")
+    def editor_emulator_status(image_id):
+        session = service.get(image_id)
+        command = os.environ.get("ACORN_FILE_EMULATOR_COMMAND", "").strip()
+        return jsonify(
+            available=bool(command and "{file}" in command),
+            hardware=session.target_hardware,
+            message=(
+                "Configured by ACORN_FILE_EMULATOR_COMMAND."
+                if command and "{file}" in command
+                else "Set ACORN_FILE_EMULATOR_COMMAND with a {file} placeholder to enable direct tests."
+            ),
+        )
+
+    @blueprint.post("/api/images/<image_id>/editor-emulator")
+    def editor_emulator_run(image_id):
+        session = service.get(image_id)
+        data = payload()
+        path = str(data.get("path") or "")
+        slot, side = optional_int(data.get("slot")), optional_int(data.get("side"))
+        template = os.environ.get("ACORN_FILE_EMULATOR_COMMAND", "").strip()
+        if not template or "{file}" not in template:
+            raise DiskError("No file emulator command is configured.")
+        content = service.read_file(session, slot, path, side)
+        metadata = service.file_metadata(session, slot, path, side)
+        suffix = f"-{Path(path).name}"
+        with tempfile.NamedTemporaryFile(dir=service.work_dir, prefix="emulator-file-", suffix=suffix) as temporary:
+            temporary.write(content)
+            temporary.flush()
+            replacements = {
+                "{file}": temporary.name,
+                "{image}": str(session.path),
+                "{path}": path,
+                "{load}": str(metadata.get("load") or 0),
+                "{execute}": str(metadata.get("execute") or 0),
+            }
+            arguments = shlex.split(template)
+            for key, value in replacements.items():
+                arguments = [part.replace(key, value) for part in arguments]
+            try:
+                completed = subprocess.run(arguments, capture_output=True, text=True, timeout=60, check=False)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise DiskError(f"The emulator test could not complete: {exc}") from exc
+        result = {
+            "time": datetime.now(timezone.utc).isoformat(),
+            "command": arguments[0], "returnCode": completed.returncode,
+            "stdout": completed.stdout[-20000:], "stderr": completed.stderr[-20000:],
+        }
+        project = service.editor_project(session, path, slot, side)
+        project["tests"] = [*project.get("tests", []), result][-100:]
+        service.save_editor_project(session, path, slot, side, project)
+        return jsonify(result=result, project=project)
+
+    @blueprint.get("/api/images/<image_id>/editor-assembler")
+    def editor_assembler_status(image_id):
+        service.get(image_id)
+        command = os.environ.get("ACORN_FILE_ASSEMBLER_COMMAND", "").strip()
+        available = bool(command and "{source}" in command and "{output}" in command)
+        return jsonify(
+            available=available,
+            message=(
+                "Configured by ACORN_FILE_ASSEMBLER_COMMAND."
+                if available
+                else "Set ACORN_FILE_ASSEMBLER_COMMAND with {source} and {output} placeholders."
+            ),
+        )
+
+    @blueprint.post("/api/images/<image_id>/editor-assembler")
+    def editor_assembler_run(image_id):
+        session = service.get(image_id)
+        data = payload()
+        path = str(data.get("path") or "")
+        slot, side = optional_int(data.get("slot")), optional_int(data.get("side"))
+        source = str(data.get("source") or "")
+        architecture = str(data.get("architecture") or "6502").casefold()
+        origin = str(data.get("origin") or "0")
+        template = os.environ.get("ACORN_FILE_ASSEMBLER_COMMAND", "").strip()
+        if not template or "{source}" not in template or "{output}" not in template:
+            raise DiskError("No compatible external assembler command is configured.")
+        if len(source.encode("utf-8")) > 4 * 1024 * 1024:
+            raise DiskError("Assembly source is limited to 4 MiB per operation.")
+        current = service.read_file(session, slot, path, side)
+        expected = str(data.get("sha256") or "")
+        if hashlib.sha256(current).hexdigest() != expected:
+            raise DiskError("The binary changed after the disassembly opened. Reopen it before assembling.")
+        with tempfile.TemporaryDirectory(dir=service.work_dir, prefix="assemble-file-") as folder:
+            source_path = Path(folder) / "source.asm"
+            output_path = Path(folder) / "output.bin"
+            source_path.write_text(source, encoding="utf-8")
+            replacements = {
+                "{source}": str(source_path), "{output}": str(output_path),
+                "{origin}": origin, "{architecture}": architecture,
+            }
+            arguments = shlex.split(template)
+            for key, value in replacements.items():
+                arguments = [part.replace(key, value) for part in arguments]
+            try:
+                completed = subprocess.run(arguments, capture_output=True, text=True, timeout=60, check=False)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise DiskError(f"The assembler could not complete: {exc}") from exc
+            if completed.returncode or not output_path.is_file():
+                detail = (completed.stderr or completed.stdout or "No output file was produced.")[-20000:]
+                raise DiskError(f"The assembler rejected the source: {detail}")
+            assembled = output_path.read_bytes()
+        if not assembled or len(assembled) > 16 * 1024 * 1024:
+            raise DiskError("The assembler output is empty or exceeds the safe 16 MiB limit.")
+        changed = sum(left != right for left, right in zip(current, assembled)) + abs(len(current) - len(assembled))
+        image = replace_file_bytes(service, session, path, slot, side, assembled, expected)
+        return jsonify(
+            image=image,
+            result={
+                "size": len(assembled), "changedBytes": changed,
+                "sha256": hashlib.sha256(assembled).hexdigest(),
+                "stdout": completed.stdout[-20000:], "stderr": completed.stderr[-20000:],
+            },
+        )
+
+    @blueprint.get("/api/images/<image_id>/editor-debugger")
+    def editor_debugger_status(image_id):
+        session = service.get(image_id)
+        command = os.environ.get("ACORN_FILE_DEBUGGER_COMMAND", "").strip()
+        return jsonify(
+            available=bool(command and "{file}" in command),
+            hardware=session.target_hardware,
+            message=(
+                "Configured by ACORN_FILE_DEBUGGER_COMMAND. The adapter may use {action}, {breakpoint} and {expression}."
+                if command and "{file}" in command
+                else "Set ACORN_FILE_DEBUGGER_COMMAND with a {file} placeholder."
+            ),
+            actions=["launch", "continue", "step", "next", "registers", "memory", "stop"],
+        )
+
+    @blueprint.post("/api/images/<image_id>/editor-debugger")
+    def editor_debugger_run(image_id):
+        session = service.get(image_id)
+        data = payload()
+        path = str(data.get("path") or "")
+        slot, side = optional_int(data.get("slot")), optional_int(data.get("side"))
+        template = os.environ.get("ACORN_FILE_DEBUGGER_COMMAND", "").strip()
+        if not template or "{file}" not in template:
+            raise DiskError("No external debugger command is configured.")
+        content = service.read_file(session, slot, path, side)
+        metadata = service.file_metadata(session, slot, path, side)
+        action = str(data.get("action") or "launch").strip().lower()
+        if action not in {"launch", "continue", "step", "next", "registers", "memory", "stop"}:
+            raise DiskError("Choose a supported debugger action.")
+        expression = str(data.get("expression") or "").strip()[:500]
+        with tempfile.NamedTemporaryFile(dir=service.work_dir, prefix="debug-file-", suffix=f"-{Path(path).name}") as temporary:
+            temporary.write(content)
+            temporary.flush()
+            replacements = {
+                "{file}": temporary.name, "{image}": str(session.path), "{path}": path,
+                "{load}": str(metadata.get("load") or 0), "{execute}": str(metadata.get("execute") or 0),
+                "{breakpoint}": str(data.get("breakpoint") or metadata.get("execute") or 0),
+                "{architecture}": str(data.get("architecture") or "6502"),
+                "{action}": action, "{expression}": expression,
+            }
+            arguments = shlex.split(template)
+            for key, value in replacements.items():
+                arguments = [part.replace(key, value) for part in arguments]
+            try:
+                completed = subprocess.run(arguments, capture_output=True, text=True, timeout=120, check=False)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise DiskError(f"The debugger session could not complete: {exc}") from exc
+        result = {
+            "time": datetime.now(timezone.utc).isoformat(), "command": arguments[0],
+            "returnCode": completed.returncode, "stdout": completed.stdout[-50000:],
+            "stderr": completed.stderr[-50000:], "breakpoint": replacements["{breakpoint}"],
+            "action": action, "expression": expression,
+        }
+        project = service.editor_project(session, path, slot, side)
+        project["tests"] = [*project.get("tests", []), {**result, "kind": "debugger"}][-100:]
+        service.save_editor_project(session, path, slot, side, project)
+        return jsonify(result=result, project=project)
+
+    @blueprint.post("/api/images/<image_id>/inspect/basic/pack")
+    def pack_basic(image_id):
+        service.get(image_id)
+        data = payload()
+        runs = data.get("runs")
+        if not isinstance(runs, list):
+            raise DiskError("BASIC packing requires a list of safe statement runs.")
+        return jsonify(pack_basic_lines(runs))
+
+    @blueprint.get("/api/images/<image_id>/disassembly")
+    def inspect_disassembly(image_id):
+        session = service.get(image_id)
+        path = str(request.args.get("path") or "")
+        if not path:
+            raise DiskError("Choose a file to disassemble.")
+        try:
+            origin = int(str(request.args.get("origin")), 0) if request.args.get("origin") not in (None, "") else None
+            start = int(str(request.args.get("start") or "0"), 0)
+            length = int(str(request.args.get("length")), 0) if request.args.get("length") not in (None, "") else None
+        except ValueError as exc:
+            raise DiskError("Origin, offset and length must be valid decimal or 0x-prefixed numbers.") from exc
+        return jsonify(disassemble_file(
+            service, session, path, optional_int(request.args.get("slot")),
+            optional_int(request.args.get("side")), str(request.args.get("architecture") or "auto"),
+            origin, start, length,
+        ))
 
     return blueprint

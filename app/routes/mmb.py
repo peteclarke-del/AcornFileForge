@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import io
 from pathlib import Path
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_file
 
 from ..archive_utils import iter_upload_images, open_single_upload_image
 from ..disk_service import DiskError, DiskService
@@ -75,6 +76,17 @@ def create_mmb_blueprint(service: DiskService) -> Blueprint:
         if session.kind != "mmb":
             raise DiskError("This image is not an MMB container.")
         return jsonify(slots=service.list_slots(session))
+
+    @blueprint.get("/api/images/<image_id>/slots/<int:slot>/download")
+    def download_slot(image_id, slot):
+        data, name = service.slot_download(service.get(image_id), slot)
+        return send_file(
+            io.BytesIO(data),
+            mimetype="application/octet-stream",
+            as_attachment=True,
+            download_name=name,
+            conditional=True,
+        )
 
     @blueprint.post("/api/images/<image_id>/slots/insert")
     def insert_slot_upload(image_id):

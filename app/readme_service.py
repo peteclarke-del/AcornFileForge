@@ -226,6 +226,16 @@ def build_download_readme(
             f"- Saved project symbols: {len(session.rom_project.get('symbols', {}))}",
             f"- Saved emulator test results: {len(session.rom_project.get('tests', []))}",
         ))
+    if session.kind == "romfs":
+        details = service.romfs_details(session)
+        lines.extend((
+            f"- ROMFS title: {details['title']}",
+            f"- Paged-ROM header title: {details['headerTitle']}",
+            f"- ROM version byte: {details['version']}",
+            f"- Copyright: {details['copyright']}",
+            f"- Catalogue files: {details['fileCount']}",
+            f"- Filesystem state: {'plain and editable' if not details['readOnly'] else 'composite or incomplete, read-only'}",
+        ))
     lines.extend(
         (
             "",
@@ -258,6 +268,17 @@ def build_download_readme(
             "Programmer export does not rewrite the logical ROM. It applies padding or mirroring, optional adjacent-byte and 16-bit word swaps, address-line swaps, then one, two or four physical byte lanes to the programmer download.",
             "A service-ROM scaffold contains inert handlers until a developer supplies code. AFFROMFS is a documented data archive for companion service code and is not mounted by an unmodified MOS.",
             "Exact ROM identities are keyed by complete SHA-256. Different padding, a one-byte edit or a concatenated bank set is a different identity even when the visible title matches.",
+        ))
+    if session.kind == "romfs":
+        lines.extend((
+            "",
+            "## Acorn ROMFS notes",
+            "",
+            "This is a standard Acorn data-ROM filesystem for 8-bit BBC, Master and Electron machines. Select it with `*ROM` on compatible filing-system software.",
+            "ROMFS is flat. Filenames are case-sensitive and contain up to ten Latin-1 characters. Each file retains its load address, execution address and the ROMFS run-only flag.",
+            "Every catalogue block and data block has a CRC. Acorn File Forge rebuilds those CRCs after a file or property change and validates them when the image is reopened.",
+            "The run-only flag is ROMFS copy protection. It is not the same attribute as DFS or ADFS locking. A run-only file can be started with `*RUN` but not loaded as ordinary data through the filesystem.",
+            "Plain, complete ROMFS images are editable. Composite images containing executable bytes after the catalogue, and incomplete fragments from multi-ROM sets, are opened read-only so absolute code addresses are not moved.",
         ))
     if session.kind == "mmb":
         from .menu_service import installed_mmb_menus
