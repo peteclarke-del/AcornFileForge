@@ -6,6 +6,10 @@ import os
 import shlex
 import subprocess
 import tempfile
+import threading
+import time
+from contextlib import contextmanager
+from copy import copy
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -21,6 +25,8 @@ from ..analysis_service import (
     preflight_report,
 )
 from ..disk_service import DiskError, DiskService
+from ..emulator_config import configured_emulator, emulator_command, emulator_status
+from ..hardware_profiles import normalise_hardware_profile
 from ..file_editor import (
     disassemble_file,
     inspect_editable_file,
@@ -33,6 +39,7 @@ from ..file_editor import (
     search_image_files,
     update_file_properties,
     verify_basic_source,
+    encode_editor_replacement,
 )
 from ..operations import OperationCancelled, OperationRegistry
 from ..menu_service import (
@@ -45,11 +52,244 @@ from ..menu_service import (
 from .common import optional_int, payload
 
 
+def run_emulator_process(arguments: list[str], cwd: str, timeout: int):
+    """Keep managed-emulator execution separate from filesystem subprocesses."""
+    return subprocess.run(
+        arguments, cwd=cwd, capture_output=True, text=True,
+        timeout=timeout, check=False,
+    )
+
+
+def clean_emulator_output(output: str) -> str:
+    """Remove expected headless audio and X-server shutdown diagnostics."""
+    ignored_prefixes = (
+        "ALSA lib ",
+        "X connection to ",
+    )
+    return "\n".join(
+        line for line in str(output or "").splitlines()
+        if not line.startswith(ignored_prefixes)
+    ).strip()
+
+
+class InteractiveEmulator:
+    """Own the single browser-visible emulator display exposed by noVNC."""
+
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.process = None
+        self.xvfb = None
+        self.vnc = None
+        self.media_context = None
+
+    @staticmethod
+    def _terminate(process):
+        if process and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
+
+    def _stop_locked(self):
+        process, vnc, xvfb, media = self.process, self.vnc, self.xvfb, self.media_context
+        self.process = self.vnc = self.xvfb = self.media_context = None
+        self._terminate(process)
+        self._terminate(vnc)
+        self._terminate(xvfb)
+        if media:
+            media.__exit__(None, None, None)
+
+    def stop(self):
+        with self.lock:
+            self._stop_locked()
+
+    def start(self, media_context, *, debug: bool):
+        with self.lock:
+            self._stop_locked()
+            launch, media = media_context.__enter__()
+            try:
+                arguments, cwd = emulator_command(launch, media, debug=debug, interactive=True)
+                self.xvfb = subprocess.Popen(
+                    ["Xvfb", ":99", "-screen", "0", "1280x960x24", "-ac", "-nolisten", "tcp"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                time.sleep(0.3)
+                self.vnc = subprocess.Popen(
+                    ["x11vnc", "-display", ":99", "-rfbport", "5900", "-nopw", "-forever", "-shared", "-quiet"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
+                self.process = subprocess.Popen(
+                    arguments, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    text=True,
+                )
+                self.media_context = media_context
+            except Exception:
+                self._terminate(self.vnc)
+                self._terminate(self.xvfb)
+                self.process = self.vnc = self.xvfb = None
+                media_context.__exit__(None, None, None)
+                raise
+            process = self.process
+            threading.Thread(target=self._reap, args=(process,), daemon=True).start()
+            return arguments, launch
+
+    def _reap(self, process):
+        process.communicate()
+        with self.lock:
+            if self.process is process:
+                vnc, xvfb, media = self.vnc, self.xvfb, self.media_context
+                self.process = self.vnc = self.xvfb = self.media_context = None
+                self._terminate(vnc)
+                self._terminate(xvfb)
+                if media:
+                    media.__exit__(None, None, None)
+
+
+INTERACTIVE_EMULATOR = InteractiveEmulator()
+
+
 def create_tools_blueprint(
     service: DiskService,
     operations: OperationRegistry,
 ) -> Blueprint:
     blueprint = Blueprint("tools", __name__)
+
+    def requested_emulator_session(session, data: dict):
+        """Apply the browser's effective Workbench profile without mutating the image."""
+        requested = data.get("hardwareProfile")
+        if not isinstance(requested, dict) or not requested:
+            return session
+        try:
+            profile = normalise_hardware_profile(requested)
+        except ValueError as exc:
+            raise DiskError(f"The selected Workbench profile is invalid: {exc}") from exc
+        configured = copy(session)
+        configured.hardware_profile = profile
+        configured.target_hardware = str(profile.get("targetHardware") or session.target_hardware)
+        return configured
+
+    def status_request_data() -> dict:
+        encoded = str(request.args.get("hardwareProfile") or "")
+        if not encoded:
+            return {}
+        try:
+            profile = json.loads(encoded)
+        except json.JSONDecodeError as exc:
+            raise DiskError("The Workbench profile sent to the emulator is invalid.") from exc
+        return {"hardwareProfile": profile}
+
+    @contextmanager
+    def isolated_basic_media(session, configured, data: dict):
+        path = str(data.get("path") or "")
+        slot, side = optional_int(data.get("slot")), optional_int(data.get("side"))
+        if not path:
+            raise DiskError("Choose a BASIC file to run.")
+        inspection = inspect_editable_file(service, session, path, slot, side)
+        if not inspection.get("tokenisedBasic"):
+            raise DiskError("Only a recognised tokenised BBC BASIC program can be run in isolation.")
+        original = service.read_file(session, slot, path, side)
+        source = data.get("source")
+        content = encode_editor_replacement(original, str(source), True) if isinstance(source, str) else original
+        profile = configured.hardware_profile or {}
+        machine = str(profile.get("machine") or "bbc-b")
+        if machine == "archimedes":
+            raise DiskError("Isolated BASIC test disks currently target 8-bit BBC and Electron systems, not RISC OS BASIC V.")
+        filing_system = str(profile.get("filingSystem") or "dfs").lower()
+        disk_format = "adfs-s" if machine == "electron" and "adfs" in filing_system else "ssd"
+        scratch = service.create_blank(disk_format, "EDITOR", target_hardware=str(configured.target_hardware or "auto"))
+        page_text = str(profile.get("page") or ("E00" if machine == "electron" else "1900")).strip().upper().removeprefix("&").removeprefix("0X")
+        try:
+            page = int(page_text, 16)
+        except ValueError:
+            page = 0xE00 if machine == "electron" else 0x1900
+        try:
+            with tempfile.NamedTemporaryFile(dir=service.work_dir, prefix="editor-basic-", delete=False) as program_file:
+                program_file.write(content)
+                program_path = Path(program_file.name)
+            with tempfile.NamedTemporaryFile(dir=service.work_dir, prefix="editor-boot-", delete=False) as boot_file:
+                boot_file.write(f'BASIC\rPAGE=&{page:X}\rCHAIN "PROGRAM"\r'.encode("latin-1"))
+                boot_path = Path(boot_file.name)
+            try:
+                service.put(scratch, None, "$.PROGRAM", program_path, hex(page), hex(page), None)
+                service.put(scratch, None, "$.!BOOT", boot_path, "0", "0", None)
+                service._run(["opt", str(scratch.path), "3"])
+            finally:
+                program_path.unlink(missing_ok=True)
+                boot_path.unlink(missing_ok=True)
+            yield scratch.path
+        finally:
+            service.discard_session(scratch)
+
+    @contextmanager
+    def mmb_slot_media(session, slot: int):
+        """Expose one formatted MMB slot as temporary emulator-safe SSD media."""
+        if session.kind != "mmb":
+            raise DiskError("A disk-slot launch requires an MMB image.")
+        data, _name = service.slot_download(session, slot)
+        temporary = tempfile.NamedTemporaryFile(
+            dir=service.work_dir, prefix=f"mmb-slot-{slot:03d}-", suffix=".ssd", delete=False,
+        )
+        path = Path(temporary.name)
+        try:
+            with temporary:
+                temporary.write(data)
+            yield path
+        finally:
+            path.unlink(missing_ok=True)
+
+    def selected_media_probe(session, configured, slot: int | None, *, debug: bool = False):
+        """Build a command for a target without extracting or changing its bytes."""
+        if getattr(session, "kind", "") == "mmb":
+            if slot is None:
+                raise ValueError(
+                    "The bundled emulators cannot attach an MMB container directly. "
+                    "Select a formatted slot to mount its DFS disk. Whole-MMB execution "
+                    "requires an MMFS-capable SD-card emulator adapter."
+                )
+            slots = service.list_slots(session)
+            if slot < 0 or slot >= len(slots) or not slots[slot].get("formatted"):
+                raise ValueError("Select one formatted MMB disk slot to run.")
+            return emulator_command(configured, Path(f"selected-slot-{slot:03d}.ssd"), debug=debug)
+        return emulator_command(configured, configured.path, debug=debug)
+
+    def launch_media(session, configured, data: dict):
+        mode = str(data.get("mode") or "parent-auto")
+        if mode == "isolated-basic":
+            source = isolated_basic_media(session, configured, data)
+
+            @contextmanager
+            def isolated():
+                with source as media:
+                    yield configured, media
+
+            return isolated()
+        if mode not in {"parent-auto", "parent-mount", "slot-auto", "slot-mount"}:
+            raise DiskError("Choose how the emulator should receive the selected file or its parent image.")
+        slot = optional_int(data.get("slot"))
+        launch = copy(configured)
+        launch.hardware_profile = dict(configured.hardware_profile or {})
+        launch.hardware_profile["emulatorBoot"] = "boot" if mode.endswith("auto") else "catalogue"
+
+        if getattr(session, "kind", "") == "mmb":
+            if slot is None:
+                raise DiskError(
+                    "Whole-MMB mounting is not supported by the selected managed emulator. "
+                    "Select one formatted slot to mount its DFS disk instead."
+                )
+
+            @contextmanager
+            def slot_media():
+                with mmb_slot_media(session, slot) as media:
+                    yield launch, media
+
+            return slot_media()
+
+        @contextmanager
+        def parent_media():
+            yield launch, launch.path
+
+        return parent_media()
 
     @blueprint.post("/api/images/<image_id>/preflight")
     def preflight(image_id):
@@ -88,6 +328,57 @@ def create_tools_blueprint(
             raise DiskError("That health repair is not available for this image.")
         result = audit_mmb_menu_pages(service, session)
         return jsonify(image=service.summary(session), report=health_report(service, session), repair=result)
+
+    @blueprint.get("/api/images/<image_id>/adfs-installations/audit")
+    def audit_adfs_installations(image_id):
+        session = service.get(image_id)
+        operation_id = request.args.get("operationId")
+        root = str(request.args.get("root") or "$")
+        if operation_id:
+            operations.start(operation_id, "Finding installed ADFS software")
+        try:
+            result = service.audit_adfs_installations(
+                session,
+                root,
+                lambda message, current=None, total=None: operations.update(
+                    operation_id, message, current, total
+                ),
+            )
+            operations.finish(operation_id, "Installed ADFS software audit complete")
+            return jsonify(result)
+        except OperationCancelled as exc:
+            operations.cancelled(operation_id, str(exc))
+            raise
+        except Exception as exc:
+            operations.fail(operation_id, str(exc))
+            raise
+
+    @blueprint.post("/api/images/<image_id>/adfs-installations/repair")
+    def repair_adfs_installations(image_id):
+        session = service.get(image_id)
+        data = payload()
+        operation_id = data.get("operationId")
+        directories = data.get("directories")
+        if not isinstance(directories, list):
+            raise DiskError("Choose the installed disk directories to repair.")
+        if operation_id:
+            operations.start(operation_id, "Rechecking proposed ADFS repairs")
+        try:
+            result = service.repair_adfs_installations(
+                session,
+                directories,
+                lambda message, current=None, total=None: operations.update(
+                    operation_id, message, current, total
+                ),
+            )
+            operations.finish(operation_id, "Installed ADFS software repair complete")
+            return jsonify(image=service.summary(session), repair=result)
+        except OperationCancelled as exc:
+            operations.cancelled(operation_id, str(exc))
+            raise
+        except Exception as exc:
+            operations.fail(operation_id, str(exc))
+            raise
 
     @blueprint.get("/api/images/<image_id>/manifest")
     def manifest(image_id):
@@ -278,55 +569,92 @@ def create_tools_blueprint(
     @blueprint.get("/api/images/<image_id>/editor-emulator")
     def editor_emulator_status(image_id):
         session = service.get(image_id)
-        command = os.environ.get("ACORN_FILE_EMULATOR_COMMAND", "").strip()
+        configured = requested_emulator_session(session, status_request_data())
+        status = emulator_status(configured)
+        parent_mountable = False
+        parent_message = ""
+        slot = optional_int(request.args.get("slot"))
+        try:
+            command, _cwd = selected_media_probe(session, configured, slot)
+            status["command"] = " ".join(command)
+            parent_mountable = True
+        except ValueError as exc:
+            status["command"] = ""
+            parent_message = str(exc)
+        is_basic = str(request.args.get("basic") or "false").lower() in {"1", "true", "yes"}
+        isolated_basic = bool(is_basic and status["machine"] != "archimedes" and status["available"])
+        if not parent_mountable and not isolated_basic:
+            status["available"] = False
+            status["message"] = parent_message or status["message"]
         return jsonify(
-            available=bool(command and "{file}" in command),
-            hardware=session.target_hardware,
-            message=(
-                "Configured by ACORN_FILE_EMULATOR_COMMAND."
-                if command and "{file}" in command
-                else "Set ACORN_FILE_EMULATOR_COMMAND with a {file} placeholder to enable direct tests."
-            ),
+            **status, hardware=configured.target_hardware,
+            parentMountable=parent_mountable, parentMessage=parent_message,
+            isolatedBasic=isolated_basic,
+            mediaTarget=("mmb-slot" if getattr(session, "kind", "") == "mmb" and slot is not None else "image"),
+            targetLabel=(f"MMB slot {slot}" if getattr(session, "kind", "") == "mmb" and slot is not None else getattr(session, "name", "Current image")),
         )
 
     @blueprint.post("/api/images/<image_id>/editor-emulator")
     def editor_emulator_run(image_id):
         session = service.get(image_id)
         data = payload()
+        configured = requested_emulator_session(session, data)
         path = str(data.get("path") or "")
         slot, side = optional_int(data.get("slot")), optional_int(data.get("side"))
-        template = os.environ.get("ACORN_FILE_EMULATOR_COMMAND", "").strip()
-        if not template or "{file}" not in template:
-            raise DiskError("No file emulator command is configured.")
-        content = service.read_file(session, slot, path, side)
-        metadata = service.file_metadata(session, slot, path, side)
-        suffix = f"-{Path(path).name}"
-        with tempfile.NamedTemporaryFile(dir=service.work_dir, prefix="emulator-file-", suffix=suffix) as temporary:
-            temporary.write(content)
-            temporary.flush()
-            replacements = {
-                "{file}": temporary.name,
-                "{image}": str(session.path),
-                "{path}": path,
-                "{load}": str(metadata.get("load") or 0),
-                "{execute}": str(metadata.get("execute") or 0),
-            }
-            arguments = shlex.split(template)
-            for key, value in replacements.items():
-                arguments = [part.replace(key, value) for part in arguments]
+        if bool(data.get("interactive")):
             try:
-                completed = subprocess.run(arguments, capture_output=True, text=True, timeout=60, check=False)
-            except (OSError, subprocess.TimeoutExpired) as exc:
-                raise DiskError(f"The emulator test could not complete: {exc}") from exc
+                arguments, launch = INTERACTIVE_EMULATOR.start(
+                    launch_media(session, configured, data), debug=False,
+                )
+            except (ValueError, OSError, subprocess.SubprocessError) as exc:
+                raise DiskError(f"The browser-visible emulator could not start: {exc}") from exc
+            emulator = configured_emulator(launch)
+            result = {
+                "time": datetime.now(timezone.utc).isoformat(), "command": arguments[0],
+                "returnCode": 0, "bounded": False, "interactive": True,
+                "emulator": emulator.label, "machine": str(launch.hardware_profile.get("machine") or ""),
+                "launchMode": str(data.get("mode") or "parent-auto"),
+                "summary": f"{emulator.label} is running in the browser display.",
+                "stdout": "", "stderr": "", "viewerPort": 8668,
+            }
+            project = service.editor_project(session, path, slot, side)
+            project["tests"] = [*project.get("tests", []), result][-100:]
+            service.save_editor_project(session, path, slot, side, project)
+            return jsonify(result=result, project=project)
+        try:
+            with launch_media(session, configured, data) as (launch, media):
+                arguments, cwd = emulator_command(launch, media)
+                completed = run_emulator_process(arguments, cwd, 30)
+        except ValueError as exc:
+            raise DiskError(str(exc)) from exc
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise DiskError(f"The managed emulator test could not complete: {exc}") from exc
+        bounded = completed.returncode == 124
+        emulator = configured_emulator(configured)
+        mode = str(data.get("mode") or "parent-auto")
         result = {
             "time": datetime.now(timezone.utc).isoformat(),
-            "command": arguments[0], "returnCode": completed.returncode,
-            "stdout": completed.stdout[-20000:], "stderr": completed.stderr[-20000:],
+            "command": arguments[0], "returnCode": 0 if bounded else completed.returncode,
+            "bounded": bounded,
+            "emulator": emulator.label, "machine": str(configured.hardware_profile.get("machine") or ""),
+            "launchMode": mode,
+            "summary": (
+                f"{emulator.label} completed its expected managed test window."
+                if bounded else f"{emulator.label} exited with return code {completed.returncode}."
+            ),
+            "stdout": clean_emulator_output(completed.stdout)[-20000:],
+            "stderr": clean_emulator_output(completed.stderr)[-20000:],
         }
         project = service.editor_project(session, path, slot, side)
         project["tests"] = [*project.get("tests", []), result][-100:]
         service.save_editor_project(session, path, slot, side, project)
         return jsonify(result=result, project=project)
+
+    @blueprint.delete("/api/images/<image_id>/editor-emulator")
+    def editor_emulator_stop(image_id):
+        service.get(image_id)
+        INTERACTIVE_EMULATOR.stop()
+        return jsonify(stopped=True)
 
     @blueprint.get("/api/images/<image_id>/editor-assembler")
     def editor_assembler_status(image_id):
@@ -395,54 +723,87 @@ def create_tools_blueprint(
     @blueprint.get("/api/images/<image_id>/editor-debugger")
     def editor_debugger_status(image_id):
         session = service.get(image_id)
-        command = os.environ.get("ACORN_FILE_DEBUGGER_COMMAND", "").strip()
+        configured = requested_emulator_session(session, status_request_data())
+        status = emulator_status(configured)
+        parent_mountable = False
+        parent_message = ""
+        slot = optional_int(request.args.get("slot"))
+        try:
+            command, _cwd = selected_media_probe(session, configured, slot, debug=True)
+            parent_mountable = True
+        except ValueError as exc:
+            command = []
+            parent_message = str(exc)
+        is_basic = str(request.args.get("basic") or "false").lower() in {"1", "true", "yes"}
+        isolated_basic = bool(is_basic and status["machine"] != "archimedes" and status["available"])
+        available = bool(status["available"] and (parent_mountable or isolated_basic))
         return jsonify(
-            available=bool(command and "{file}" in command),
-            hardware=session.target_hardware,
-            message=(
-                "Configured by ACORN_FILE_DEBUGGER_COMMAND. The adapter may use {action}, {breakpoint} and {expression}."
-                if command and "{file}" in command
-                else "Set ACORN_FILE_DEBUGGER_COMMAND with a {file} placeholder."
-            ),
-            actions=["launch", "continue", "step", "next", "registers", "memory", "stop"],
+            available=available,
+            hardware=configured.target_hardware,
+            command=" ".join(command), configuredBy="managed workbench profile",
+            message=(f"{status['label']} provides the managed debugger for this target." if available else parent_message or status["message"]),
+            label=status["label"], machine=status["machine"],
+            parentMountable=parent_mountable, parentMessage=parent_message,
+            isolatedBasic=isolated_basic, actions=["launch"] if available else [],
+            mediaTarget=("mmb-slot" if getattr(session, "kind", "") == "mmb" and slot is not None else "image"),
+            targetLabel=(f"MMB slot {slot}" if getattr(session, "kind", "") == "mmb" and slot is not None else getattr(session, "name", "Current image")),
         )
 
     @blueprint.post("/api/images/<image_id>/editor-debugger")
     def editor_debugger_run(image_id):
         session = service.get(image_id)
         data = payload()
+        configured = requested_emulator_session(session, data)
         path = str(data.get("path") or "")
         slot, side = optional_int(data.get("slot")), optional_int(data.get("side"))
-        template = os.environ.get("ACORN_FILE_DEBUGGER_COMMAND", "").strip()
-        if not template or "{file}" not in template:
-            raise DiskError("No external debugger command is configured.")
-        content = service.read_file(session, slot, path, side)
-        metadata = service.file_metadata(session, slot, path, side)
         action = str(data.get("action") or "launch").strip().lower()
-        if action not in {"launch", "continue", "step", "next", "registers", "memory", "stop"}:
-            raise DiskError("Choose a supported debugger action.")
+        if action != "launch":
+            raise DiskError("Start the managed debugger before using its native step, register and memory controls.")
         expression = str(data.get("expression") or "").strip()[:500]
-        with tempfile.NamedTemporaryFile(dir=service.work_dir, prefix="debug-file-", suffix=f"-{Path(path).name}") as temporary:
-            temporary.write(content)
-            temporary.flush()
-            replacements = {
-                "{file}": temporary.name, "{image}": str(session.path), "{path}": path,
-                "{load}": str(metadata.get("load") or 0), "{execute}": str(metadata.get("execute") or 0),
-                "{breakpoint}": str(data.get("breakpoint") or metadata.get("execute") or 0),
-                "{architecture}": str(data.get("architecture") or "6502"),
-                "{action}": action, "{expression}": expression,
-            }
-            arguments = shlex.split(template)
-            for key, value in replacements.items():
-                arguments = [part.replace(key, value) for part in arguments]
+        if bool(data.get("interactive")):
             try:
-                completed = subprocess.run(arguments, capture_output=True, text=True, timeout=120, check=False)
-            except (OSError, subprocess.TimeoutExpired) as exc:
-                raise DiskError(f"The debugger session could not complete: {exc}") from exc
+                arguments, launch = INTERACTIVE_EMULATOR.start(
+                    launch_media(session, configured, data), debug=True,
+                )
+            except (ValueError, OSError, subprocess.SubprocessError) as exc:
+                raise DiskError(f"The browser-visible debugger could not start: {exc}") from exc
+            emulator = configured_emulator(launch)
+            result = {
+                "time": datetime.now(timezone.utc).isoformat(), "command": arguments[0],
+                "returnCode": 0, "bounded": False, "interactive": True,
+                "emulator": emulator.label, "machine": str(launch.hardware_profile.get("machine") or ""),
+                "launchMode": str(data.get("mode") or "parent-auto"),
+                "summary": f"{emulator.label} debugger is running in the browser display.",
+                "stdout": "", "stderr": "", "viewerPort": 8668,
+                "breakpoint": str(data.get("breakpoint") or ""), "action": action,
+                "expression": expression, "kind": "debugger",
+            }
+            project = service.editor_project(session, path, slot, side)
+            project["tests"] = [*project.get("tests", []), result][-100:]
+            service.save_editor_project(session, path, slot, side, project)
+            return jsonify(result=result, project=project)
+        try:
+            with launch_media(session, configured, data) as (launch, media):
+                arguments, cwd = emulator_command(launch, media, debug=True)
+                completed = run_emulator_process(arguments, cwd, 120)
+        except ValueError as exc:
+            raise DiskError(str(exc)) from exc
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise DiskError(f"The managed debugger session could not complete: {exc}") from exc
+        bounded = completed.returncode == 124
+        emulator = configured_emulator(configured)
+        mode = str(data.get("mode") or "parent-auto")
         result = {
             "time": datetime.now(timezone.utc).isoformat(), "command": arguments[0],
-            "returnCode": completed.returncode, "stdout": completed.stdout[-50000:],
-            "stderr": completed.stderr[-50000:], "breakpoint": replacements["{breakpoint}"],
+            "returnCode": 0 if bounded else completed.returncode, "bounded": bounded,
+            "emulator": emulator.label, "machine": str(configured.hardware_profile.get("machine") or ""),
+            "launchMode": mode,
+            "summary": (
+                f"{emulator.label} completed its expected managed debugger window."
+                if bounded else f"{emulator.label} debugger exited with return code {completed.returncode}."
+            ),
+            "stdout": clean_emulator_output(completed.stdout)[-50000:],
+            "stderr": clean_emulator_output(completed.stderr)[-50000:], "breakpoint": str(data.get("breakpoint") or ""),
             "action": action, "expression": expression,
         }
         project = service.editor_project(session, path, slot, side)

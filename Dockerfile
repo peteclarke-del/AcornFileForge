@@ -8,6 +8,49 @@ RUN git clone https://github.com/jfdelnero/HxCFloppyEmulator.git /src \
     && git checkout b1eee4cd73391ceaf2ad4ac57e28bf11c91333ba
 RUN make -C /src/build HxCFloppyEmulator_cmdline
 
+FROM debian:bookworm-slim AS elkulator-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl git make gcc g++ autoconf automake libtool pkg-config patch \
+    liballegro4-dev libopenal-dev libalut-dev zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+# 1MHzWifi 0.1.41 includes the ROM cold-boot correction.
+RUN git clone https://github.com/stardot/elkulator.git /src/elkulator \
+    && git -C /src/elkulator checkout 6cab45aba68fc3d3bdaea4c28b5de4de0307e00e \
+    && git clone https://github.com/peteclarke-del/1mhzWifi.git /src/1mhzwifi \
+    && git -C /src/1mhzwifi checkout b39e21bf9c84ea629367a2ed8999d6b96bc08054 \
+    && /src/1mhzwifi/emulator/pi1mhz-mailbox/integrations/elkulator/install.sh /src/elkulator \
+    && cd /src/elkulator \
+    && autoreconf -fi \
+    && ./configure \
+    && make -j2
+RUN mkdir -p /src/elkulator-runtime \
+    && cp /src/elkulator/src/elkulator /src/elkulator-runtime/ \
+    && cp /src/elkulator/elk.cfg /src/elkulator-runtime/ \
+    && curl -fsSL http://elkulator.acornelectron.co.uk/ElkulatorV1.0Linux.tar.gz -o /tmp/elkulator-roms.tar.gz \
+    && tar -xzf /tmp/elkulator-roms.tar.gz -C /tmp \
+    && find /tmp -type d -name roms -print -quit | xargs -I{} cp -a {} /src/elkulator-runtime/roms
+
+FROM debian:bookworm-slim AS bem-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates git make gcc g++ autoconf automake libtool pkg-config \
+    liballegro5-dev liballegro-acodec5-dev liballegro-audio5-dev \
+    liballegro-dialog5-dev liballegro-image5-dev liballegro-ttf5-dev \
+    libasound2-dev zlib1g-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN git clone https://github.com/stardot/b-em.git /src/b-em \
+    && git -C /src/b-em checkout 6018d5e91a097d0a6dc0aee95e0477845e12660c \
+    && cd /src/b-em \
+    && ./autogen.sh \
+    && ./configure \
+    && make -j2
+RUN mkdir -p /src/bem-runtime \
+    && cp /src/b-em/src/b-em /src/bem-runtime/ \
+    && cp /src/b-em/b-em.cfg /src/bem-runtime/ \
+    && cp /src/b-em/*.bin /src/bem-runtime/ \
+    && cp -a /src/b-em/roms /src/b-em/fonts /src/b-em/ddnoise /src/bem-runtime/
+
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -15,18 +58,54 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    mame xvfb xauth x11vnc novnc websockify liballegro4.4 libopenal1 libalut0 \
+    liballegro5.2t64 liballegro-acodec5.2t64 liballegro-audio5.2t64 \
+    liballegro-dialog5.2t64 liballegro-image5.2t64 liballegro-ttf5.2t64 \
+    libasound2t64 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY --from=hxc-builder /src/build/hxcfe /usr/local/bin/hxcfe
 COPY --from=hxc-builder /src/build/libhxcfe.so /usr/local/lib/libhxcfe.so
 COPY --from=hxc-builder /src/build/libusbhxcfe.so /usr/local/lib/libusbhxcfe.so
+COPY --from=elkulator-builder /src/elkulator-runtime /opt/elkulator
+COPY --from=bem-builder /src/bem-runtime /opt/b-em
+COPY firmware/mame /opt/acorn-file-forge/firmware/mame
+COPY firmware/elkulator/RHPLUS133.rom.gz.b64 /tmp/RHPLUS133.rom.gz.b64
+RUN base64 -d /tmp/RHPLUS133.rom.gz.b64 | gzip -dc > /opt/elkulator/roms/RHPLUS133.rom \
+    && echo "cda520a110b160af2c750b2d28c84353ad2c3ede15b4821cf96452ee4dc3b5f8  /opt/elkulator/roms/RHPLUS133.rom" | sha256sum -c - \
+    && rm /tmp/RHPLUS133.rom.gz.b64
+RUN for profile in base plus1 plus3 plus1-plus3 ap4 plus1-ap4; do \
+      mkdir -p "/opt/elkulator/profiles/$profile"; \
+      cp /opt/elkulator/elkulator "/opt/elkulator/profiles/$profile/elkulator"; \
+      cp /opt/elkulator/elk.cfg "/opt/elkulator/profiles/$profile/elk.cfg"; \
+      ln -s ../../roms "/opt/elkulator/profiles/$profile/roms"; \
+    done \
+    && sed -i 's/^plus1 = .*/plus1 = 1/' /opt/elkulator/profiles/plus1/elk.cfg \
+    && sed -i 's/^plus1 = .*/plus1 = 1/' /opt/elkulator/profiles/plus1-plus3/elk.cfg \
+    && sed -i 's/^plus1 = .*/plus1 = 1/' /opt/elkulator/profiles/plus1-ap4/elk.cfg \
+    && for profile in plus3 plus1-plus3 ap4 plus1-ap4; do \
+      sed -i 's/^plus3 = .*/plus3 = 1/' "/opt/elkulator/profiles/$profile/elk.cfg"; \
+    done \
+    && for profile in plus3 plus1-plus3; do \
+      sed -i 's/^dfsena = .*/dfsena = 0/; s/^adfsena = .*/adfsena = 1/' "/opt/elkulator/profiles/$profile/elk.cfg"; \
+    done \
+    && for profile in ap4 plus1-ap4; do \
+      sed -i 's/^dfsena = .*/dfsena = 1/; s/^adfsena = .*/adfsena = 1/' "/opt/elkulator/profiles/$profile/elk.cfg"; \
+    done \
+    && for profile in base plus1 plus3 plus1-plus3 ap4 plus1-ap4; do \
+      cp -a "/opt/elkulator/profiles/$profile" "/opt/elkulator/profiles/$profile-mrb"; \
+      sed -i 's/^mrb = .*/mrb = 1/' "/opt/elkulator/profiles/$profile-mrb/elk.cfg"; \
+    done
 RUN ldconfig
 
 COPY app ./app
 
 RUN mkdir -p /app/work
 
-EXPOSE 8666
+EXPOSE 8666 8668
 
 CMD ["gunicorn", "--bind", "0.0.0.0:8666", "--workers", "1", "--threads", "8", "--timeout", "300", "--access-logfile", "-", "app.server:app"]

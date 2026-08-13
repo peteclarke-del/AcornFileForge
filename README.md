@@ -246,6 +246,46 @@ is self-contained or when several images would otherwise clash. The existing
 DFS-to-ADFS loader checks and compatibility reporting apply to these imports
 too.
 
+An ADFS floppy is not automatically a relocatable HDD application. Its loader
+may assume that `$` is the floppy root, use a DFS-only abbreviation, select a
+drive explicitly, or read physical sectors. HDD extraction now follows the
+reachable loader graph, including launch filenames stored in BASIC `DATA`, and
+expands proven `R.`, `L.` and `LO.` commands. Proven local `$.name` references
+become relative references in BASIC, or same-length `@.name` references in
+embedded machine-code strings. The current directory marker keeps binary
+addresses stable. Explicit filing-system or drive changes and apparent direct
+sector I/O are reported as compatibility risks rather than being guessed at.
+Such software should remain as a mounted floppy image unless a title-specific
+HDD installer is available.
+
+### Audit software already installed on an ADFS HDD
+
+Choose **Tools → Check installed disk software** in an ADFS HDD pane to inspect
+software which was previously extracted from floppy images. The command is not
+shown for ADFS floppy images. It recursively finds installation roots from the
+source-image history retained by Acorn File Forge and from conventional launch
+files such as `!BOOT`, `BOOT`, `LOADER`, `MENU`, `GO` and `START`.
+
+The first pass is read-only and can be limited to the current directory or run
+across the whole HDD. Each detected installation reports its source image when
+known, file count, exact deterministic repairs and unresolved warnings. Safe
+repairs include proven local root references which must follow the ADFS current
+directory, and unambiguous abbreviated loader commands which are unsafe after a
+DFS-to-ADFS move. Explicit drive or filing-system changes and direct-sector I/O
+are reported for review but are never rewritten by guesswork.
+
+ADFS path syntax is resolved before any command warning or rewrite is offered.
+For example, `R.+AP2` is preserved when directory `R` contains file `+AP2`; it
+is not mistaken for an abbreviated `RUN`. This check applies to both textual
+scripts and OSCLI strings reached from binary loaders.
+
+If repairs are available, select the directories to fix and choose **Repair
+selected**. Choose **Cancel** to leave the image unchanged. The repair action
+creates the normal automatic undo checkpoint and processes the selected batch
+through one writable filesystem mount, which avoids repeatedly reopening a
+large BeebSCSI DAT image. Run the audit again after repair to confirm that only
+intentional warnings remain.
+
 RISC OS Open packages install only into ADFS or RISC OS images. The installer
 preserves application directory structure and SparkFS load, execute and
 filetype metadata, while omitting the package manager's `RiscPkg` control
@@ -490,11 +530,27 @@ diagnostics. Standard MOS, DFS and ADFS star commands have specific help;
 commands supplied by other sideways ROMs remain valid hover targets with an
 explicit ROM-dependent description rather than being mistaken for BASIC.
 
-Help also interprets useful constant operands in context. `*FX200 0` and
-`OSCLI"FX 200 0"` identify OSBYTE reason 200, common VDU reason bytes are named,
-and constant MODE and COLOUR values explain what the call selects. Dynamic
-expressions retain general command help because guessing their run-time value
-would be misleading.
+Help also interprets useful constant operands in context. `*FX200,3` explains
+both the Escape and BREAK control bits rather than stopping at "OSBYTE reason
+200". The same parameter decoding applies to an `OSCLI"FX ..."` string and to
+an inline-assembler OSBYTE call when immediate A, X and Y values can be proved.
+Common buffer, event, keyboard-repeat and Escape calls name the selected buffer,
+event or setting.
+
+VDU help expands BBC BASIC's byte syntax before interpreting it. A comma emits
+one byte, while a semicolon emits a 16-bit value low byte first. This lets the
+editor explain that `VDU23,1,0;0;0;0;` disables the text cursor and recognise
+the equivalent direct 6845 form `VDU23;8202;0;0;0;`. Constant colour, palette,
+MODE, text-window, graphics-window, origin, cursor, plot and character-definition
+sequences receive parameter-level descriptions. Dynamic expressions retain
+general command help because guessing their run-time value would be misleading.
+The parameter catalogue is declarative rather than a list of prose for a few
+examples. It decodes the constant values present in the source for OSBYTE and
+`*FX`, VDU, SOUND and ENVELOPE. Every result is compared with the hardware
+profile applied to the pane. A RISC OS operation viewed in an Electron profile,
+for example, still explains the operation but also states that it is outside
+the configured target and may fail or behave unexpectedly. Machine-specific
+hardware requirements remain visible even when the target family matches.
 
 The Edit menu can find every code reference to the symbol at the caret and can
 rename that symbol as one undoable change. Strings and comments are excluded,
@@ -562,32 +618,32 @@ side by side without touching the image. The selected-data inspector can show
 ASCII, hexadecimal bytes, little-endian and big-endian words, and a bounded
 1-bit bitmap interpretation of a disassembly range.
 
-An optional emulator hand-off is available when
-`ACORN_FILE_EMULATOR_COMMAND` is set. The command must include `{file}` and may
-also use `{image}`, `{path}`, `{load}` and `{execute}`. Acorn File Forge exports
-the selected file to a temporary path, runs the configured command for up to 60
-seconds, records its return code and output in the file project, then removes
-the temporary file. For example:
+Managed emulator settings live in **Workbench → Hardware profiles → Emulator
+and debugger integration**. The Docker image builds the reviewed Elkulator
+revision with the Pi1MHz mailbox, deterministic key injection and AP5 Tube
+patches from the 1MHz WiFi project. It builds B-em with its maintained BBC B,
+B+ and Master resource set, and installs MAME for Archimedes profiles. Selecting
+a machine chooses a sensible emulator,
+debugger, RAM size and startup action. Apply the profile to the pane that should
+use it. Tests attach the current bootable image, use bounded run times, and
+retain stdout, stderr and return status in project history. Raw server command
+fields and deployment command overrides are deliberately not exposed.
 
-```yaml
-environment:
-  ACORN_FILE_EMULATOR_COMMAND: 'my-emulator --run {file}'
-```
-
-The application does not bundle or assume a particular emulator. Emulator and
-debugger stdout, stderr, return status and breakpoint are available from the
-retained test-results view, so a failed hand-off is not lost when the result
-dialog closes.
+The Docker image includes the audited `aa310` machine set and its Archimedes
+keyboard device archive. The Workbench still runs MAME's ROM audit before
+enabling an Archimedes session, so a missing, damaged or version-incompatible
+set produces a useful status instead of a failed launch. A general MAME
+`bios-devices` collection alone is not sufficient because it does not contain
+the main `aa310` machine firmware.
 
 Two further local-only integrations are optional. `ACORN_FILE_ASSEMBLER_COMMAND`
 must contain `{source}` and `{output}` and may use `{origin}` and
 `{architecture}`. **Edit and reassemble** starts from label-oriented assembly
 source, warns that the complete binary will be replaced, invokes the configured
 tool without a shell, checks the source file hash and writes the output through
-an undo checkpoint. `ACORN_FILE_DEBUGGER_COMMAND` must contain `{file}` and may
-use `{image}`, `{path}`, `{load}`, `{execute}`, `{breakpoint}` and
-`{architecture}`. Debugger output and return status are retained in project
-test history. Neither integration is enabled by default.
+an undo checkpoint. Debugger output and return status are retained in project
+test history. The assembler remains an expert deployment integration; emulator
+and debugger selection is managed by the workbench.
 
 BBC BASIC listings also recognise inline assembler between `[` and `]`.
 Hovering a 6502 or ARM mnemonic shows the same processor help used by the
@@ -602,11 +658,12 @@ extensions are kept distinct. In particular, W65C816 does not advertise the
 W65C02 `BBRx`, `BBSx`, `RMBx` or `SMBx` instructions.
 
 Constant call operands receive context rather than a generic entry-point
-description. The editor decodes common VDU bytes, `*FX` and OSBYTE reason
-codes, OSWORD blocks, OSCLI pointers, OSWRCH characters and BASIC V/VI `SYS`
-SWI names. Inline assembler uses preceding constant A, X and Y loads when they
-can be proved on the same physical line. Dynamic values remain explicitly
-unknown instead of being guessed.
+description. The editor decodes complete constant VDU byte streams, including
+the comma and semicolon emission rules, and interprets the parameters of common
+`*FX` and OSBYTE calls. It also decodes OSWORD blocks, OSCLI pointers, OSWRCH
+characters and BASIC V/VI `SYS` SWI names. Inline assembler uses preceding
+constant A, X and Y loads when they can be proved on the same physical line.
+Dynamic values remain explicitly unknown instead of being guessed.
 
 The initial BBC BASIC checks find missing, duplicate and out-of-order line
 numbers, unresolved direct `GOTO`, `GOSUB` and `RESTORE` destinations, missing
@@ -939,17 +996,56 @@ an installed title from being recognised.
 
 ### Hardware profiles and import recipes
 
-The header **Workbench** includes reusable hardware profiles for Electron Plus
-3, BBC Micro with paged MMFS, BBC/Master BeebSCSI, Master ADFS, and
-Archimedes/RISC OS. A profile records the machine, Online Library filter,
-filing system, MMFS build, Tube state, expected PAGE, and ADFS
-validation target. Custom profiles are stored in the browser and the applied
+The header **Workbench** includes reusable hardware profiles for stock Electron,
+BBC B, BBC B+, Master 128 and Archimedes systems, together with common DFS,
+ADFS, MMFS and BeebSCSI configurations. The supplied custom Electron profile
+combines RH Plus 1, RH Plus 2, Plus 3, AP5, Master RAM Board and BeebSCSI. A profile starts
+with a base machine and adds only compatible chassis, disk interfaces, memory,
+mass storage, Tube processors, PiTubeDirect or Archimedes podules. PiTubeDirect is
+available for BBC B, BBC B+, Master and Electron profiles; Electron configurations
+also require an AP5 Tube interface. Mutually exclusive choices
+use dropdowns, while genuinely cumulative hardware uses bounded checkboxes.
+Required carrier or bus expansions are selected automatically, and removing a
+dependency also removes any combination that can no longer exist.
+
+A profile also records the Online Library filter, filing system, MMFS build,
+expected PAGE, ADFS validation target, and managed emulator, debugger, RAM and
+startup choices. Custom profiles are stored in the browser and the applied
 profile is also persisted with the private image session. The health dashboard
 highlights conflicts such as using the Tube with Electron or low-PAGE MMFS
 software. The active Workbench profile is remembered and supplies the workspace
 default used by **Library → Find disks online** and **Find software online** on
-panes without their own profile. On first use this is Electron Plus 3. Selecting,
+panes without their own profile. Selecting,
 saving, or applying a different profile changes that default.
+
+Pane **Tools** menus and file editors use that same effective profile for every
+emulator and debugger capability check. A DFS SSD/DSD, ADFS floppy, supported
+ADFS hard disk or tape can be mounted and run directly from its pane. The MMB
+index accepts one formatted slot at a time; the selected 200 KiB disk is copied
+to temporary SSD media before launch, so emulator writes cannot alter the MMB.
+The same commands remain available while browsing inside that slot. Multiple
+selected slots cannot be launched as one drive.
+
+Opening a BASIC program offers three explicit launch paths:
+tokenise and inject the current editor buffer into a temporary bootable floppy,
+mount and boot the complete parent image, or mount the parent without autoboot.
+The isolated test includes unsaved editor text but no companion files. Parent
+mounting retains dependencies and is offered only when the selected emulator
+supports that container. Messages name Elkulator, B-em or MAME as appropriate
+instead of reporting capabilities from a different machine profile.
+Expected ALSA and virtual-X shutdown chatter is suppressed. Retained results
+still show meaningful ROM and Tube setup notices, the emulator, machine, launch
+mode and whether the bounded test window completed normally.
+Interactive Run and Debug open the managed emulator in a browser-embedded noVNC
+display on port 8668. The viewer supports full-screen display and an explicit
+Stop and close action. Only one managed interactive emulator runs at a time.
+
+The Tools menu also shows the separate whole-MMB target. It is disabled in the
+current build because Elkulator and B-em accept floppy and tape media but do not
+provide an MMFS-compatible virtual SD-card attachment. This is reported as a
+specific adapter limitation. It is not silently treated as slot zero and the
+application never claims that a whole MMB was mounted when only one SSD was
+extracted.
 
 Online Library search results carry short-lived server-side download tokens.
 They are retained for one hour in the private application work area, so a safe
@@ -959,6 +1055,16 @@ Import recipes record the directory naming strategy, group prefix, online
 metadata preference, guarded compatibility rewrites, and whether copied titles
 should be offered to a menu. They appear in the bulk MMB-to-ADFS planner and
 can be adjusted for exceptional disks without changing the saved recipe.
+
+Every ADF, SSD and MMB-to-HDD import uses the same global-menu choice. Keep the
+current disc off all menus, create or update a Universal Menu at the current
+ADFS directory, or add it to any detected Universal Menu elsewhere on the
+volume. A menu-bound title is always installed in its own child directory
+beneath that menu root. Bulk MMB plans add a per-disc Menu checkbox, so one
+batch can contain both listed and deliberately hidden software. MMB-only menu
+programs such as SPI Game Menu and MMC Desktop are shown as inapplicable to an
+HDD because their launchers use `*DIN`; the bundled Universal Menu is the menu
+program which understands ADFS directory records.
 
 ### Portable projects
 
@@ -1502,10 +1608,10 @@ Choose **Tools → ROM Workbench** for the higher-level maintenance tools:
   swaps, and splits it into one, two or four byte lanes. The resulting ZIP
   includes the chip files and a checksum-bearing programming report.
 - **Project** records hardware, socket, research and symbol information without
-  modifying the image. **Emulator** runs only when the local Docker deployment
-  has an `ACORN_ROM_EMULATOR_COMMAND` containing a `{rom}` placeholder. The
-  command is executed directly without a shell, has a 30-second limit, and its
-  result is retained in the project metadata.
+  modifying the image. **Emulator** reports the managed emulator selected by
+  the hardware profile. Direct sideways-ROM attachment remains disabled unless
+  the selected machine's exact ROM-slot mapping is known; this avoids silently
+  replacing a machine ROM or testing the wrong bank.
 
 ![ROM Workbench bank map and structural audit](app/static/help/rom-workbench-overview.png)
 

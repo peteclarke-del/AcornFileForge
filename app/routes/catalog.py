@@ -13,6 +13,7 @@ from ..catalog_service import CatalogueService, archive_members
 from ..disk_service import DiskError, DiskService
 from ..formats import DFS_EXTENSIONS, HFE_EXTENSIONS, TAPE_EXTENSIONS
 from ..menu_service import (
+    analyse_adfs_directory,
     analyse_disk,
     enrich_if_ambiguous,
     find_menu_slot,
@@ -243,7 +244,15 @@ def create_catalog_blueprint(service: DiskService, work_dir: Path) -> Blueprint:
                         create_dir = bool(data.get("createDirectory", False))
                         directory = re.sub(r"[^A-Za-z0-9!_-]", "_", item["title"])[:10] or "ONLINE"
                         destination = service.extract_image_to_adfs_directory(source, target, target_path, directory, create_directory=create_dir)
-                        results.append({"id": item_id, "title": item["title"], "installed": 1, "path": destination, "slots": [], "metadata": None})
+                        metadata = analyse_adfs_directory(service, target, destination) if add_to_menu else None
+                        if metadata:
+                            metadata["title"] = str(item.get("title") or metadata["title"])
+                            metadata["publisher"] = str(item.get("publisher") or metadata["publisher"])
+                            metadata.setdefault("sources", []).append(item.get("sourceName", "Online Library"))
+                            metadata.setdefault("evidence", []).append(
+                                "Title and publisher loaded from the selected online catalogue record."
+                            )
+                        results.append({"id": item_id, "title": item["title"], "installed": 1, "path": destination, "slots": [], "metadata": metadata})
                     else:
                         if service.replace_blank_dfs_image(
                             target,

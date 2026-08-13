@@ -5,12 +5,17 @@ services:
     container_name: acorn-file-forge
     ports:
       - "8666:8666"
+      - "8668:8668"
     environment:
       ACORN_FILE_FORGE_WORK_DIR: /app/work
       ACORN_MAX_UPLOAD_GIB: "8"
     volumes:
       - acorn-file-forge-work:/app/work
     restart: unless-stopped
+    command: >-
+      sh -c "websockify --web=/usr/share/novnc 8668 localhost:5900 &
+      exec gunicorn --bind 0.0.0.0:8666 --workers 1 --threads 8 --timeout 300
+      --access-logfile - app.server:app"
 
 volumes:
   acorn-file-forge-work:

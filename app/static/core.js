@@ -155,7 +155,20 @@ window.AcornUI = (() => {
     const item = document.createElement("div");
     item.className = `toast${error ? " error" : ""}`;
     item.textContent = message;
-    document.querySelector("#toasts").append(item);
+    let region = document.querySelector("#toasts");
+    if (modal.open) {
+      const form = modal.querySelector(":scope > form");
+      region = form.querySelector(":scope > .modal-toast-region");
+      if (!region) {
+        region = document.createElement("div");
+        region.className = "toast-region modal-toast-region";
+        region.setAttribute("role", "status");
+        region.setAttribute("aria-live", error ? "assertive" : "polite");
+        form.append(region);
+      }
+      if (error) region.setAttribute("aria-live", "assertive");
+    }
+    region.append(item);
     setTimeout(() => item.remove(), error ? 6500 : 3500);
   }
 
@@ -260,6 +273,7 @@ window.AcornUI = (() => {
     setModalAbort(null);
     modalReturnFocus?.focus();
     modalReturnFocus = null;
+    modal.querySelector(".modal-toast-region")?.remove();
   });
   modal.addEventListener("keydown", event => {
     if (event.key !== "Tab") return;
