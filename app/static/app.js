@@ -48,9 +48,138 @@ const {
 } = window.AcornUI;
 const formats = window.AcornFormats;
 const OPEN_PANES_STORAGE_KEY = "acorn-file-forge-dynamic-panes";
+const EDITOR_DOCUMENTS_STORAGE_KEY = "acorn-file-forge-editor-documents-v1";
+const MAX_RETAINED_EDITOR_DOCUMENTS = 24;
+const MAX_RETAINED_EDITOR_DRAFT = 512 * 1024;
 let workspacePersistenceReady = false;
 let workspaceClipboard = null;
 let clipboardMutationInProgress = false;
+const editorDocuments = new Map();
+let activeEditorDocument = null;
+let editorDocumentToRestore = null;
+
+function persistEditorDocuments() {
+  try {
+    const documents = [...editorDocuments.values()].slice(-MAX_RETAINED_EDITOR_DOCUMENTS).map(document => ({
+      ...document,
+      draft: typeof document.draft === "string" ? document.draft.slice(0, MAX_RETAINED_EDITOR_DRAFT) : null,
+      savedValue: typeof document.savedValue === "string" ? document.savedValue.slice(0, MAX_RETAINED_EDITOR_DRAFT) : null,
+    }));
+    sessionStorage.setItem(EDITOR_DOCUMENTS_STORAGE_KEY, JSON.stringify({ active: activeEditorDocument, documents }));
+  } catch (_error) {
+    // Private browsing and storage quotas must never prevent normal editing.
+  }
+}
+
+function restoreEditorDocuments() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(EDITOR_DOCUMENTS_STORAGE_KEY) || "{}");
+    if (!Array.isArray(saved.documents)) return;
+    saved.documents.slice(-MAX_RETAINED_EDITOR_DOCUMENTS).forEach(document => {
+      if (!document || typeof document.key !== "string" || !/^[0-9a-f]{32}$/.test(String(document.imageId || ""))) return;
+      if (!Number.isInteger(document.index) || document.index < 0 || document.index >= MAX_PANES) return;
+      if (typeof document.path !== "string" || typeof document.name !== "string") return;
+      editorDocuments.set(document.key, {
+        ...document,
+        draft: typeof document.draft === "string" ? document.draft.slice(0, MAX_RETAINED_EDITOR_DRAFT) : null,
+        savedValue: typeof document.savedValue === "string" ? document.savedValue.slice(0, MAX_RETAINED_EDITOR_DRAFT) : null,
+      });
+    });
+    if (editorDocuments.has(saved.active)) editorDocumentToRestore = saved.active;
+  } catch (_error) {
+    sessionStorage.removeItem(EDITOR_DOCUMENTS_STORAGE_KEY);
+  }
+}
+
+restoreEditorDocuments();
+
+function editorDocumentKey(index, pane, path) {
+  return [index, pane.image?.id || "", pane.slot ?? "-", pane.side ?? "-", path].join("|");
+}
+
+function captureActiveEditorDocument() {
+  if (!activeEditorDocument) return;
+  const document = editorDocuments.get(activeEditorDocument);
+  const textarea = modalContent.querySelector(".source-editor .source-content");
+  if (!document || !textarea) return;
+  document.draft = textarea.value;
+  document.savedValue = textarea.dataset.savedValue ?? textarea.value;
+  document.selectionStart = textarea.selectionStart;
+  document.selectionEnd = textarea.selectionEnd;
+  document.scrollTop = textarea.scrollTop;
+  document.scrollLeft = textarea.scrollLeft;
+  persistEditorDocuments();
+}
+
+function retainEditorDocument(index, pane, entry, path, view = "source") {
+  captureActiveEditorDocument();
+  const key = editorDocumentKey(index, pane, path);
+  const existing = editorDocuments.get(key) || {};
+  editorDocuments.set(key, {
+    ...existing, key, index, imageId: pane.image.id, imageName: pane.image.name,
+    path, directory: pane.path || "$", name: entry.name, slot: pane.slot, side: pane.side, view,
+  });
+  activeEditorDocument = key;
+  persistEditorDocuments();
+  return editorDocuments.get(key);
+}
+
+async function activateEditorDocument(key, force = false) {
+  if (key === activeEditorDocument && !force) return;
+  captureActiveEditorDocument();
+  const document = editorDocuments.get(key);
+  if (!document) return;
+  const pane = panes[document.index];
+  if (!pane?.image || pane.image.id !== document.imageId) {
+    editorDocuments.delete(key);
+    persistEditorDocuments();
+    return toast("That image is no longer open.", true);
+  }
+  pane.slot = document.slot;
+  pane.side = document.side;
+  pane.path = document.directory || "$";
+  await loadDirectory(document.index);
+  await openFileEditor(document.index, document.name, null, document.path);
+}
+
+function installEditorDocumentTabs(root, pane) {
+  if (!root || !activeEditorDocument) return;
+  root.querySelector(".editor-document-tabs")?.remove();
+  const relevant = [...editorDocuments.values()].filter(document => document.imageId === pane.image.id);
+  const bar = document.createElement("nav");
+  bar.className = "editor-document-tabs";
+  bar.setAttribute("aria-label", "Open files in this image");
+  bar.innerHTML = `<div>${relevant.map(document => `<button type="button" data-editor-document="${esc(document.key)}" class="${document.key === activeEditorDocument ? "active" : ""}" title="${esc(document.path)}"><span>${esc(document.name)}</span>${document.draft != null && document.draft !== document.savedValue ? "<i>●</i>" : ""}<b data-editor-document-close="${esc(document.key)}" aria-label="Close ${esc(document.name)}">×</b></button>`).join("")}</div><button type="button" data-editor-navigate-image title="Search and open another file in this image">Open from image…</button>`;
+  root.querySelector("header")?.after(bar);
+  bar.querySelectorAll("[data-editor-document]").forEach(button => button.addEventListener("click", event => {
+    if (event.target.closest("[data-editor-document-close]")) return;
+    activateEditorDocument(button.dataset.editorDocument);
+  }));
+  bar.querySelectorAll("[data-editor-document-close]").forEach(button => button.addEventListener("click", async event => {
+    event.stopPropagation();
+    captureActiveEditorDocument();
+    const key = button.dataset.editorDocumentClose;
+    const document = editorDocuments.get(key);
+    if (document?.draft != null && document.draft !== document.savedValue && !confirm(`Close ${document.name} and discard its unsaved changes?`)) return;
+    editorDocuments.delete(key);
+    persistEditorDocuments();
+    if (key !== activeEditorDocument) return installEditorDocumentTabs(root, pane);
+    activeEditorDocument = null;
+    persistEditorDocuments();
+    const next = [...editorDocuments.values()].find(item => item.imageId === pane.image.id);
+    if (next) await activateEditorDocument(next.key); else modal.close();
+  }));
+  bar.querySelector("[data-editor-navigate-image]")?.addEventListener("click", async () => {
+    const result = await editorImageSearch(pane);
+    if (!result) return;
+    if (result.slot != null) pane.slot = Number(result.slot);
+    if (result.side != null) pane.side = Number(result.side);
+    const split = result.path.lastIndexOf(".");
+    pane.path = split > 0 ? result.path.slice(0, split) : "$";
+    await loadDirectory(panes.indexOf(pane));
+    await openFileEditor(panes.indexOf(pane), result.name, null, result.path);
+  });
+}
 
 function clearWorkspaceClipboard(message = "", rerender = true) {
   if (!workspaceClipboard) return;
@@ -325,6 +454,12 @@ async function restoreOpenPanes() {
   workspacePersistenceReady = true;
   rememberOpenPanes();
   panes.forEach((_pane, index) => renderPane(index));
+  if (editorDocumentToRestore) {
+    const key = editorDocumentToRestore;
+    editorDocumentToRestore = null;
+    activeEditorDocument = null;
+    await activateEditorDocument(key, true);
+  }
 }
 
 function updateAddPaneButton() {
@@ -495,6 +630,19 @@ function swapPanes(sourceIndex, targetIndex) {
   }
   const sourceScroll = document.querySelector(`.pane[data-pane="${sourceIndex}"] .list-wrap`)?.scrollTop || 0;
   const targetScroll = document.querySelector(`.pane[data-pane="${targetIndex}"] .list-wrap`)?.scrollTop || 0;
+  captureActiveEditorDocument();
+  const remappedDocuments = new Map();
+  let remappedActive = activeEditorDocument;
+  for (const document of editorDocuments.values()) {
+    const nextIndex = document.index === sourceIndex ? targetIndex : document.index === targetIndex ? sourceIndex : document.index;
+    const nextKey = [nextIndex, document.imageId, document.slot ?? "-", document.side ?? "-", document.path].join("|");
+    if (document.key === activeEditorDocument) remappedActive = nextKey;
+    remappedDocuments.set(nextKey, { ...document, index: nextIndex, key: nextKey });
+  }
+  editorDocuments.clear();
+  remappedDocuments.forEach((document, key) => editorDocuments.set(key, document));
+  activeEditorDocument = remappedActive;
+  persistEditorDocuments();
   [panes[sourceIndex], panes[targetIndex]] = [panes[targetIndex], panes[sourceIndex]];
   renderPane(sourceIndex);
   renderPane(targetIndex);
@@ -3114,6 +3262,23 @@ function removePane(index) {
   const pane = panes[index];
   if (!pane) return;
   const imageName = pane.image?.name;
+  captureActiveEditorDocument();
+  const rebuiltDocuments = new Map();
+  let rebuiltActive = activeEditorDocument;
+  for (const document of editorDocuments.values()) {
+    if (document.index === index) {
+      if (document.key === activeEditorDocument) rebuiltActive = null;
+      continue;
+    }
+    const nextIndex = document.index > index ? document.index - 1 : document.index;
+    const nextKey = [nextIndex, document.imageId, document.slot ?? "-", document.side ?? "-", document.path].join("|");
+    if (document.key === activeEditorDocument) rebuiltActive = nextKey;
+    rebuiltDocuments.set(nextKey, { ...document, index: nextIndex, key: nextKey });
+  }
+  editorDocuments.clear();
+  rebuiltDocuments.forEach((document, key) => editorDocuments.set(key, document));
+  activeEditorDocument = rebuiltActive;
+  persistEditorDocuments();
   panes.splice(index, 1);
   rebuildPaneHosts();
   rememberOpenPanes();
@@ -7950,6 +8115,8 @@ function showHelp() {
               <li>Use first, previous, next and last page, or enter a hexadecimal offset in <strong>Go to offset</strong>. Append <code>d</code> to enter a decimal address.</li>
               <li>Choose a 128, 256, 512 or 1,024-byte page. Only that range is fetched, even for a multi-gigabyte image.</li>
               <li>Select a hex or ASCII cell. The inspector shows unsigned 8, 16 and 32-bit values in little and big-endian order.</li>
+              <li>Open <strong>Analyse</strong> to compare the current bytes with a local binary. Differing bytes are marked in the grid, the inspector reports byte and size differences, and <strong>Next difference</strong> navigates through them.</li>
+              <li>Select a structure template to decode generic values, BBC sideways-ROM headers, RISC OS module headers, DFS catalogue sectors or ADFS map fields. Automatic mode recognises safe signatures; a template is an interpretation only and never changes bytes.</li>
             </ol></div>
             <div class="help-task"><h4>Search, select and edit</h4><ol>
               <li>Search for hexadecimal byte pairs such as <code>44 69 73 63</code>, or switch the search to Latin-1 text. Find previous and Find next can wrap around the image. Find and Replace selects the complete matched range and stages a same-length replacement; it cannot insert or remove raw bytes.</li>
@@ -7989,9 +8156,11 @@ function showHelp() {
               <li>When pasting into BASIC, choose whether to validate and normalise numbered BBC BASIC source or insert the clipboard exactly as plain text. The complete listing must be valid BASIC before Save can retokenise it.</li>
               <li><code>!BOOT</code>, <code>LOADER</code> and other recognised command files open as compact unnumbered script editors. Edit their ordered <code>*EXEC</code>, OS and BASIC command lines directly.</li>
               <li>Source and disassembly windows open centred at a useful desktop working size, then scale proportionally on smaller browser windows. They can be moved by dragging the title bar and resized from any edge or corner. Use the square title-bar control, or double-click the title bar, to maximise and restore the editor. The window remains constrained to the visible browser area and resizing does not disturb the document or its scroll position. File and Edit menus provide Save, Save As, Export, Close, undo, redo, clipboard actions, Select All, Find and Find and Replace. Replace Next starts at the current selection and wraps once; Replace All reports how many case-insensitive matches it changed. Save As creates a sibling inside the image while Export downloads readable source as browser-local text. Read-only disassembly retains Find without unsafe source replacement.</li>
+              <li>The tab strip keeps several files from the mounted image open together. It retains each source draft, selection and scroll position, marks dirty tabs and warns before discarding one. <strong>Open from image…</strong> searches filenames and bounded readable content, restores the result's directory, MMB slot and side, and opens it as another tab.</li>
               <li>BASIC and command scripts use themed syntax colours for keywords, strings, numbers, comments, symbols and line numbers. The normal textarea remains the editable document, preserving browser undo, clipboard and input-method behaviour. Hover a highlighted command for its purpose, syntax, requirements and important compatibility notes. One catalogue covers 8-bit BBC BASIC plus BASIC IV and BASIC V/VI extensions, with availability checked against the detected dialect. Compact source such as <code>COLOUR129</code> and <code>T%DIV256</code> follows the interpreter's token boundaries.</li>
               <li>Star commands retain their MOS context in highlighting and help. For example, <code>LOAD "PROGRAM"</code> shows BBC BASIC LOAD help, while <code>*LOAD CODE 3000</code> is labelled <code>*LOAD</code> and shows the filing-system command syntax. Compact <code>*FX200 0</code> resolves to <code>*FX</code> plus its arguments. RUN, SAVE and other overlapping names follow the same rule. Commands supplied by an optional sideways ROM receive clearly labelled ROM-dependent help when their exact syntax is not built in.</li>
               <li>Help interprets useful constant operands in context. <code>*FX200 0</code> and <code>OSCLI"FX 200 0"</code> identify OSBYTE reason 200, common VDU reason bytes are named, and constant MODE and COLOUR values explain what the call selects. Dynamic expressions retain general command help because their run-time value cannot be proved safely.</li>
+              <li>Inline assembler also decodes proven constant calls. Preceding same-line A, X and Y loads provide OSBYTE and OSWORD reason details, OSCLI's command pointer, and OSWRCH or VDUCHR character meaning. BASIC V/VI <code>SYS</code> calls name recognised RISC OS SWIs and their purpose.</li>
               <li>BBC BASIC inline assembler between <code>[</code> and <code>]</code> reuses the disassembly editor's processor and MOS help. Hover 6502 or ARM mnemonics, named MOS entry points such as <code>OSWRCH</code>, standard addresses such as <code>&amp;FFEE</code>, or directives such as <code>EQUB</code>. The processor catalogue distinguishes NMOS 6502, 65C02 and 65816 instruction sets rather than treating every extension as interchangeable. Matching names outside an assembler region remain ordinary BASIC variables. Refactor and Condense leave assembler lines physically intact.</li>
               <li>Press <strong>F1</strong> for help on the command at the caret. The editor's <strong>Help</strong> menu gives an overview of the detected language, a searchable command reference, live problems and document symbols. Problem and symbol entries jump back to their source location.</li>
               <li><strong>Edit → Find all references</strong> lists code uses of the symbol at the caret. <strong>Rename symbol</strong> changes those uses as one undoable operation while leaving strings and comments alone. The BASIC program outline lists procedures and functions with their call sites. Diagnostics also flag unused definitions, mismatched procedure endings and conservative unreachable-line candidates.</li>
@@ -8009,10 +8178,12 @@ function showHelp() {
               <li>Structure guidance classifies Refactor's generated lines immediately using the same scanner as folding. A classic <code>IF condition THEN line</code> controls one statement and does not open a multi-line block, so later physical lines reached through branching or fall-through are not shown inside it. The saved program remains free of display-only indentation.</li>
               <li>Other readable files open in the text editor. Binary files open as editor-style NMOS 6502, 65C02, 65816, ARM or 68000 source. Proven register values, MOS call purposes and reason codes, branch conditions, hardware I/O regions, entry points, BRK error messages and cross-references appear as semicolon comments on the relevant instruction. Internal targets receive stable labels derived from proved behaviour, such as <code>write_text_8120</code>, <code>execute_command_834A</code>, <code>loop_8057</code> or <code>equal_80C2</code>, instead of anonymous subroutine/location names. The hexadecimal suffix keeps similar routines distinct. The analyser drops register assumptions at uncertain control-flow joins instead of inventing values. The readable-string list filters out accidental punctuation and number runs; select a string to jump to its disassembled line. Double-click an instruction only when you want that offset in Hex.</li>
               <li>Every processor disassembly row has hover help, including condition and size variants, unfamiliar decoder mnemonics and pseudo-operations such as <code>EQUB</code> and <code>EQUS</code>. Help combines the operation family, exact operand and addressing form, encoded bytes, cross-references and the analyser's contextual comment. MOS entry points retain their specific calling conventions. The Help menu lists operations actually present as well as its instruction and MOS reference.</li>
-              <li>The disassembly <strong>Project</strong> menu retains notes, bookmarks, symbols and code/data decisions outside the image bytes. Click one row or shift-click a range, then mark it as code, text, bytes, words, addresses or bitmap data. The listing is rebuilt using that decision. ARM word regions use little-endian values and 68000 word regions use big-endian values. Symbols apply to every supported processor and use a portable <code>&amp;address = label</code> text format for import and export. Find references and the outline show direct callers and labelled entry points.</li>
-              <li><strong>Tools → Inspect selected data</strong> presents bounded text, bytes, little-endian and big-endian words, plus a one-bit bitmap preview. Project metadata has one manager for notes, symbols, bookmarks and portable JSON. <strong>Compare with saved file</strong> displays saved and current source side by side.</li>
+              <li>The disassembly <strong>Project</strong> menu retains notes, bookmarks, symbols, offset-bound comments and code/data decisions outside the image bytes. Click one row or shift-click a range, then mark it as code, text, bytes, words, addresses or bitmap data. The listing is rebuilt using that decision. ARM word regions use little-endian values and 68000 word regions use big-endian values. Symbols apply to every supported processor and use a portable <code>&amp;address = label</code> text format for import and export. Find references and the outline show direct callers and labelled entry points.</li>
+              <li><strong>Tools → Inspect selected data</strong> presents bounded text, bytes, little-endian and big-endian words, plus a one-bit bitmap preview. Project metadata has one manager for notes, symbols, comments, bookmarks and portable JSON. A saved line comment remains attached to its exact file offset and is rendered beside the instruction. <strong>Compare with saved file</strong> displays saved and current source side by side.</li>
               <li><strong>Edit and reassemble</strong> is enabled only when <code>ACORN_FILE_ASSEMBLER_COMMAND</code> contains <code>{source}</code> and <code>{output}</code>. It opens generated label-oriented assembly for review and requires confirmation before checksum-guarded replacement of the complete binary. <strong>Debug from selected address</strong> uses a configured <code>ACORN_FILE_DEBUGGER_COMMAND</code>; the return status and output are retained in project history.</li>
-              <li><strong>Project → Run in configured emulator</strong> appears in source and disassembly editors. It is available when the server has an <code>ACORN_FILE_EMULATOR_COMMAND</code> containing <code>{file}</code>. Optional placeholders include <code>{image}</code>, <code>{path}</code>, <code>{load}</code> and <code>{execute}</code>. The temporary export is removed afterwards and the result is retained in project history.</li>
+              <li><strong>Project → Run in configured emulator</strong> appears in source and disassembly editors. It is available when the server has an <code>ACORN_FILE_EMULATOR_COMMAND</code> containing <code>{file}</code>. Optional placeholders include <code>{image}</code>, <code>{path}</code>, <code>{load}</code> and <code>{execute}</code>. The temporary export is removed afterwards. <strong>Emulator debugger workspace</strong> can pass launch, continue, step, next, register, memory and stop actions to a configured adapter. <strong>Emulator and debugger results</strong> retains return status, stdout, stderr and debugger breakpoint after the immediate result closes.</li>
+              <li>Editor tabs, unsaved drafts, selection and scroll position survive a refresh in bounded browser-session storage. <strong>Open from image…</strong> searches every formatted slot of an MMB and labels results with slot number and disk title.</li>
+              <li>The Hex editor includes structured views for ROM, ROMFS, RISC OS modules, DFS, ADFS, MMB, BeebSCSI DSC and UEF data. A custom JSON template can describe bounded fields relative to the selected byte.</li>
               <li>Labelled disassembly regions also have left-gutter folding controls. The single state-aware <strong>View</strong> command collapses or expands all labelled regions as appropriate. Visible instruction rows retain double-click-to-Hex while other regions are folded.</li>
               <li>ZIP, TAR, compressed TAR, GZIP, BZIP2 and XZ files are marked as archives. Double-click one to browse its safe file and folder hierarchy in the pane; use breadcrumbs or <strong>..</strong> to move up. Double-click a member to extract it in memory and open the normal BASIC, command-script, text, disassembly or hex viewer. Readable members can be edited: Save verifies both hashes, rebuilds the complete container and checkpoints the outer image. UEF tape members stay read-only because reconstruction could alter timing or loader behaviour. Parent traversal, non-regular TAR objects, archives over 512 MiB, members over 128 MiB and catalogues reaching 20,000 entries are rejected rather than processed without a safe bound.</li>
               <li>Use <strong>Tools → Open raw bytes in Hex</strong> from any file viewer when the automatic interpretation is uncertain. File saves retain Acorn load, execution and filetype metadata, reject stale edits and create an undo checkpoint.</li>
@@ -8523,6 +8694,8 @@ function editorMenus({ downloadUrl, downloadLabel = "Download with metadata…",
       <button type="button" data-editor-action="project-notes"><span>Project notes…</span></button>
       <button type="button" data-editor-action="project-manage"><span>Manage project metadata…</span></button>
       <button type="button" data-editor-action="run-emulator"><span>Run in configured emulator…</span></button>
+      <button type="button" data-editor-action="debugger-workspace"><span>Emulator debugger workspace…</span></button>
+      <button type="button" data-editor-action="project-tests"><span>Emulator and debugger results…</span></button>
     </div></details>
     <details class="editor-menu"><summary>Help</summary><div class="editor-menu-panel">
       <button type="button" data-editor-action="help-overview"><span>About this file and language</span></button>
@@ -8560,7 +8733,7 @@ function disassemblyMenus(downloadUrl, exportUrl, exportLabel = "Export original
     <details class="editor-menu"><summary>Tools</summary><div class="editor-menu-panel">
       <button type="button" data-disassembly-action="inspect-data"><span>Inspect selected data…</span></button>
       <button type="button" data-disassembly-action="assemble"><span>Edit and reassemble…</span></button>
-      <button type="button" data-disassembly-action="debug"><span>Debug from selected address…</span></button>
+      <button type="button" data-disassembly-action="debug"><span>Emulator debugger workspace…</span></button>
       <button type="button" data-disassembly-action="hex"><span>Open raw bytes in Hex</span></button>
     </div></details>
     <details class="editor-menu"><summary>Project</summary><div class="editor-menu-panel">
@@ -8572,12 +8745,14 @@ function disassemblyMenus(downloadUrl, exportUrl, exportLabel = "Export original
       <button type="button" data-disassembly-action="mark-bitmap"><span>Mark selection as bitmap</span></button>
       <span class="editor-menu-separator" role="separator"></span>
       <button type="button" data-disassembly-action="bookmark"><span>Bookmark selected address…</span></button>
+      <button type="button" data-disassembly-action="comment"><span>Add or edit line comment…</span></button>
       <button type="button" data-disassembly-action="notes"><span>Project notes…</span></button>
       <button type="button" data-disassembly-action="symbols-import"><span>Import symbol file…</span></button>
       <button type="button" data-disassembly-action="symbols-export"><span>Export symbol file…</span></button>
       <button type="button" data-disassembly-action="outline"><span>Program outline and call graph</span></button>
       <button type="button" data-disassembly-action="history"><span>Project history</span></button>
       <button type="button" data-disassembly-action="run-emulator"><span>Run in configured emulator…</span></button>
+      <button type="button" data-disassembly-action="tests"><span>Emulator and debugger results…</span></button>
     </div></details>
     <details class="editor-menu"><summary>Help</summary><div class="editor-menu-panel">
       <button type="button" data-disassembly-action="help-overview"><span>About this disassembly</span></button>
@@ -8619,11 +8794,24 @@ function installEditorMenuDismissal(root) {
     closeEditorMenus(root);
     root.querySelector(".editor-menu summary")?.focus();
   };
+  const transferOpenMenu = menu => {
+    if (!root.querySelector(".editor-menu[open]") || menu.open) return;
+    closeEditorMenus(root, menu);
+    menu.open = true;
+  };
+  root.querySelectorAll(".editor-menu").forEach(menu => {
+    menu.addEventListener("pointerenter", () => transferOpenMenu(menu));
+    menu.addEventListener("focusin", () => transferOpenMenu(menu));
+  });
   owner.addEventListener("pointerdown", dismissOutside, true);
   root.addEventListener("click", dismissSelection);
   root.addEventListener("keydown", dismissEscape);
   modal.addEventListener("close", () => owner.removeEventListener("pointerdown", dismissOutside, true), { once: true });
 }
+
+// A deliberately tiny test seam for the permanent browser regression. It
+// exposes behaviour, not application state or image data.
+window.AcornEditorTestHooks = Object.freeze({ installEditorMenuDismissal });
 
 let editorWindowController = null;
 
@@ -8996,10 +9184,11 @@ function editorProjectManager(project) {
     shade.className = "editor-choice-shade";
     shade.setAttribute("role", "dialog");
     shade.setAttribute("aria-modal", "true");
-    shade.innerHTML = `<form class="editor-choice-card editor-project-card"><h2>Editor project metadata</h2><p>Notes, bookmarks and symbols are stored in the private recoverable session, not in the file bytes.</p>
+    shade.innerHTML = `<form class="editor-choice-card editor-project-card"><h2>Editor project metadata</h2><p>Notes, bookmarks, comments and symbols are stored in the private recoverable session, not in the file bytes.</p>
       <div class="field"><label>Project notes</label><textarea name="notes" rows="5">${esc(current.notes || "")}</textarea></div>
       <div class="field"><label>Symbols, one <code>address = label</code> per line</label><textarea name="symbols" rows="6">${esc(Object.entries(current.symbols || {}).map(([address, label]) => `${address} = ${label}`).join("\n"))}</textarea></div>
       <section class="editor-project-bookmarks"><header><strong>Bookmarks</strong><small>${(current.bookmarks || []).length.toLocaleString()}</small></header><div>${(current.bookmarks || []).map((row, index) => `<label><input type="checkbox" name="keepBookmark" value="${index}" checked><code>${Number(row.offset).toLocaleString()}</code><input name="bookmarkName${index}" value="${esc(row.name)}" aria-label="Bookmark name"><input name="bookmarkNote${index}" value="${esc(row.note || "")}" placeholder="Note" aria-label="Bookmark note"></label>`).join("") || "<p>No bookmarks have been saved.</p>"}</div></section>
+      <section class="editor-project-comments"><header><strong>Disassembly comments</strong><small>${Object.keys(current.comments || {}).length.toLocaleString()}</small></header><div>${Object.entries(current.comments || {}).map(([offset, comment], index) => `<label><input type="checkbox" name="keepComment" value="${esc(offset)}" checked><code>${Number(offset).toLocaleString()}</code><input name="comment${index}" data-comment-offset="${esc(offset)}" value="${esc(comment)}" aria-label="Comment at offset ${esc(offset)}"></label>`).join("") || "<p>No line comments have been saved.</p>"}</div></section>
       <details class="editor-project-json"><summary>Portable project JSON</summary><textarea name="json" rows="8" spellcheck="false">${esc(JSON.stringify(current, null, 2))}</textarea><button type="button" class="button compact" data-project-load-json>Load JSON into form</button></details>
       <div class="modal-actions"><button type="button" class="button ghost" data-project-cancel>Cancel</button><button type="submit" class="button primary">Save project</button></div></form>`;
     const finish = value => { shade.remove(); resolve(value); };
@@ -9023,7 +9212,12 @@ function editorProjectManager(project) {
         const index = Number(input.value);
         return { ...current.bookmarks[index], name: data.get(`bookmarkName${index}`), note: data.get(`bookmarkNote${index}`) };
       });
-      finish({ ...current, notes: data.get("notes"), symbols, bookmarks });
+      const comments = {};
+      [...form.querySelectorAll('[name="keepComment"]:checked')].forEach(input => {
+        const field = form.querySelector(`[data-comment-offset="${CSS.escape(input.value)}"]`);
+        if (field?.value.trim()) comments[input.value] = field.value.trim();
+      });
+      finish({ ...current, notes: data.get("notes"), symbols, bookmarks, comments });
     };
     modal.append(shade);
     form.elements.notes.focus();
@@ -9036,7 +9230,7 @@ function editorImageSearch(pane) {
     shade.className = "editor-choice-shade";
     shade.setAttribute("role", "dialog");
     shade.setAttribute("aria-modal", "true");
-    shade.innerHTML = `<section class="editor-choice-card editor-image-search-card"><header><div><small>IMAGE-WIDE SOURCE SEARCH</small><h2>Search ${esc(pane.image.name)}</h2></div></header><form><input type="search" name="query" placeholder="Filename, command, variable or text" required autocomplete="off"><button type="submit" class="button primary">Search</button><button type="button" class="button ghost" data-image-search-close>Close</button></form><p class="editor-image-search-status" aria-live="polite">Searches filenames and bounded BASIC, command-script and readable text content.</p><div class="editor-image-search-results"></div></section>`;
+    shade.innerHTML = `<section class="editor-choice-card editor-image-search-card"><header><div><small>IMAGE-WIDE SOURCE SEARCH</small><h2>Search ${esc(pane.image.name)}</h2></div></header><form><input type="search" name="query" placeholder="Filename, command, variable or text" required autocomplete="off"><button type="submit" class="button primary">Search</button><button type="button" class="button ghost" data-image-search-close>Close</button></form><p class="editor-image-search-status" aria-live="polite">Searches filenames and bounded BASIC, command-script and readable text content${pane.image.kind === "mmb" ? " across every populated MMB slot" : " across the complete mounted filesystem"}.</p><div class="editor-image-search-results"></div></section>`;
     const finish = value => { shade.remove(); resolve(value); };
     const status = shade.querySelector(".editor-image-search-status");
     const results = shade.querySelector(".editor-image-search-results");
@@ -9047,11 +9241,11 @@ function editorImageSearch(pane) {
       status.textContent = "Searching the mounted image…";
       results.replaceChildren();
       try {
-        const parameters = fileContextQuery(pane, pane.path || "$", { query, root: pane.path || "$" });
+        const parameters = fileContextQuery(pane, pane.path || "$", { query, root: "$", ...(pane.image.kind === "mmb" ? { allSlots: "true" } : {}) });
         parameters.delete("path");
         const report = await api(`/api/images/${pane.image.id}/inspect/search?${parameters}`);
-        status.textContent = `${report.results.length.toLocaleString()} result${report.results.length === 1 ? "" : "s"} · ${report.filesScanned.toLocaleString()} readable files scanned${report.skippedLarge ? ` · ${report.skippedLarge.toLocaleString()} large files searched by name only` : ""}${report.truncated ? " · result limit reached" : ""}`;
-        results.innerHTML = report.results.map((row, index) => `<button type="button" data-image-search-result="${index}"><span class="file-kind-icon ${esc(row.kind)}" aria-hidden="true"></span><b>${esc(row.path)}</b><small>${row.nameMatch ? "Filename match" : `${row.matches.length} content match${row.matches.length === 1 ? "" : "es"}`} · ${humanSize(row.size)}</small>${row.matches.slice(0, 3).map(match => `<code>Line ${match.line}: ${esc(match.text)}</code>`).join("")}</button>`).join("") || '<p class="code-empty-message">No matching files were found.</p>';
+        status.textContent = `${report.results.length.toLocaleString()} result${report.results.length === 1 ? "" : "s"} · ${report.filesScanned.toLocaleString()} readable files scanned${report.failedSlots ? ` · ${report.failedSlots.toLocaleString()} unreadable MMB slot${report.failedSlots === 1 ? "" : "s"} skipped` : ""}${report.skippedLarge ? ` · ${report.skippedLarge.toLocaleString()} large files searched by name only` : ""}${report.truncated ? " · result limit reached" : ""}`;
+        results.innerHTML = report.results.map((row, index) => `<button type="button" data-image-search-result="${index}"><span class="file-kind-icon ${esc(row.kind)}" aria-hidden="true"></span><b>${row.slot != null ? `<em>Slot ${Number(row.slot)}${row.diskTitle ? ` · ${esc(row.diskTitle)}` : ""}</em>` : ""}${esc(row.path)}</b><small>${row.nameMatch ? "Filename match" : `${row.matches.length} content match${row.matches.length === 1 ? "" : "es"}`} · ${humanSize(row.size)}</small>${row.matches.slice(0, 3).map(match => `<code>Line ${match.line}: ${esc(match.text)}</code>`).join("")}</button>`).join("") || '<p class="code-empty-message">No matching files were found.</p>';
         results.querySelectorAll("[data-image-search-result]").forEach(button => button.onclick = () => finish(report.results[Number(button.dataset.imageSearchResult)]));
       } catch (error) { status.textContent = error.message; }
     };
@@ -9066,6 +9260,10 @@ function installEditorCloseGuard(root, editor, closeEditor) {
   const dirty = () => !editor.readOnly && editor.value !== editor.dataset.savedValue;
   const requestClose = () => {
     if (dirty() && !confirm("Close this editor and discard its unsaved changes?")) return;
+    if (dirty()) {
+      editor.value = editor.dataset.savedValue;
+      captureActiveEditorDocument();
+    }
     closeEditor();
   };
   const interceptClose = event => {
@@ -9118,6 +9316,46 @@ async function runFileInConfiguredEmulator(pane, entry, path, target = null) {
   });
   toast(`Emulator finished with return code ${result.result.returnCode}.`);
   return result;
+}
+
+function editorTestResultsMarkup(project) {
+  const tests = [...(project?.tests || [])].reverse();
+  return tests.length ? `<div class="editor-test-results">${tests.map(result => `<article class="${Number(result.returnCode) === 0 ? "pass" : "fail"}"><header><b>${esc(result.kind === "debugger" ? "Debugger" : "Emulator")}</b><time>${esc(result.time || "")}</time><strong>Return ${Number(result.returnCode)}</strong></header>${result.breakpoint ? `<small>Breakpoint ${esc(result.breakpoint)}</small>` : ""}${result.stdout ? `<details open><summary>Standard output</summary><pre>${esc(result.stdout)}</pre></details>` : ""}${result.stderr ? `<details open><summary>Standard error</summary><pre>${esc(result.stderr)}</pre></details>` : ""}</article>`).join("")}</div>` : '<p class="code-empty-message">No emulator or debugger runs have been retained for this file.</p>';
+}
+
+async function openDebuggerWorkspace(pane, entry, path, architecture = "6502", initialBreakpoint = "") {
+  const status = await api(`/api/images/${pane.image.id}/editor-debugger`);
+  if (!status.available) return toast(status.message, true);
+  const shade = document.createElement("div");
+  shade.className = "editor-choice-shade";
+  shade.setAttribute("role", "dialog");
+  shade.setAttribute("aria-modal", "true");
+  shade.innerHTML = `<section class="editor-choice-card debugger-workspace"><header><div><small>EXTERNAL EMULATOR ADAPTER</small><h2>Debug ${esc(entry.name)}</h2></div></header><p>${esc(status.message)}</p><div class="field-grid two"><div class="field"><label>Breakpoint or address</label><input name="debugBreakpoint" value="${esc(initialBreakpoint)}" spellcheck="false"></div><div class="field"><label>Expression or memory range</label><input name="debugExpression" placeholder="register, address or adapter expression" spellcheck="false"></div></div><div class="debugger-actions">${(status.actions || []).map(action => `<button type="button" class="button ${action === "launch" ? "primary" : ""}" data-debugger-action="${esc(action)}">${esc(action[0].toUpperCase() + action.slice(1))}</button>`).join("")}</div><pre class="debugger-transcript" aria-live="polite">Ready. Each control invokes the configured adapter with its action placeholder.\n</pre><div class="modal-actions"><button type="button" class="button ghost" data-debugger-close>Close</button></div></section>`;
+  const transcript = shade.querySelector(".debugger-transcript");
+  const close = () => shade.remove();
+  shade.querySelector("[data-debugger-close]").onclick = close;
+  shade.querySelectorAll("[data-debugger-action]").forEach(button => button.onclick = async () => {
+    const action = button.dataset.debuggerAction;
+    const buttons = [...shade.querySelectorAll("[data-debugger-action]")];
+    buttons.forEach(control => { control.disabled = true; });
+    transcript.textContent += `\n> ${action}\n`;
+    try {
+      const result = await api(`/api/images/${pane.image.id}/editor-debugger`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          path, slot: pane.slot, side: pane.side, action, architecture,
+          breakpoint: shade.querySelector("[name=debugBreakpoint]").value,
+          expression: shade.querySelector("[name=debugExpression]").value,
+        }),
+      });
+      transcript.textContent += `${result.result.stdout || ""}${result.result.stderr ? `\n${result.result.stderr}` : ""}\n[return ${result.result.returnCode}]\n`;
+      transcript.scrollTop = transcript.scrollHeight;
+    } catch (error) { transcript.textContent += `[error] ${error.message}\n`; }
+    finally { buttons.forEach(control => { control.disabled = false; }); }
+  });
+  shade.onkeydown = event => { if (event.key === "Escape") close(); else keepFocusInside(shade, event); };
+  modal.append(shade);
+  shade.querySelector("[name=debugBreakpoint]").focus();
 }
 
 function bytePreviewMarkup(report) {
@@ -9272,11 +9510,11 @@ function installSourceEditorControls(index, pane, entry, path, report, canEdit, 
     else if (action === "search-image") {
       const result = await editorImageSearch(pane);
       if (!result) return;
-      if (editor.value !== editor.dataset.savedValue && !confirm("Open the search result and discard this editor's unsaved changes?")) return;
+      if (result.slot != null) pane.slot = Number(result.slot);
+      if (result.side != null) pane.side = Number(result.side);
       const split = result.path.lastIndexOf(".");
       const parent = split > 0 ? result.path.slice(0, split) : "$";
       const leaf = split >= 0 ? result.path.slice(split + 1) : result.name;
-      modal.close();
       pane.path = parent || "$";
       await loadDirectory(index);
       await openFileEditor(index, leaf, null, result.path);
@@ -9332,8 +9570,15 @@ function installSourceEditorControls(index, pane, entry, path, report, canEdit, 
       if (edited) { project = await saveEditorProject(pane, path, edited); toast("Editor project metadata saved."); }
     }
     else if (action === "run-emulator") {
-      await runFileInConfiguredEmulator(pane, entry, path, target);
+      const result = await runFileInConfiguredEmulator(pane, entry, path, target);
+      if (result) { project = result.project; intelligence?.showCustom("Emulator result", editorTestResultsMarkup(project)); }
     }
+    else if (action === "debugger-workspace") {
+      if (target) return toast("Extract this archive member before starting a debugger.", true);
+      await openDebuggerWorkspace(pane, entry, path, pane.image?.targetHardware === "risc-os" ? "arm" : "6502", `0x${Number(report.metadata?.execute || report.metadata?.load || 0).toString(16).toUpperCase()}`);
+      project = await loadEditorProject(pane, path);
+    }
+    else if (action === "project-tests") intelligence?.showCustom("Emulator and debugger results", editorTestResultsMarkup(await ensureProject()));
     else if (action === "undo" || action === "redo") {
       editor.focus();
       if (!intelligence?.[action]?.()) document.execCommand(action);
@@ -9376,6 +9621,7 @@ function installSourceEditorControls(index, pane, entry, path, report, canEdit, 
 
 async function renderDisassemblyEditor(index, entry, path, inspection, architecture = "auto", origin = "", start = "0", length = "8192", focusOffset = null, target = null) {
   const pane = panes[index];
+  if (!target) retainEditorDocument(index, pane, entry, path, "disassembly");
   const query = new URLSearchParams({
     ...(target?.context || Object.fromEntries(fileContextQuery(pane, path))),
     architecture, origin, start, length,
@@ -9401,6 +9647,7 @@ async function renderDisassemblyEditor(index, entry, path, inspection, architect
   installEditorMenuDismissal(root);
   const source = root.querySelector(".disassembly-source");
   installEditorWindow(root);
+  if (!target) installEditorDocumentTabs(root, pane);
   const intelligence = window.AcornCodeEditor?.enhanceDisassembly({ root, report });
   modalContent.querySelector(".disassembly-refresh").onclick = async () => {
     const values = Object.fromEntries(new FormData(modalContent.closest("form")));
@@ -9428,7 +9675,7 @@ async function renderDisassemblyEditor(index, entry, path, inspection, architect
     line.scrollIntoView({ block: "center" });
     line.focus();
   };
-  let project = report.project || { symbols: {}, regions: [], bookmarks: [], history: [], notes: "", tests: [] };
+  let project = report.project || { symbols: {}, regions: [], bookmarks: [], comments: {}, history: [], notes: "", tests: [] };
   let selectedLines = [];
   let selectionAnchor = null;
   let synchronizedBytes = false;
@@ -9562,32 +9809,25 @@ async function renderDisassemblyEditor(index, entry, path, inspection, architect
     }
     else if (action === "debug") {
       if (target) return toast("Extract this archive member before starting a debugger.", true);
-      const status = await api(`/api/images/${pane.image.id}/editor-debugger`);
-      if (!status.available) return toast(status.message, true);
       const row = reportRow(selectedLines[0]);
-      const breakpoint = prompt("Debugger breakpoint address:", `0x${Number(row?.address ?? report.origin).toString(16).toUpperCase()}`);
-      if (breakpoint == null) return;
-      analysisLoading("Running configured debugger", `${entry.name} at ${breakpoint}`);
-      try {
-        const result = await api(`/api/images/${pane.image.id}/editor-debugger`, {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path, slot: pane.slot, side: pane.side, breakpoint, architecture: report.architecture }),
-        });
-        await renderDisassemblyEditor(index, entry, path, inspection, report.architecture, `0x${Number(report.origin).toString(16).toUpperCase()}`, String(report.start), String(report.end - report.start), row?.offset, target);
-        const refreshed = modalContent.querySelector(".disassembly-editor");
-        const refreshedIntelligence = window.AcornCodeEditor?.enhanceDisassembly;
-        toast(`Debugger returned ${result.result.returnCode}. Output is retained in the project test history.`);
-        if (result.result.stdout || result.result.stderr) {
-          refreshed?.querySelector('[data-disassembly-action="history"]')?.focus();
-        }
-        void refreshedIntelligence;
-      } catch (error) { toast(error.message, true); modal.close(); }
+      await openDebuggerWorkspace(pane, entry, path, report.architecture, `0x${Number(row?.address ?? report.origin).toString(16).toUpperCase()}`);
+      project = await loadEditorProject(pane, path);
     }
     else if (action.startsWith("mark-")) await markRegion(action.slice(5));
     else if (action === "bookmark") {
       const range = selectedRange(); if (!range) return toast("Select a disassembly line first.", true);
       const name = prompt(`Bookmark file offset ${range.start}:`, `Offset ${range.start}`);
       if (name) { project.bookmarks = [...(project.bookmarks || []), { offset: range.start, name, note: prompt("Optional bookmark note:", "") || "" }]; await persistProject("Added bookmark", name); await refreshProjectListing(); }
+    }
+    else if (action === "comment") {
+      const range = selectedRange(); if (!range) return toast("Select a disassembly line first.", true);
+      const key = String(range.start);
+      const comment = prompt(`Comment for file offset ${range.start}:`, project.comments?.[key] || "");
+      if (comment == null) return;
+      project.comments = { ...(project.comments || {}) };
+      if (comment.trim()) project.comments[key] = comment.trim(); else delete project.comments[key];
+      await persistProject(comment.trim() ? "Updated line comment" : "Removed line comment", `Offset ${range.start}`);
+      await refreshProjectListing();
     }
     else if (action === "notes") { const notes = prompt("Project notes for this file:", project.notes || ""); if (notes != null) { project.notes = notes; await persistProject("Updated project notes"); toast("Project notes saved."); } }
     else if (action === "symbols-export") {
@@ -9600,9 +9840,10 @@ async function renderDisassemblyEditor(index, entry, path, inspection, architect
     }
     else if (action === "outline") showDisassemblyOutline();
     else if (action === "history") showProjectHistory();
+    else if (action === "tests") intelligence?.showCustom("Emulator and debugger results", editorTestResultsMarkup(project));
     else if (action === "run-emulator") {
       const result = await runFileInConfiguredEmulator(pane, entry, path, target);
-      if (result) project = result.project;
+      if (result) { project = result.project; intelligence?.showCustom("Emulator result", editorTestResultsMarkup(project)); }
     }
     else if (action === "hex") openFileHexEditor(index, entry, path, modalContent, 0, target);
     else if (action === "help-overview") intelligence?.overview();
@@ -9648,6 +9889,7 @@ async function openFileEditor(index, name, target = null, pathOverride = null) {
   const entry = pane.entries.find(item => String(item.name).toLocaleLowerCase() === String(name).toLocaleLowerCase());
   if (!entry) return toast("That file is no longer present. Refresh the pane and try again.", true);
   const path = target?.displayPath || pathOverride || entryImagePath(pane, entry);
+  if (!target) retainEditorDocument(index, pane, entry, path, "source");
   analysisLoading("Inspecting file", path);
   const query = target ? new URLSearchParams(target.context) : fileContextQuery(pane, path);
   try {
@@ -9708,7 +9950,26 @@ async function openFileEditor(index, name, target = null, pathOverride = null) {
     } : null)) return;
     const editor = modalContent.querySelector(".source-content");
     editor.dataset.savedValue = editor.value;
+    if (!target) {
+      let persistenceTimer = null;
+      editor.addEventListener("input", () => {
+        clearTimeout(persistenceTimer);
+        persistenceTimer = setTimeout(captureActiveEditorDocument, 250);
+      });
+    }
+    const retained = !target ? editorDocuments.get(activeEditorDocument) : null;
+    if (retained?.draft != null) {
+      editor.value = retained.draft;
+      editor.dataset.savedValue = retained.savedValue ?? report.text;
+      requestAnimationFrame(() => {
+        editor.setSelectionRange(retained.selectionStart || 0, retained.selectionEnd || retained.selectionStart || 0);
+        editor.scrollTop = retained.scrollTop || 0;
+        editor.scrollLeft = retained.scrollLeft || 0;
+        updateSourceEditorStatus(modalContent.querySelector(".source-editor"));
+      });
+    }
     installEditorWindow(modalContent.querySelector(".source-editor"));
+    if (!target) installEditorDocumentTabs(modalContent.querySelector(".source-editor"), pane);
     if (!target) {
       try { report.project = await loadEditorProject(pane, path); }
       catch (_error) { report.project = null; }
@@ -10096,6 +10357,7 @@ document.addEventListener("keydown", event => {
     pasteWorkspaceClipboard(index);
   }
 });
+window.addEventListener("beforeunload", captureActiveEditorDocument);
 async function refreshJobsBadge() {
   try {
     const data = await api("/api/operations");

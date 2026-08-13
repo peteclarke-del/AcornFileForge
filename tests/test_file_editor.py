@@ -87,6 +87,27 @@ class FileEditorTests(unittest.TestCase):
         self.assertEqual(report["results"][0]["path"], "$.Games.!BOOT")
         self.assertEqual(report["results"][0]["matches"][0]["line"], 2)
 
+    def test_image_search_can_scan_every_populated_mmb_slot(self):
+        service = Mock()
+        service.list_slots.return_value = [
+            {"slot": 0, "name": "ARCADIANS", "formatted": True},
+            {"slot": 1, "name": "EMPTY", "formatted": False},
+            {"slot": 2, "name": "REPTON", "formatted": True},
+        ]
+        service.list_dfs_catalogue_files.side_effect = lambda _session, slot, _side: [
+            {"name": "!BOOT", "path": "$.!BOOT", "length": 20, "side": 0},
+        ]
+        service.read_file.side_effect = lambda _session, slot, _path, _side: (
+            b'CHAIN "ARCADIANS"\r' if slot == 0 else b'CHAIN "REPTON"\r'
+        )
+        report = search_image_files(
+            service, SimpleNamespace(kind="mmb"), "repton", None, None, "$", True,
+        )
+        self.assertTrue(report["allSlots"])
+        self.assertEqual(report["filesConsidered"], 2)
+        self.assertEqual(report["results"][0]["slot"], 2)
+        self.assertEqual(report["results"][0]["diskTitle"], "REPTON")
+
     def test_basic_listing_always_has_a_space_after_the_line_number(self):
         self.assertEqual(
             _format_basic_listing('10PRINT "HELLO"\n20 GOTO 10\n30\tEND'),
@@ -173,10 +194,12 @@ class FileEditorTests(unittest.TestCase):
                 "symbols": {"32768": "start_here"},
                 "regions": [{"start": 6, "end": 11, "kind": "text", "name": "message", "width": 8}],
                 "bookmarks": [{"offset": 0, "name": "entry", "note": "Reviewed entry"}],
+                "comments": {"0": "User annotation"},
             },
         )
         self.assertEqual(report["rows"][0]["label"], "start_here")
         self.assertIn("Reviewed entry", report["rows"][0]["comment"])
+        self.assertIn("User annotation", report["rows"][0]["comment"])
         message = next(row for row in report["rows"] if row.get("regionKind") == "text")
         self.assertEqual(message["label"], "message")
         self.assertEqual(message["mnemonic"], "EQUS")

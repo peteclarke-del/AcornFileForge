@@ -52,6 +52,8 @@ mutation.
 
 ## Editor window
 
+![Current BBC BASIC editor workspace with tab strip, folding gutter and desktop-style menus](../app/static/help/editor-workspace-current.png)
+
 Source and disassembly editors open as movable, resizable windows within the
 browser. Drag the title bar to move one. Drag an edge or corner to resize it.
 Use the square title-bar control, or double-click the title bar, to maximise
@@ -64,7 +66,7 @@ The menus follow desktop editor conventions:
 - **Edit** contains Undo, Redo, clipboard operations, Select All, persistent
   Find and Replace, image-wide search, symbol references, symbol rename,
   completion and line navigation.
-- **View** contains folding, synchronized bytes and visual indentation.
+- **View** contains folding, synchronized bytes and structure guidance.
 - **Tools** contains language checks, outlines, transformation history,
   normalisation, BASIC verification, Condense and Refactor.
 - **Project** contains notes, bookmarks, symbols, code and data regions, test
@@ -75,6 +77,26 @@ The menus follow desktop editor conventions:
 The native textarea remains the editable document. Syntax colour, indentation,
 folding, annotations and hover targets are presentation layers. This preserves
 normal browser selection, input methods, clipboard behaviour and undo.
+
+After opening one editor menu, moving the pointer or keyboard focus across the
+menubar opens each menu in turn. Selecting a command, clicking elsewhere or
+pressing Escape closes the menu layer.
+
+An editor tab strip keeps several files from the same mounted image open at
+once. Unsaved source is retained when another tab is selected and a dot marks a
+dirty tab. **Open from image…** searches filenames and bounded readable content,
+then opens the selected result as another tab after navigating its filesystem,
+MMB slot and side context. Closing a dirty tab or editor requires confirmation.
+The tab set, active document, draft, selection and scroll position are stored
+in browser session storage. They are restored after an ordinary refresh once
+the private server-side image sessions have reopened. Session storage is scoped
+to the browser tab and is bounded to 24 documents and 512 KiB per draft.
+
+For an MMB, **Open from image…** scans every formatted slot rather than only the
+currently mounted disk. Results identify both slot number and disk title. Empty
+slots are ignored, unreadable slots are counted in the result summary, and the
+search remains bounded so a damaged collection cannot hold the browser
+indefinitely.
 
 ## Command-script editor
 
@@ -142,12 +164,13 @@ shown as `*LOAD` in the tooltip and command summary. The same distinction
 applies to overlapping commands such as RUN and SAVE. Normalising command case
 never removes the star.
 
-### Visual indentation and folding
+### Structure guidance and folding
 
-Visual indentation understands procedures, multi-line functions, `FOR`,
+Structure guidance understands procedures, multi-line functions, `FOR`,
 `REPEAT`, structured `IF`, `CASE`, `WHILE` and inline assembler boundaries.
-Choose tabs or 2, 4 or 8 spaces. This changes only the rendered view. It does
-not alter source text, dirty state, tokenised bytes or the saved image.
+Choose a 2, 4 or 8-character guide step. Live lines show nesting and the
+innermost block containing the caret is highlighted. This does not insert
+whitespace, replace the textarea, change dirty state or alter saved bytes.
 
 The left gutter folds recognised blocks. The state-aware View command reads
 **Collapse all blocks** when everything is expanded and **Expand all blocks**
@@ -220,6 +243,9 @@ can duplicate, move, join and delete selected lines. The conservative formatter
 removes trailing whitespace and normalises proven prefixes; BASIC must pass a
 token round trip before formatting is accepted. Image-wide search covers names
 and bounded readable content in MMB slots and filesystem subdirectories.
+Results open as another document tab. Each tab retains its unsaved draft,
+selection and scroll position. **Open from image…** on the tab strip searches
+the complete mounted image without closing the current document.
 
 File Properties changes load address, execution address, RISC OS filetype and
 writable state without modifying content. Whole-image dependency analysis
@@ -284,6 +310,7 @@ session. It includes:
 - notes;
 - bookmarks tied to saved file offsets;
 - address symbols;
+- free-form comments tied to exact saved file offsets;
 - user-classified code, text, byte, 16-bit word, address-table and bitmap
   regions;
 - transformation history;
@@ -296,8 +323,10 @@ processor's byte order. Symbols can be imported and exported as
 labelled entry points. Project metadata participates in session recovery and
 checkpoints but does not alter the image bytes.
 
-The project manager edits notes, symbols and bookmarks together and exposes a
-portable JSON representation. Compare with saved file shows the current and
+The project manager edits notes, symbols, comments and bookmarks together and
+exposes a portable JSON representation. A row comment is anchored to its exact
+saved file offset and is rendered beside that instruction on every later
+disassembly. Compare with saved file shows the current and
 persisted source side by side. The selected-data inspector renders text,
 hexadecimal bytes, both 16-bit byte orders and a bounded one-bit bitmap preview.
 
@@ -311,7 +340,8 @@ command is parsed into arguments and run without a shell. Acorn File Forge:
 2. substitutes the configured placeholders;
 3. runs the command with a 60-second timeout;
 4. retains the return code and the final 20,000 characters of each output
-   stream in project metadata;
+   stream in project metadata and presents it in the editor's retained
+   test-results view;
 5. removes the temporary file.
 
 Example:
@@ -336,7 +366,11 @@ whole binary through an undo checkpoint only when a bounded output file exists.
 
 `ACORN_FILE_DEBUGGER_COMMAND` enables a local debugger hand-off and must contain
 `{file}`. It can also use `{image}`, `{path}`, `{load}`, `{execute}`,
-`{breakpoint}` and `{architecture}`. The tool receives a temporary file, has a
+`{breakpoint}`, `{architecture}`, `{action}` and `{expression}`. The emulator
+debugger workspace invokes `launch`, `continue`, `step`, `next`, `registers`,
+`memory` and `stop`, appending each bounded result to its transcript. Each
+control runs the configured command as an adapter action rather than holding an
+unbounded server process open. The tool receives a temporary file, has a
 120-second bound, and its output is retained in project test history.
 
 ## Archive and UEF members
@@ -358,9 +392,24 @@ memory use and decompression work.
 
 The fixed-range hex editor remains available from the pane and from every file
 editor. It shows byte offsets, hexadecimal data, ASCII, typed values and staged
-changes. Search accepts text or byte patterns. Writes cannot insert, remove or
-resize bytes. They require explicit confirmation, reject overlapping or stale
-changes, create a checkpoint and refresh decoded caches.
+changes. Search accepts text or byte patterns. **Analyse → Compare with binary
+file** highlights differing bytes, reports size differences and navigates to
+the next changed offset. Structured templates decode generic integer values,
+BBC sideways-ROM headers, RISC OS module headers, DFS catalogue sectors and
+ADFS map fields without changing bytes. They also decode MMB slot records,
+BeebSCSI DSC descriptors, UEF headers and ROMFS headers. A custom JSON template
+can define up to 128 fields relative to the selected byte using `u8`, `u16le`,
+`u16be`, `u32le`, `u32be`, `ascii` or `hex`. Field offsets are bounded to 4095
+and lengths to 256 bytes.
+
+Writes cannot insert, remove or resize bytes. They require explicit
+confirmation, reject overlapping or stale changes, create a checkpoint and
+refresh decoded caches.
+
+Renaming or moving a file or ADFS directory also moves its editor project
+metadata. Deleting it removes matching notes, symbols, comments, bookmarks,
+regions and retained emulator results. Metadata on other MMB slots and disk
+sides remains untouched.
 
 ## Keyboard reference
 

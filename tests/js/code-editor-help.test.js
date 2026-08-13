@@ -38,3 +38,18 @@ test("dynamic operands retain general help without invented values", () => {
   const item = window.AcornCodeEditor.contextHelp("10 VDU A%", "basic", 3, 6, "VDU");
   assert.doesNotMatch(item.notes || "", /first VDU byte/);
 });
+
+test("inline assembler MOS calls decode immediate register setup", () => {
+  const source = "10 [LDA #&83:LDX #1:LDY #2:JSR OSBYTE]";
+  const start = source.indexOf("OSBYTE");
+  const item = window.AcornCodeEditor.contextHelp(source, "6502", start, start + 6, "OSBYTE");
+  assert.match(item.notes, /bottom of user memory/);
+  assert.match(item.notes, /X=&01; Y=&02/);
+});
+
+test("BASIC V SYS help names recognised RISC OS calls", () => {
+  const source = '10 SYS "OS_Write0",message%';
+  const start = source.indexOf("SYS");
+  const item = window.AcornCodeEditor.contextHelp(source, "basic", start, start + 3, "SYS");
+  assert.match(item.notes, /zero-terminated string/);
+});
