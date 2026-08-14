@@ -279,6 +279,13 @@ For example, `R.+AP2` is preserved when directory `R` contains file `+AP2`; it
 is not mistaken for an abbreviated `RUN`. This check applies to both textual
 scripts and OSCLI strings reached from binary loaders.
 
+Tokenised BASIC launchers are rewritten line by line. Commands embedded in a
+`*KEY` definition, such as `*L. QBIX 1E00|M`, are recognised as keyboard macros
+and can be expanded safely while preserving their control-key sequences. Every
+changed BASIC line receives a rebuilt length byte. The audit also detects the
+specific malformed line lengths left by older raw command rewrites and offers
+to repair them before analysing the rest of the loader.
+
 If repairs are available, select the directories to fix and choose **Repair
 selected**. Choose **Cancel** to leave the image unchanged. The repair action
 creates the normal automatic undo checkpoint and processes the selected batch
