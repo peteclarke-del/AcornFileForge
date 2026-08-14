@@ -15,7 +15,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from .disk_service import DiskError
+from .archive_utils import validated_zip_members
+from .errors import DiskError
 
 
 DEFAULT_SOURCES = json.loads((Path(__file__).with_name("catalog_sources.json")).read_text("utf-8"))
@@ -29,6 +30,17 @@ class CachedPage:
 
 class CatalogueService:
     """Configurable, cached catalogue discovery with server-side download tokens."""
+
+    @staticmethod
+    def _http_url(
+        url: object,
+        message: str = "The catalogue supplied an invalid URL.",
+    ) -> str:
+        value = str(url or "").strip()
+        parsed = urllib.parse.urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise DiskError(message)
+        return value
 
     def __init__(self, work_dir: Path):
         work_path = Path(work_dir)
@@ -91,10 +103,10 @@ class CatalogueService:
         if not isinstance(row, dict):
             raise DiskError("Each online source must be an object.")
         source_id = re.sub(r"[^a-z0-9_-]", "-", str(row.get("id") or row.get("name") or "source").lower())[:40]
-        url = str(row.get("url") or "").strip()
-        parsed = urllib.parse.urlparse(url)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise DiskError(f"{row.get('name') or source_id} needs an HTTP or HTTPS URL.")
+        url = CatalogueService._http_url(
+            row.get("url"),
+            f"{row.get('name') or source_id} needs an HTTP or HTTPS URL.",
+        )
         source_type = str(row.get("type") or "links")
         if source_type not in {"configured", "links"}:
             raise DiskError(f"Unsupported online source parser: {source_type}")
@@ -106,6 +118,7 @@ class CatalogueService:
         }
 
     def _fetch(self, url: str, *, limit: int = 32 * 1024 * 1024, ttl: int = 900) -> bytes:
+        url = self._http_url(url)
         cached = self._pages.get(url)
         if cached and cached.expires > time.time():
             return cached.body
@@ -528,17 +541,14 @@ class CatalogueService:
         rows = []
         for number, start in enumerate(starts):
             block = body[start.start() : starts[number + 1].start() if number + 1 < len(starts) else len(body)]
-            def class_content(name: str) -> str:
-                match = re.search(r'<div[^>]+class=["\'][^"\']*\b' + re.escape(name) + r'\b[^"\']*["\'][^>]*>(.*?)</div>', block, re.I | re.S)
-                return match.group(1) if match else ""
-            title_block = class_content(str(options.get("titleClass") or "game_title"))
+            title_block = _html_class_content(block, str(options.get("titleClass") or "game_title"))
             title_match = re.search(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', title_block, re.I | re.S)
             if not title_match:
                 continue
             title = _plain_text(title_match.group(2))
             page = urllib.parse.urljoin(str(context.get("url") or source["url"]), html.unescape(title_match.group(1)))
-            description = _plain_text(class_content(str(options.get("descriptionClass") or "game_text")))
-            publisher = _plain_text(class_content(str(options.get("publisherClass") or "game_author")))
+            description = _plain_text(_html_class_content(block, str(options.get("descriptionClass") or "game_text")))
+            publisher = _plain_text(_html_class_content(block, str(options.get("publisherClass") or "game_author")))
             rows.append(_item(
                 title, publisher, "", None, page, "remote-item",
                 description=f"{description} Download availability is checked when installed.".strip(),
@@ -614,9 +624,9 @@ class CatalogueService:
 
     @staticmethod
     def _generated_download_url(url: str) -> str:
-        parsed = urllib.parse.urlparse(url)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise DiskError("The catalogue supplied an invalid download request URL.")
+        url = CatalogueService._http_url(
+            url, "The catalogue supplied an invalid download request URL."
+        )
         request = urllib.request.Request(url, data=b"", method="POST", headers={"User-Agent": "AcornFileForge/1.0 (+local archival tool)", "Accept": "application/json"})
         try:
             with urllib.request.urlopen(request, timeout=25) as response:
@@ -624,10 +634,9 @@ class CatalogueService:
         except Exception as exc:
             raise DiskError(f"Could not generate the catalogue download: {exc}") from exc
         generated = str(payload.get("url") or "") if isinstance(payload, dict) else ""
-        destination = urllib.parse.urlparse(generated)
-        if destination.scheme not in {"http", "https"} or not destination.netloc:
-            raise DiskError("The catalogue did not return a usable download URL.")
-        return generated
+        return CatalogueService._http_url(
+            generated, "The catalogue did not return a usable download URL."
+        )
 
 
 def _item(title, publisher, year, download, page, artifact, *, description="", machines=None, downloadable=True, version="", resolver=None):
@@ -636,6 +645,17 @@ def _item(title, publisher, year, download, page, artifact, *, description="", m
 
 def _plain_text(value: str) -> str:
     return html.unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", str(value)))).strip()
+
+
+def _html_class_content(block: str, name: str) -> str:
+    match = re.search(
+        r'<div[^>]+class=["\'][^"\']*\b'
+        + re.escape(name)
+        + r'\b[^"\']*["\'][^>]*>(.*?)</div>',
+        block,
+        re.I | re.S,
+    )
+    return match.group(1) if match else ""
 
 
 def _merge_settings(defaults: dict, configured: dict) -> dict:
@@ -655,13 +675,11 @@ def archive_members(name: str, data: bytes) -> list[tuple[str, bytes]]:
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             members = []
-            total = 0
-            for info in archive.infolist():
+            for info in validated_zip_members(
+                archive, max_expanded_bytes=256 * 1024 * 1024
+            ):
                 if info.is_dir() or info.filename.startswith(("/", "\\")) or ".." in Path(info.filename).parts:
                     continue
-                total += info.file_size
-                if total > 256 * 1024 * 1024:
-                    raise DiskError("The ZIP expands beyond the 256 MB safety limit.")
                 members.append((info.filename, archive.read(info)))
             return members
     except zipfile.BadZipFile as exc:

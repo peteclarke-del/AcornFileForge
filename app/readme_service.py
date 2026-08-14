@@ -6,7 +6,14 @@ from typing import TYPE_CHECKING
 
 from .checksum import sha256_path
 from .dfs_compat import dfs_catalogue_files
-from .disk_service import MMB_ENTRY_SIZE, MMB_HEADER_SIZE, MMB_MAX_SLOTS, MMB_SLOT_SIZE
+from .mmb_layout import (
+    ENTRY_SIZE as MMB_ENTRY_SIZE,
+    HEADER_SIZE as MMB_HEADER_SIZE,
+    MAX_SLOTS as MMB_MAX_SLOTS,
+    SLOT_SIZE as MMB_SLOT_SIZE,
+    entry_offset as mmb_entry_offset,
+    slot_offset as mmb_slot_offset,
+)
 
 if TYPE_CHECKING:
     from .disk_service import DiskService, ImageSession
@@ -51,14 +58,15 @@ def _mmb_catalogue(path: Path, source_names: dict[int, str]) -> list[str]:
             if slot >= count:
                 lines.extend((f"### Slot {slot:03d}: unavailable", ""))
                 continue
-            entry = header[16 + slot * MMB_ENTRY_SIZE : 16 + (slot + 1) * MMB_ENTRY_SIZE]
+            start = mmb_entry_offset(slot)
+            entry = header[start : start + MMB_ENTRY_SIZE]
             status = entry[15] if len(entry) == MMB_ENTRY_SIZE else 0xFF
             title = entry[:12].decode("latin-1", "replace").rstrip("\0 ")
             if status >= 0x80:
                 lines.extend((f"### Slot {slot:03d}: empty", "", f"Header status: `&{status:02X}`", ""))
                 continue
             access = "read/write" if status > 0 else "read-only"
-            image.seek(MMB_HEADER_SIZE + slot * MMB_SLOT_SIZE)
+            image.seek(mmb_slot_offset(slot))
             disk = image.read(MMB_SLOT_SIZE)
             files = _dfs_rows(disk)
             lines.extend(

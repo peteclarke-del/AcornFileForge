@@ -767,12 +767,42 @@ def create_files_blueprint(
         operation_id = data.get("operationId")
         completed: list[dict] = []
         skipped: list[dict] = []
+        resumable_request = {
+            key: value for key, value in data.items() if key != "operationId"
+        }
+
+        def partial_response(error: Exception, **extra) -> dict:
+            metadata = _partial_mmb_metadata(
+                service,
+                source,
+                completed,
+                operations,
+                operation_id,
+                enabled=bool(data.get("addMenu")),
+            )
+            operations.details(
+                operation_id,
+                resumable=True,
+                endpoint="/api/transfer-mmb-batch-to-adfs",
+                request=resumable_request,
+                completed=completed,
+                skipped=skipped,
+            )
+            return {
+                "error": str(error),
+                "image": service.summary(target),
+                "completed": completed,
+                "skipped": skipped,
+                "metadata": metadata,
+                **extra,
+            }
+
         operations.start(operation_id, "Preparing accelerated MMB batch transfer")
         operations.details(
             operation_id,
             resumable=True,
             endpoint="/api/transfer-mmb-batch-to-adfs",
-            request={key: value for key, value in data.items() if key != "operationId"},
+            request=resumable_request,
             completed=[],
             skipped=[],
         )
@@ -817,89 +847,37 @@ def create_files_blueprint(
                 metadata=metadata,
             )
         except EmptyDiskError as exc:
-            metadata = _partial_mmb_metadata(
-                service,
-                source,
-                completed,
-                operations,
-                operation_id,
-                enabled=bool(data.get("addMenu")),
-            )
             operations.pause(
                 operation_id,
                 f"Waiting for a decision on slot {exc.disk['sourceSlot']} · "
                 f"{exc.disk['sourceName']}",
             )
-            operations.details(operation_id, resumable=True, endpoint="/api/transfer-mmb-batch-to-adfs", request={key: value for key, value in data.items() if key != "operationId"}, completed=completed, skipped=skipped)
             return jsonify(
-                error=str(exc),
-                image=service.summary(target),
-                completed=completed,
-                skipped=skipped,
-                metadata=metadata,
-                blankDisk=exc.disk,
-                decisionRequired="skip-or-abort",
+                partial_response(
+                    exc,
+                    blankDisk=exc.disk,
+                    decisionRequired="skip-or-abort",
+                )
             ), 409
         except DestinationExistsError as exc:
-            metadata = _partial_mmb_metadata(
-                service,
-                source,
-                completed,
-                operations,
-                operation_id,
-                enabled=bool(data.get("addMenu")),
-            )
             operations.pause(
                 operation_id,
                 f"Waiting for a decision on existing directory "
                 f"{exc.conflict['destination']}",
             )
-            operations.details(operation_id, resumable=True, endpoint="/api/transfer-mmb-batch-to-adfs", request={key: value for key, value in data.items() if key != "operationId"}, completed=completed, skipped=skipped)
             return jsonify(
-                error=str(exc),
-                image=service.summary(target),
-                completed=completed,
-                skipped=skipped,
-                metadata=metadata,
-                destinationConflict=exc.conflict,
-                decisionRequired="keep-replace-or-abort",
+                partial_response(
+                    exc,
+                    destinationConflict=exc.conflict,
+                    decisionRequired="keep-replace-or-abort",
+                )
             ), 409
         except OperationCancelled as exc:
-            metadata = _partial_mmb_metadata(
-                service,
-                source,
-                completed,
-                operations,
-                operation_id,
-                enabled=bool(data.get("addMenu")),
-            )
             operations.cancelled(operation_id, str(exc))
-            operations.details(operation_id, resumable=True, endpoint="/api/transfer-mmb-batch-to-adfs", request={key: value for key, value in data.items() if key != "operationId"}, completed=completed, skipped=skipped)
-            return jsonify(
-                error=str(exc),
-                image=service.summary(target),
-                completed=completed,
-                skipped=skipped,
-                metadata=metadata,
-            ), 409
+            return jsonify(partial_response(exc)), 409
         except Exception as exc:
-            metadata = _partial_mmb_metadata(
-                service,
-                source,
-                completed,
-                operations,
-                operation_id,
-                enabled=bool(data.get("addMenu")),
-            )
             operations.fail(operation_id, str(exc))
-            operations.details(operation_id, resumable=True, endpoint="/api/transfer-mmb-batch-to-adfs", request={key: value for key, value in data.items() if key != "operationId"}, completed=completed, skipped=skipped)
-            return jsonify(
-                error=str(exc),
-                image=service.summary(target),
-                completed=completed,
-                skipped=skipped,
-                metadata=metadata,
-            ), 400
+            return jsonify(partial_response(exc)), 400
 
     @blueprint.post("/api/transfer-image-to-directory")
     def transfer_image_to_directory():

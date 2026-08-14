@@ -40,13 +40,16 @@ at 3:1 or better, and a clearly visible keyboard focus indicator.
 
 The source lives at
 [github.com/peteclarke-del/AcornFileForge](https://github.com/peteclarke-del/AcornFileForge).
-Clone it over SSH and start the Docker service:
+Clone it over HTTPS and start the Docker service:
 
 ```bash
-git clone git@github.com:peteclarke-del/AcornFileForge.git
+git clone https://github.com/peteclarke-del/AcornFileForge.git
 cd AcornFileForge
 docker compose up --build -d
 ```
+
+SSH cloning also works when your GitHub public key is configured, but it is not
+required to install or run the application.
 
 Open <http://localhost:8666>.
 
@@ -2296,8 +2299,14 @@ Backend routes are split by responsibility:
 - `app/routes/tools.py` handles health checks, manifests, duplicate analysis,
   file inspection, editor projects, BASIC verification, disassembly, emulator
   hand-off and dependency reports.
-- `app/disk_service.py` owns image sessions and calls the disk engine.
-- `app/menu_service.py` owns metadata analysis and Universal, SPI and ADFS menu databases.
+- `app/image_session.py` defines the shared session model and ownership context used by disk, checkpoint, operation and download services.
+- `app/session_state.py` owns durable session metadata and warning compaction policy.
+- `app/disk_service.py` coordinates image operations and calls the disk engine.
+- `app/beebscsi_geometry.py` owns BeebSCSI descriptor and old-map geometry calculations.
+- `app/mmb_layout.py` owns MMB header, record, slot and image offset calculations.
+- `app/menu_service.py` coordinates menu discovery, analysis and installation.
+- `app/menu_records.py` parses, validates and serialises Universal, SPI and ADFS menu database records.
+- `app/metadata_lookup.py` extracts distribution metadata and performs optional online enrichment.
 - `app/catalog_service.py` runs the configurable catalogue pipeline and retains
   short-lived install records.
 - `app/checkpoints.py` and `app/operations.py` own undo snapshots and persistent
@@ -2325,9 +2334,13 @@ extension declarations live in `app/formats.py`. This keeps accepted
 Archimedes and raw-image names in one place on each side of the API.
 
 Frontend behaviour is split by responsibility. `app/static/core.js` contains
-shared request and formatting primitives, `hex-editor.js` owns raw fixed-range
-editing, `code-editor.js` owns language intelligence and source presentation,
-and `app.js` coordinates panes and workflows. The content classifier remains a
+shared request and formatting primitives, `workspace.js` owns pane state and
+selection paths, `file-visuals.js` classifies entries for consistent icons,
+and `import-planning.js` owns target naming, host metadata and DFS packing.
+`help.js` owns the in-app handbook and its topic navigation.
+`hex-editor.js` owns raw fixed-range editing, `code-editor.js` owns language
+intelligence and source presentation, and `app.js` coordinates panes and
+workflows. The content classifier remains a
 backend authority so a filename or browser hint cannot bypass filesystem-aware
 validation.
 
@@ -2406,6 +2419,29 @@ Oaknut provides the filesystem implementation. Acorn File Forge adds the web
 workspace, safe working copies, MMB handling, UEF reconstruction, verified HFE
 conversion, metadata review, menu generation, and format-aware drag and drop.
 
-The first Docker build compiles the HxC command-line engine and therefore takes
-longer than an ordinary application-only build. Docker caches that builder
-layer, so later source and documentation rebuilds are much quicker.
+The Dockerfile is multi-architecture. It builds on `amd64`, `arm64` and
+32-bit Raspberry Pi Linux without assuming that PyPI provides a binary package
+for the host. Capstone is compiled in a temporary Python wheel stage when the
+architecture has no published wheel. The compiler, `make` and development
+headers are not copied into the final application image.
+
+The first Docker build compiles HxC, Elkulator and B-em, and may also compile
+Capstone on 32-bit Raspberry Pi systems. It therefore takes longer than an
+ordinary application-only build. Docker caches those builder layers, so later
+source and documentation rebuilds are much quicker. A Pi with limited memory
+may take several minutes while those independent stages are active. That is
+normal as long as the build continues to print progress.
+
+If an earlier build stopped while installing Capstone, pull the current branch
+and rebuild the affected layers:
+
+```bash
+git pull
+docker compose build --pull acorn-file-forge
+docker compose up -d
+```
+
+The key diagnostic in the old failure is `make: command not found` beneath
+`Building wheel for capstone`. The current Dockerfile handles that source-build
+fallback itself. Installing development packages on the Raspberry Pi host does
+not fix an older Dockerfile because pip is running inside the container build.
