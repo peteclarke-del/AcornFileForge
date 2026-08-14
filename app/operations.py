@@ -80,6 +80,7 @@ class OperationRegistry:
                 "current": None,
                 "total": None,
                 "updatedAt": now,
+                "startedAt": now,
                 "ownerId": SESSION_OWNER.get(),
             }
             self._persist()
@@ -151,6 +152,7 @@ class OperationRegistry:
                     "current": None,
                     "total": None,
                     "updatedAt": now,
+                    "startedAt": now,
                     "ownerId": SESSION_OWNER.get(),
                 }
                 self._items[operation_id] = item
@@ -202,7 +204,7 @@ class OperationRegistry:
                 item = self._items[operation_id]
                 if item.get("ownerId") and item.get("ownerId") != SESSION_OWNER.get():
                     raise KeyError(operation_id)
-                return dict(item)
+                return self._with_metrics(item)
             except KeyError as exc:
                 raise DiskError("Operation progress is no longer available.") from exc
 
@@ -211,13 +213,37 @@ class OperationRegistry:
         with self._lock:
             return sorted(
                 (
-                    dict(item)
+                    self._with_metrics(item)
                     for item in self._items.values()
                     if not item.get("ownerId") or item.get("ownerId") == owner_id
                 ),
                 key=lambda item: float(item.get("updatedAt", 0)),
                 reverse=True,
             )
+
+    @staticmethod
+    def _with_metrics(item: dict) -> dict:
+        """Return derived timing without persisting rapidly changing values."""
+        result = dict(item)
+        now = time.time()
+        started = float(result.get("startedAt") or result.get("updatedAt") or now)
+        terminal = {"complete", "failed", "cancelled", "interrupted", "paused"}
+        endpoint = (
+            float(result.get("updatedAt") or now)
+            if result.get("state") in terminal
+            else now
+        )
+        elapsed = max(0.0, endpoint - started)
+        current = result.get("current")
+        total = result.get("total")
+        rate = None
+        eta = None
+        if isinstance(current, (int, float)) and current > 0 and elapsed > 0:
+            rate = float(current) / elapsed
+            if isinstance(total, (int, float)) and total > current and rate > 0:
+                eta = (float(total) - float(current)) / rate
+        result.update(elapsedSeconds=elapsed, ratePerSecond=rate, etaSeconds=eta)
+        return result
 
     def clear_terminal(self, owner_id: str | None = None) -> int:
         owner_id = owner_id if owner_id is not None else SESSION_OWNER.get()

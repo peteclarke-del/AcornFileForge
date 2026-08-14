@@ -24,6 +24,8 @@ const help = load("app/static/help.js", "AcornHelp");
 const editorWorkspace = load("app/static/editor-workspace.js", "AcornEditorWorkspace");
 const operationUI = load("app/static/operation-ui.js", "AcornOperationUI");
 const workspacePersistence = load("app/static/workspace-persistence.js", "AcornWorkspacePersistence");
+const paneView = load("app/static/pane-view.js", "AcornPaneView");
+const transferPlanning = load("app/static/transfer-planning.js", "AcornTransferPlanning");
 
 test("workspace pane state has one canonical initial shape", () => {
   const pane = workspace.newPaneState({ kind: "mmb", doubleSided: false });
@@ -108,4 +110,26 @@ test("workspace recovery is isolated behind an injected persistence controller",
   assert.equal(typeof controller.remember, "function");
   assert.equal(typeof controller.restore, "function");
   assert.deepEqual(Array.from(controller.stored()), []);
+});
+
+test("pane presentation formats images and capacity through one component", () => {
+  const view = paneView.create({
+    esc: value => String(value),
+    humanSize: value => `${value} B`,
+  });
+  assert.equal(view.paneFormat({ kind: "dfs", name: "demo.dsd" }), "DSD");
+  assert.match(view.capacityMarkup({ available: true, total: 100, used: 75, free: 25, unit: "bytes" }), /capacity warning/);
+  assert.match(view.crumbs("$.Games"), /data-path="\$"/);
+});
+
+test("folder transfer planning preserves ADFS trees and resolves collisions", () => {
+  const planning = transferPlanning.create({
+    targetNameRule: (_pane, name) => ({ suggested: name.slice(0, 10), limit: 10 }),
+  });
+  const result = planning.folderTargetPlans(
+    { image: { kind: "adfs" } },
+    [{ relativePath: "Pack/LongFilename" }, { relativePath: "Pack/LongFilename2" }],
+    "preserve",
+  );
+  assert.deepEqual(Array.from(result.plans, item => item.targetPath), ["Pack/LongFilena", "Pack/LongFilen1"]);
 });
