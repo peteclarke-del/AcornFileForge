@@ -1,3 +1,16 @@
+FROM python:3.12-slim AS python-deps
+
+# PyPI does not publish Capstone wheels for every Linux architecture. In
+# particular, 32-bit Raspberry Pi builds fall back to the source distribution,
+# which needs a native compiler and make. Build all Python wheels in this
+# disposable stage so the final image remains free of compilers and headers.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+COPY requirements.txt .
+RUN python -m pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
+
 FROM debian:bookworm-slim AS hxc-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -66,7 +79,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY --from=python-deps /wheels /wheels
+RUN python -m pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt \
+    && python -c "from capstone import CS_ARCH_ARM, CS_ARCH_M68K, CS_ARCH_MOS65XX, Cs; Cs(CS_ARCH_MOS65XX, 0); print('Capstone ARM, M68K and MOS65XX support is available')" \
+    && rm -rf /wheels
 
 COPY --from=hxc-builder /src/build/hxcfe /usr/local/bin/hxcfe
 COPY --from=hxc-builder /src/build/libhxcfe.so /usr/local/lib/libhxcfe.so
