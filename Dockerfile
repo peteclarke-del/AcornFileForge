@@ -1,4 +1,4 @@
-FROM python:3.12-slim AS python-deps
+FROM python:3.12-slim-trixie AS python-deps
 
 # PyPI does not publish Capstone wheels for every Linux architecture. In
 # particular, 32-bit Raspberry Pi builds fall back to the source distribution,
@@ -64,7 +64,7 @@ RUN mkdir -p /src/bem-runtime \
     && cp /src/b-em/*.bin /src/bem-runtime/ \
     && cp -a /src/b-em/roms /src/b-em/fonts /src/b-em/ddnoise /src/bem-runtime/
 
-FROM python:3.12-slim
+FROM python:3.12-slim-trixie
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -72,7 +72,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    mame xvfb xauth x11vnc novnc websockify liballegro4.4 libopenal1 libalut0 \
+    mame xvfb xauth x11vnc novnc websockify liballegro4.4t64 libopenal1 libalut0 \
     liballegro5.2t64 liballegro-acodec5.2t64 liballegro-audio5.2t64 \
     liballegro-dialog5.2t64 liballegro-image5.2t64 liballegro-ttf5.2t64 \
     libasound2t64 \
