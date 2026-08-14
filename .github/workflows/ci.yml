@@ -38,6 +38,14 @@ jobs:
           acorn-file-forge:ci
           python -m unittest discover -s tests -v
 
+      - name: Run generated-media performance smoke profile
+        run: >-
+          docker run --rm
+          --volume "${{ github.workspace }}:/source"
+          --workdir /source
+          acorn-file-forge:ci
+          python -m tools.benchmark_media --profile quick --output output/benchmark-ci.json
+
       - name: Run JavaScript unit tests
         run: node tests/run_js_tests.js
 

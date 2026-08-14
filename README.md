@@ -83,7 +83,7 @@ they will not be committed or packaged.
 
 ## Current status
 
-The current build supports the editing and transfer workflows described in
+The current release candidate is `1.0.0-rc.1`. It supports the editing and transfer workflows described in
 this guide, including one to three rearrangeable panes, undo and named
 checkpoints, browser-private recovery, background job tracking, MMB and ADFS
 menu maintenance, HFE handling, UEF extraction, an Online Library and
@@ -106,6 +106,8 @@ Bug reports and proposed improvements can be raised in the
 - The [file editor and code analysis handbook](docs/FILE-EDITOR-GUIDE.md) covers
   content detection, BASIC and script editing, source transformations,
   disassembly projects, archives, synchronized bytes and emulator hand-off.
+- The [installation guide](docs/INSTALLATION.md) covers desktop and Raspberry Pi builds, updates, retained sessions and common failures.
+- The [release checklist](docs/RELEASE-CHECKLIST.md) defines the generated-media, fault-injection, benchmark, browser and real-hardware gates.
 - **Help** in the application contains illustrated, task-based instructions and
   stays with the running version of the frontend.
 - Every saved image ZIP contains its own generated `README.md` describing that
@@ -362,7 +364,7 @@ filename used by recovery and download, not the title stored inside its
 filesystem or an individual MMB slot title.
 
 Each pane has its own refresh button. Long operations display a progress
-overlay with the current phase and item count. Dialog action buttons disable
+overlay with the current phase, item count, elapsed time, measured throughput and estimated time remaining. Dialog action buttons disable
 after the first valid click, which prevents accidental duplicate imports or
 copies. The controls in a pane also disable as soon as a creative,
 destructive, validation, or maintenance action starts. Changes to one image
@@ -2306,6 +2308,9 @@ Backend routes are split by responsibility:
 - `app/image_session.py` defines the shared session model and ownership context used by disk, checkpoint, operation and download services.
 - `app/session_state.py` owns durable session metadata and warning compaction policy.
 - `app/disk_service.py` coordinates image operations and calls the disk engine.
+- `app/session_disk_service.py` owns private session persistence, ownership, recovery, checkpoints and summaries.
+- `app/filesystem_disk_service.py` owns trusted ADFS and ROMFS mounts plus ROMFS properties.
+- `app/adfs_install_service.py` owns installed-software discovery, dry-run audits and deterministic loader repairs for ADFS hard disks.
 - `app/disk_tools.py` owns Oaknut and HxC process execution, timeout handling,
   JSON decoding and user-facing engine error cleanup. `DiskService` retains
   compatibility wrappers so established callers and tests remain stable.
@@ -2319,11 +2324,9 @@ Backend routes are split by responsibility:
 - `app/tape_disk_service.py` owns cached UEF access and UEF-to-DFS conversion,
   including generated boot files, filename allocation and loader rewrites. It
   is another focused `DiskService` mixin rather than a second service facade.
-- `app/menu_service.py` coordinates menu discovery, analysis and installation.
+- `app/menu_service.py` coordinates menu analysis, mutation and installation.
 - `app/menu/analysis.py`, `app/menu/adfs.py` and `app/menu/mmb.py` provide the
-  smaller domain APIs used by routes and analysis code. `menu_service.py`
-  remains the compatibility implementation while its internals are moved
-  behind those boundaries incrementally.
+  smaller domain APIs used by routes and analysis code. `app/menu/mmb_discovery.py` owns MMB menu signatures and discovery without routing callers back through the compatibility module.
 - `app/adfs_menu_discovery.py` owns holder-directory recognition and the
   single-mount ADFS catalogue view used for fast menu scans.
 - `app/menu_records.py` parses, validates and serialises Universal, SPI and ADFS menu database records.
@@ -2358,6 +2361,9 @@ Frontend behaviour is split by responsibility. `app/static/core.js` contains
 shared request and formatting primitives, `workspace.js` owns pane state and
 selection paths, `file-visuals.js` classifies entries for consistent icons,
 and `import-planning.js` owns target naming, host metadata and DFS packing.
+`pane-view.js` owns format, breadcrumb and capacity presentation,
+`transfer-planning.js` owns directory-transfer allocation, and
+`safety-dialogs.js` owns destructive PAGE override confirmation.
 `editor-workspace.js` owns bounded editor-tab persistence and restoration.
 `workspace-persistence.js` owns open-pane recovery, while `operation-ui.js`
 owns guarded actions and persistent job progress. Storage validation, recovery
@@ -2391,6 +2397,14 @@ Run the Python regression tests:
 ```bash
 python3 -m unittest discover -s tests -v
 ```
+
+Run the generated-media performance profile and retain its JSON for comparison:
+
+```bash
+python3 -m tools.benchmark_media --profile quick --output output/benchmark-quick.json
+```
+
+Use `--profile full` for a release candidate. Both profiles generate all working media inside a temporary directory and do not read private samples.
 
 Check Python and JavaScript syntax:
 
@@ -2428,6 +2442,8 @@ each pull request. A separate Buildx matrix builds both `linux/amd64` and
 `linux/arm64`, catching dependency or Dockerfile regressions that would stop a
 Raspberry Pi installation even when the x86 build remains healthy.
 
+See [Installing Acorn File Forge](docs/INSTALLATION.md) for complete desktop and Raspberry Pi instructions.
+
 Check the running service:
 
 ```bash
@@ -2437,7 +2453,7 @@ curl http://localhost:8666/api/health
 A healthy response looks like:
 
 ```json
-{"engine":"oaknut","status":"ok"}
+{"engine":"oaknut","status":"ok","version":"1.0.0-rc.1"}
 ```
 
 ## Main dependencies

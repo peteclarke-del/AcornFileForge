@@ -19,6 +19,7 @@ from ..formats import (
 from ..hardware_profiles import hardware_catalogue, normalise_hardware_profile
 from ..menu.analysis import best_distribution_filename
 from ..operations import OperationRegistry
+from ..version import application_version
 from .common import optional_int, payload
 from .effects import image_mutation, request_effect
 
@@ -36,7 +37,7 @@ def create_images_blueprint(
 
     @blueprint.get("/api/health")
     def health():
-        return jsonify(status="ok", engine="oaknut")
+        return jsonify(status="ok", engine="oaknut", version=application_version())
 
     @blueprint.get("/api/hardware-profiles")
     def list_hardware_profiles():
