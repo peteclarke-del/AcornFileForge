@@ -9,6 +9,7 @@ from pathlib import Path, PurePosixPath
 
 from flask import Blueprint, jsonify, request
 
+from ..archive_utils import validated_zip_members
 from ..catalog_service import CatalogueService, archive_members
 from ..disk_service import DiskError, DiskService
 from ..formats import DFS_EXTENSIONS, HFE_EXTENSIONS, TAPE_EXTENSIONS
@@ -107,7 +108,7 @@ def _install_riscos_package(service: DiskService, target, target_path: str, cont
     installed = 0
     made = set()
     try:
-        for info in archive.infolist():
+        for info in validated_zip_members(archive):
             path = PurePosixPath(info.filename)
             if not path.parts or path.parts[0].casefold() == "riscpkg" or ".." in path.parts:
                 continue

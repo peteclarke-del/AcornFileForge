@@ -40,6 +40,7 @@ from app.menu_service import (
     parse_menu_data,
     parse_spi_menu_data,
     parse_distribution_filename,
+    replace_mmb_menu,
     serialise_menu,
     serialise_spi_menu,
     update_menu,
@@ -65,6 +66,15 @@ class FakeService:
 
 
 class MenuServiceTests(unittest.TestCase):
+    def test_replace_mmb_menu_without_installed_menu_raises_disk_error(self):
+        with patch("app.menu_service.find_menu_slot", return_value=None):
+            with self.assertRaisesRegex(DiskError, "Create an MMB menu"):
+                replace_mmb_menu(Mock(), SimpleNamespace(), [])
+
+    def test_eject_mmb_slots_rejects_non_mmb_session_with_disk_error(self):
+        with self.assertRaisesRegex(DiskError, "requires an MMB image"):
+            eject_mmb_slots(Mock(), SimpleNamespace(kind="adfs"), [1])
+
     def test_bulk_adfs_delete_rewrites_all_matching_menu_records_once(self):
         class FakeMount:
             def exists(self, _path):
