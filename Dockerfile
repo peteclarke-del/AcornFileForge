@@ -1,15 +1,20 @@
 FROM python:3.12-slim-trixie AS python-deps
 
-# PyPI does not publish Capstone wheels for every Linux architecture. In
+# PyPI does not publish Capstone binaries for every Linux architecture. In
 # particular, 32-bit Raspberry Pi builds fall back to the source distribution,
-# which needs a native compiler and make. Build all Python wheels in this
-# disposable stage so the final image remains free of compilers and headers.
+# which needs a native compiler and make. Install into a disposable root rather
+# than carrying locally tagged wheels into the runtime stage. This avoids a
+# second architecture-tag compatibility decision after the native package has
+# already built successfully. The final image remains free of compilers and
+# headers.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 COPY requirements.txt .
-RUN python -m pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
+RUN python -m pip install --no-cache-dir --root=/python-install -r requirements.txt \
+    && PYTHONPATH=/python-install/usr/local/lib/python3.12/site-packages \
+       python -c "from capstone import CS_ARCH_ARM, CS_ARCH_M68K, CS_ARCH_MOS65XX, Cs; Cs(CS_ARCH_MOS65XX, 0); print('Staged Capstone ARM, M68K and MOS65XX support is available')"
 
 FROM debian:bookworm-slim AS hxc-builder
 
@@ -78,11 +83,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libasound2t64 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-COPY --from=python-deps /wheels /wheels
-RUN python -m pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt \
-    && python -c "from capstone import CS_ARCH_ARM, CS_ARCH_M68K, CS_ARCH_MOS65XX, Cs; Cs(CS_ARCH_MOS65XX, 0); print('Capstone ARM, M68K and MOS65XX support is available')" \
-    && rm -rf /wheels
+COPY --from=python-deps /python-install/usr/local /usr/local
+RUN python -c "from capstone import CS_ARCH_ARM, CS_ARCH_M68K, CS_ARCH_MOS65XX, Cs; Cs(CS_ARCH_MOS65XX, 0); print('Capstone ARM, M68K and MOS65XX support is available')"
 
 COPY --from=hxc-builder /src/build/hxcfe /usr/local/bin/hxcfe
 COPY --from=hxc-builder /src/build/libhxcfe.so /usr/local/lib/libhxcfe.so
