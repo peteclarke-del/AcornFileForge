@@ -311,11 +311,57 @@ class DiskService:
             session.warnings.append(warning)
 
     @staticmethod
+    def _normalise_warnings(warnings: list[str]) -> list[str]:
+        """Keep durable image history concise and discard superseded diagnostics."""
+        result: list[str] = []
+        directory_fields_repaired = False
+        tube_warning = False
+        loader_review = False
+        for value in warnings:
+            warning = str(value).strip()
+            if not warning:
+                continue
+            if re.match(r"^Repaired \d+ old-ADFS directory sequence field", warning):
+                directory_fields_repaired = True
+                continue
+            if "selected hardware profile has a Tube second processor enabled" in warning:
+                tube_warning = True
+                continue
+            if (
+                "contains ambiguous ADFS command" in warning
+                or "loader contains" in warning
+                and "ambiguous abbreviated command" in warning
+            ):
+                # These are point-in-time analysis results. The current HDD
+                # audit resolves them against the current directory tree and
+                # is the authoritative place to show any which remain.
+                loader_review = True
+                continue
+            if warning not in result:
+                result.append(warning)
+        if directory_fields_repaired:
+            result.append(
+                "Maintained old-ADFS directory sequence fields for 8-bit hardware."
+            )
+        if tube_warning:
+            result.append(
+                "The selected hardware profile has a Tube second processor enabled. "
+                "Some 8-bit software requires the Tube to be disabled unless it explicitly supports it."
+            )
+        if loader_review:
+            result.append(
+                "Installed ADFS loader diagnostics have changed since this image was edited. "
+                "Run Tools > Check installed disk software for the current path-aware results."
+            )
+        return result
+
+    @staticmethod
     def safe_filename(name: str) -> str:
         name = Path(name or "image").name
         return re.sub(r"[^A-Za-z0-9._() +!-]", "_", name)[:180] or "image"
 
     def _persist_session(self, session: ImageSession) -> None:
+        session.warnings = self._normalise_warnings(session.warnings)
         metadata = {
             "id": session.id,
             "name": session.name,
@@ -431,11 +477,9 @@ class DiskService:
                     else None
                 ),
                 owner_id=metadata.get("ownerId"),
-                warnings=[
-                    str(warning)
-                    for warning in metadata.get("warnings", [])
-                    if "contains ambiguous ADFS command" not in str(warning)
-                ],
+                warnings=self._normalise_warnings(
+                    [str(warning) for warning in metadata.get("warnings", [])]
+                ),
             )
             if session.hfe_original_path and not session.hfe_original_path.is_file():
                 raise ValueError
@@ -1494,11 +1538,17 @@ class DiskService:
     def summary(self, session: ImageSession) -> dict:
         checkpoints = self.list_checkpoints(session)
         romfs = self.romfs_details(session) if session.kind == "romfs" else None
+        image_size = session.path.stat().st_size
         return {
             "id": session.id,
             "name": session.name,
             "kind": session.kind,
-            "size": session.path.stat().st_size,
+            "size": image_size,
+            "hardDisk": session.kind == "adfs" and (
+                bool(session.descriptor_path)
+                or session.path.suffix.lower() in {".dat", ".dsc", ".hdf", ".hd4"}
+                or image_size > 2 * 1024 * 1024
+            ),
             "dirty": session.dirty,
             "hasDescriptor": bool(session.descriptor_path),
             "descriptorName": session.descriptor_name,
@@ -1507,7 +1557,7 @@ class DiskService:
             "readOnly": session.hfe_read_only or bool(romfs and romfs["readOnly"]),
             "rom": ({
                 "bankSize": session.rom_bank_size,
-                "bankCount": bank_count(session.path.stat().st_size, session.rom_bank_size),
+                "bankCount": bank_count(image_size, session.rom_bank_size),
                 "eraseByte": session.rom_erase_byte,
                 "platform": session.rom_platform,
                 "layout": session.rom_layout,
@@ -1518,7 +1568,7 @@ class DiskService:
             "targetHardware": session.target_hardware,
             "hardwareProfile": session.hardware_profile,
             "warnings": [
-                *session.warnings,
+                *self._normalise_warnings(session.warnings),
                 *(list(session.tape.warnings) if session.tape else []),
             ],
             "checkpoints": {
@@ -4270,6 +4320,7 @@ class DiskService:
         data: bytes,
         load_address: int,
         occupied_ranges: list[tuple[int, int]],
+        local_names: set[str] | None = None,
     ) -> tuple[bytes, list[str], list[str]]:
         """Expand binary-loader commands whose DFS abbreviations break on ADFS.
 
@@ -4289,6 +4340,12 @@ class DiskService:
         redirected_offsets: set[int] = set()
         appended_for: dict[int, int] = {}
         command_names = {b"R.": b"RUN ", b"L.": b"LOAD "}
+        local_paths = {name.casefold() for name in (local_names or set())}
+
+        def is_local_path(command: bytes) -> bool:
+            token = command.decode("latin-1", "replace").strip().lstrip("*")
+            token = token.split(None, 1)[0].strip('"') if token else ""
+            return token.casefold() in local_paths
 
         for match in re.finditer(rb"\xA2(?P<low>.)(?:\xA0(?P<high>.)\x20\xF7\xFF)", original, re.DOTALL):
             command_address = match.group("low")[0] | (match.group("high")[0] << 8)
@@ -4297,6 +4354,8 @@ class DiskService:
                 continue
             command_end = original.find(b"\r", command_offset, min(len(original), command_offset + 80))
             if command_end < 0:
+                continue
+            if is_local_path(original[command_offset:command_end]):
                 continue
             abbreviated = original[command_offset : command_offset + 2].upper()
             prefix = command_names.get(abbreviated)
@@ -4331,7 +4390,10 @@ class DiskService:
             redirected_offsets.add(command_offset)
 
         for command_match in re.finditer(rb"(?P<command>[RL]\.[ -~]{1,60})\r", original, re.IGNORECASE):
-            if command_match.start("command") not in redirected_offsets:
+            if (
+                command_match.start("command") not in redirected_offsets
+                and not is_local_path(command_match.group("command"))
+            ):
                 command = command_match.group("command").decode("latin-1")
                 warnings.append(
                     f"contains ambiguous ADFS command {command}, but no safe immediate OSCLI pointer was found"
@@ -4339,33 +4401,127 @@ class DiskService:
         return bytes(patched), list(dict.fromkeys(repairs)), list(dict.fromkeys(warnings))
 
     @staticmethod
-    def _expand_adfs_text_commands(data: bytes) -> tuple[bytes, list[str]]:
+    def _expand_adfs_text_commands(
+        data: bytes,
+        local_names: set[str] | None = None,
+        *,
+        require_plain_text: bool = True,
+    ) -> tuple[bytes, list[str]]:
         """Expand DFS-style command abbreviations in textual launch scripts."""
         try:
             text = data.decode("latin-1")
         except UnicodeError:
             return data, []
         meaningful = [character for character in text if character not in "\r\n\t\f"]
-        if (
+        if require_plain_text and (
             not meaningful
             or sum(character.isprintable() for character in meaningful) / len(meaningful) < 0.9
         ):
             return data, []
         repairs: list[str] = []
         commands = {"R": "RUN", "L": "LOAD", "LO": "LOAD"}
+        local_paths = {name.casefold() for name in (local_names or set())}
         pattern = re.compile(
-            r"(?im)(?P<prefix>^|[\r\n:])(?P<space>\s*\*?\s*)(?P<command>R|L|LO)\.(?P<tail>[^\r\n:]*)"
+            r"(?im)(?P<prefix>^|[\r\n:]|\"|\|M|\*KEY\s+\d+\s+)"
+            r"(?P<space>\s*\*?\s*)"
+            r"(?P<command>R|L|LO)\.(?P<tail>[^\r\n:|\"]*)"
         )
 
         def expand(match: re.Match[str]) -> str:
             command = match.group("command").upper()
             expanded = commands[command]
             tail = match.group("tail").lstrip()
+            path_token = f"{command}.{tail}".split(None, 1)[0].strip('"')
+            if path_token.casefold() in local_paths:
+                return match.group(0)
             repairs.append(f"expanded {command}.{match.group('tail')} to {expanded} {tail}".rstrip())
             return f"{match.group('prefix')}{match.group('space')}{expanded} {tail}"
 
         patched = pattern.sub(expand, text)
         return patched.encode("latin-1"), list(dict.fromkeys(repairs))
+
+    @staticmethod
+    def _normalise_basic_line_lengths(data: bytes) -> tuple[bytes, list[str]]:
+        """Repair the line-length byte in an otherwise intact tokenised program.
+
+        Older Acorn File Forge builds expanded commands inside raw BASIC bytes
+        without updating the enclosing line header. Follow plausible ascending
+        line markers through a real terminator before changing anything, so a
+        binary which merely begins with CR is never rewritten speculatively.
+        """
+        if len(data) < 7 or data[0] != 0x0D:
+            return data, []
+        positions = [0]
+        line_numbers: list[int] = []
+        position = 0
+        while position + 1 < len(data):
+            marker = data[position + 1]
+            if marker & 0x80:
+                if len(line_numbers) < 2:
+                    return data, []
+                rebuilt = bytearray(data)
+                repairs: list[str] = []
+                for offset, next_offset, line_number in zip(
+                    positions, positions[1:], line_numbers
+                ):
+                    actual = next_offset - offset
+                    if actual > 255:
+                        return data, []
+                    if rebuilt[offset + 3] != actual:
+                        repairs.append(
+                            f"corrected BASIC line {line_number} length "
+                            f"from {rebuilt[offset + 3]} to {actual} bytes"
+                        )
+                        rebuilt[offset + 3] = actual
+                return bytes(rebuilt), repairs
+            if position + 4 > len(data):
+                return data, []
+            line_number = (marker << 8) | data[position + 2]
+            if line_numbers and line_number <= line_numbers[-1]:
+                return data, []
+            line_numbers.append(line_number)
+            next_position = data.find(b"\x0d", position + 4)
+            if next_position < 0:
+                return data, []
+            positions.append(next_position)
+            position = next_position
+        return data, []
+
+    @classmethod
+    def _expand_adfs_basic_commands(
+        cls,
+        data: bytes,
+        local_names: set[str],
+    ) -> tuple[bytes, list[str]]:
+        """Expand commands in tokenised BASIC while rebuilding line lengths."""
+        if not is_tokenized_basic(data):
+            return data, []
+        rebuilt = bytearray()
+        repairs: list[str] = []
+        position = 0
+        while position + 2 <= len(data) and data[position] == 0x0D:
+            if data[position + 1] & 0x80:
+                rebuilt.extend(data[position:])
+                return bytes(rebuilt), list(dict.fromkeys(repairs))
+            length = data[position + 3]
+            if length < 5 or position + length > len(data):
+                return data, []
+            line_number = (data[position + 1] << 8) | data[position + 2]
+            body = data[position + 4 : position + length]
+            patched, line_repairs = cls._expand_adfs_text_commands(
+                body, local_names, require_plain_text=False
+            )
+            new_length = len(patched) + 4
+            if new_length > 255:
+                return data, []
+            rebuilt.extend(data[position : position + 3])
+            rebuilt.append(new_length)
+            rebuilt.extend(patched)
+            repairs.extend(
+                f"line {line_number}: {repair}" for repair in line_repairs
+            )
+            position += length
+        return data, []
 
     @staticmethod
     def _adfs_loader_references(data: bytes) -> set[str]:
@@ -4385,6 +4541,96 @@ class DiskService:
                 if name:
                     references.add(name.casefold())
         return references
+
+    @staticmethod
+    def _adfs_local_references(data: bytes, local_names: set[str]) -> set[str]:
+        """Find literal references to files in the copied software tree.
+
+        Distribution menus often keep the real launcher in DATA rather than
+        putting it directly after CHAIN, RUN or LOAD.  Restricting the result
+        to names which actually exist in the imported tree lets us follow
+        those menus without treating arbitrary prose as a loader dependency.
+        """
+        available = {name.casefold() for name in local_names if name}
+        leaves = {name.rsplit(".", 1)[-1].casefold() for name in available}
+        references: set[str] = set()
+        for match in re.finditer(rb"[!+$A-Za-z0-9_.-]{1,80}", data):
+            candidate = match.group(0).decode("latin-1", "replace").strip()
+            relative = candidate[2:] if candidate.startswith("$.") else candidate
+            folded = relative.casefold()
+            if folded in available or folded in leaves:
+                references.add(folded)
+        return references
+
+    @staticmethod
+    def _rewrite_adfs_binary_root_paths(
+        data: bytes,
+        local_names: set[str],
+    ) -> tuple[bytes, list[str], set[str]]:
+        """Retarget proven embedded ADFS root paths to the current directory.
+
+        ``@`` is ADFS's CSD marker.  Replacing ``$`` with ``@`` preserves the
+        byte length, so it is safe for command strings embedded in machine
+        code and does not relocate any following code or data.
+        """
+        available = {name.casefold() for name in local_names if name}
+        patched = bytearray(data)
+        repairs: list[str] = []
+        references: set[str] = set()
+        for match in re.finditer(rb"\$\.(?P<path>[!+A-Za-z0-9_.-]+)", data):
+            relative = match.group("path").decode("latin-1", "replace")
+            if relative.casefold() not in available:
+                continue
+            patched[match.start()] = ord("@")
+            repairs.append(f"changed root path $.{relative} to @.{relative}")
+            references.add(relative.casefold())
+        return bytes(patched), list(dict.fromkeys(repairs)), references
+
+    @staticmethod
+    def _adfs_loader_risks(data: bytes) -> list[str]:
+        """Report loader behaviour which cannot be made HDD-safe blindly."""
+        risks: list[str] = []
+        upper = data.upper()
+        if re.search(rb"\*(?:DISC|TAPE|DRIVE|DR\.|MOUNT)\b", upper):
+            risks.append(
+                "selects a filing system, drive or mounted disc explicitly; "
+                "that can leave the imported HDD directory"
+            )
+        direct_patterns = (
+            rb"OSWORD\s*&?(?:72|7F)\b",
+            rb"\xA9[\x72\x7F].{0,12}\x20\xF1\xFF",
+        )
+        if any(re.search(pattern, upper, re.DOTALL) for pattern in direct_patterns):
+            risks.append(
+                "appears to use direct sector I/O; sector-based software must "
+                "remain on its original disc image"
+            )
+        return risks
+
+    @staticmethod
+    def _is_adfs_loader_candidate(item: dict) -> bool:
+        """Reject documentation which merely looks like a loader reference."""
+        data = bytes(item.get("data") or b"")
+        name = str(item.get("sourceName") or item.get("dst") or "")
+        # Haven-style compilation disks conventionally keep reviews in R.+
+        # and viewable documents in V.+. Their prose frequently starts with
+        # `r.` or `l.`, but those bytes are not commands or launch stages.
+        if name.upper().startswith(("R.+", "V.+")):
+            return False
+        if is_tokenized_basic(data):
+            return True
+        leaf = name.rsplit(".", 1)[-1].upper()
+        if leaf in {"!BOOT", "BOOT", "GO", "MENU", "LOADER", "START", "SS"}:
+            return True
+        meaningful = [byte for byte in data if byte not in b"\r\n\t\f"]
+        if meaningful and sum(32 <= byte < 127 for byte in meaningful) / len(meaningful) < 0.75:
+            return True
+        return bool(
+            re.search(
+                rb"(?im)(?:^|[\r\n:])\s*(?:\*|CHAIN\b|CALL\b|OSCLI\b)",
+                data,
+            )
+        )
 
     @staticmethod
     def _rewrite_adfs_basic_root_paths(
@@ -4449,7 +4695,9 @@ class DiskService:
                 seeds.append(item)
 
         local_names = {
-            str(item.get("sourceName") or item.get("dst") or "").casefold()
+            str(item.get("sourceName") or item.get("dst") or "")
+            .removeprefix("$.")
+            .casefold()
             for item in file_items
         }
         scan_items: list[dict] = []
@@ -4460,6 +4708,11 @@ class DiskService:
             item = queue.pop(0)
             scan_items.append(item)
             name = str(item.get("sourceName") or item.get("dst") or "loader")
+            normalised, length_repairs = cls._normalise_basic_line_lengths(item["data"])
+            if length_repairs:
+                item["data"] = normalised
+                item.setdefault("loaderRepairs", []).extend(length_repairs)
+                repairs.extend(f"{name}: {repair}" for repair in length_repairs)
             root_patched, root_repairs, root_references = cls._rewrite_adfs_basic_root_paths(
                 item["data"], local_names
             )
@@ -4467,8 +4720,24 @@ class DiskService:
                 item["data"] = root_patched
                 item.setdefault("loaderRepairs", []).extend(root_repairs)
                 repairs.extend(f"{name}: {repair}" for repair in root_repairs)
-            if id(item) in seed_ids:
-                text_patched, text_repairs = cls._expand_adfs_text_commands(item["data"])
+            binary_references: set[str] = set()
+            if not is_tokenized_basic(item["data"]):
+                binary_patched, binary_repairs, binary_references = (
+                    cls._rewrite_adfs_binary_root_paths(item["data"], local_names)
+                )
+                if binary_repairs:
+                    item["data"] = binary_patched
+                    item.setdefault("loaderRepairs", []).extend(binary_repairs)
+                    repairs.extend(f"{name}: {repair}" for repair in binary_repairs)
+            # Every file reached through the loader graph is executable
+            # context. This catches second-stage launchers named in DATA,
+            # such as Zalaga's LOADER, rather than repairing !BOOT alone.
+            if id(item) in queued:
+                text_patched, text_repairs = (
+                    cls._expand_adfs_basic_commands(item["data"], local_names)
+                    if is_tokenized_basic(item["data"])
+                    else cls._expand_adfs_text_commands(item["data"], local_names)
+                )
                 if text_repairs:
                     item["data"] = text_patched
                     item.setdefault("loaderRepairs", []).extend(text_repairs)
@@ -4478,7 +4747,7 @@ class DiskService:
             # tokenised BASIC loaders.  Treating every R./L. found deeper in a
             # program as another loader can accidentally scan ordinary text or
             # data files that happen to have loader-like names.
-            references = set(root_references)
+            references = set(root_references) | binary_references
             if id(item) in seed_ids:
                 references.update(cls._adfs_loader_references(item["data"]))
             for reference in references:
@@ -4486,13 +4755,28 @@ class DiskService:
                 if target is not None and id(target) not in queued:
                     queued.add(id(target))
                     queue.append(target)
+            for reference in cls._adfs_local_references(item["data"], local_names):
+                target = by_name.get(reference) or by_name.get(reference.rsplit(".", 1)[-1])
+                if (
+                    target is not None
+                    and id(target) not in queued
+                    and cls._is_adfs_loader_candidate(target)
+                ):
+                    queued.add(id(target))
+                    queue.append(target)
+
+            for risk in cls._adfs_loader_risks(item["data"]):
+                warnings.append(f"{name}: {risk}")
 
         for item in scan_items:
             name = str(item.get("sourceName") or item.get("dst") or "loader")
+            if is_tokenized_basic(item["data"]):
+                continue
             patched, item_repairs, item_warnings = cls._expand_adfs_oscli_abbreviations(
                 item["data"],
                 int(item.get("load") or 0),
                 ranges,
+                local_names,
             )
             if item_repairs:
                 item["data"] = patched
@@ -4515,6 +4799,27 @@ class DiskService:
                     warnings.extend(f"{name}: {warning}" for warning in item_warnings)
         return repairs, warnings
 
+    @staticmethod
+    def _adfs_directory_items(mount, directory: str, file_item) -> list[dict]:
+        """Read one installed tree using an already-open ADFS mount."""
+        pending = [directory]
+        items: list[dict] = []
+        while pending:
+            parent = pending.pop()
+            for entry in mount.iter_entries(parent):
+                path = str(entry.path)
+                if entry.is_dir:
+                    pending.append(path)
+                    continue
+                item = file_item(mount, path, path)
+                item["sourceName"] = (
+                    path[len(directory) + 1 :]
+                    if path.startswith(f"{directory}.")
+                    else path.rsplit(".", 1)[-1]
+                )
+                items.append(item)
+        return items
+
     def _repair_copied_adfs_loaders(self, target: ImageSession, directory: str) -> tuple[list[str], list[str]]:
         """Repair an already copied SSD/DSD tree in one writable ADFS mount."""
         try:
@@ -4523,18 +4828,7 @@ class DiskService:
             raise DiskError("The Oaknut loader-repair API is unavailable.") from exc
 
         with self.adfs_mount(target) as mount:
-            pending = [directory]
-            items: list[dict] = []
-            while pending:
-                parent = pending.pop()
-                for entry in mount.iter_entries(parent):
-                    path = str(entry.path)
-                    if entry.is_dir:
-                        pending.append(path)
-                    else:
-                        item = _file_item(mount, path, path)
-                        item["sourceName"] = path[len(directory) + 1 :] if path.startswith(f"{directory}.") else path
-                        items.append(item)
+            items = self._adfs_directory_items(mount, directory, _file_item)
             repairs, warnings = self._repair_adfs_loader_items(items)
             for item in items:
                 if item.get("loaderRepairs"):
@@ -4542,6 +4836,145 @@ class DiskService:
         if repairs:
             target.dirty = True
         return repairs, warnings
+
+    @staticmethod
+    def _adfs_installation_roots(
+        directory_files: dict[str, list[str]],
+        source_names: dict[str, str],
+    ) -> list[str]:
+        """Identify imported software roots without treating menu folders as games."""
+        loader_names = {"!BOOT", "BOOT", "GO", "MENU", "LOADER", "START"}
+        menu_markers = {"GAMDATA", "GAMINDX", "PUBDATA", "PUBINDX", "UNIMENU"}
+        candidates: set[str] = {
+            path for path in source_names if path in directory_files
+        }
+        for path, names in directory_files.items():
+            upper = {name.upper() for name in names}
+            if upper & loader_names and not menu_markers.issubset(upper):
+                candidates.add(path)
+
+        # One imported image can contain its own subdirectories and loaders.
+        # Audit it once from its outer installation root.
+        roots: list[str] = []
+        for candidate in sorted(candidates, key=lambda item: (item.count("."), item.casefold())):
+            if any(candidate.casefold().startswith(f"{root.casefold()}.") for root in roots):
+                continue
+            roots.append(candidate)
+        return roots
+
+    def audit_adfs_installations(
+        self,
+        session: ImageSession,
+        root: str = "$",
+        progress: Callable[[str, int | None, int | None], None] | None = None,
+    ) -> dict:
+        """Dry-run HDD-installed floppy loader repairs under ``root``."""
+        if session.kind != "adfs" or not self.summary(session)["hardDisk"]:
+            raise DiskError("Installed disk auditing is available only for ADFS HDD images.")
+        report = progress or (lambda _message, _current=None, _total=None: None)
+        try:
+            from oaknut.disc.cli import _file_item
+        except ImportError as exc:
+            raise DiskError("The Oaknut ADFS audit API is unavailable.") from exc
+
+        with self.adfs_mount(session) as mount:
+            if not mount.exists(root):
+                raise DiskError(f"Path not found: {root}")
+            directory_files: dict[str, list[str]] = {}
+            pending = [root]
+            while pending:
+                directory = pending.pop()
+                entries = list(mount.iter_entries(directory))
+                directory_files[directory] = [
+                    str(entry.name) for entry in entries if not entry.is_dir
+                ]
+                pending.extend(str(entry.path) for entry in entries if entry.is_dir)
+
+            source_names = {
+                path: name
+                for path, name in session.adfs_source_names.items()
+                if path == root or path.startswith(f"{root}.")
+            }
+            roots = self._adfs_installation_roots(directory_files, source_names)
+            findings: list[dict] = []
+            for offset, directory in enumerate(roots):
+                report(
+                    f"Checking installed software in {directory}",
+                    offset,
+                    len(roots),
+                )
+                files = self._adfs_directory_items(mount, directory, _file_item)
+                proposed = [dict(item) for item in files]
+                repairs, warnings = self._repair_adfs_loader_items(proposed)
+                findings.append({
+                    "path": directory,
+                    "source": source_names.get(directory, ""),
+                    "fileCount": len(files),
+                    "repairs": repairs,
+                    "warnings": warnings,
+                    "status": "repairable" if repairs else "warning" if warnings else "clean",
+                })
+            report("Installed software audit complete", len(roots), len(roots))
+        return {
+            "root": root,
+            "directories": findings,
+            "checked": len(findings),
+            "repairable": sum(bool(item["repairs"]) for item in findings),
+            "warnings": sum(bool(item["warnings"]) for item in findings),
+        }
+
+    def repair_adfs_installations(
+        self,
+        session: ImageSession,
+        directories: list[str],
+        progress: Callable[[str, int | None, int | None], None] | None = None,
+    ) -> dict:
+        """Apply only the deterministic repairs shown by the dry-run audit."""
+        if session.kind != "adfs" or not self.summary(session)["hardDisk"]:
+            raise DiskError("Installed disk repair is available only for ADFS HDD images.")
+        unique = list(dict.fromkeys(str(path) for path in directories if str(path)))
+        if not unique:
+            raise DiskError("Choose at least one repairable installed disk directory.")
+        current = self.audit_adfs_installations(session)
+        available = {
+            item["path"]: item
+            for item in current["directories"]
+            if item["repairs"]
+        }
+        unknown = [path for path in unique if path not in available]
+        if unknown:
+            raise DiskError(
+                "The audit result is stale or no deterministic repair remains for: "
+                + ", ".join(unknown)
+            )
+        report = progress or (lambda _message, _current=None, _total=None: None)
+        repaired: list[dict] = []
+        try:
+            from oaknut.disc.cli import _file_item, _write_copy_item
+        except ImportError as exc:
+            raise DiskError("The Oaknut loader-repair API is unavailable.") from exc
+        # DAT images are expensive to mount and finalise. Keep the complete
+        # selected repair batch inside one writable mount.
+        with self.adfs_mount(session) as mount:
+            for offset, directory in enumerate(unique):
+                report(f"Repairing installed software in {directory}", offset, len(unique))
+                items = self._adfs_directory_items(mount, directory, _file_item)
+                repairs, warnings = self._repair_adfs_loader_items(items)
+                for item in items:
+                    if item.get("loaderRepairs"):
+                        _write_copy_item(mount, str(item["dst"]), item, True)
+                for repair in repairs:
+                    self._append_warning(
+                        session,
+                        f"{directory}: ADFS compatibility change made: {repair}.",
+                    )
+                for warning in warnings:
+                    self._append_warning(session, f"{directory}: {warning}")
+                repaired.append({"path": directory, "repairs": repairs, "warnings": warnings})
+        session.dirty = True
+        self._persist_session(session)
+        report("Installed software repair complete", len(unique), len(unique))
+        return {"repaired": repaired, "count": len(repaired)}
 
     @staticmethod
     def _is_empty_directory(mount, path: str) -> bool:
@@ -4834,6 +5267,15 @@ class DiskService:
                         f"Repaired {len(loader_repairs)} ADFS loader command conflict(s)",
                         None,
                         None,
+                    )
+                profile = target.hardware_profile or {}
+                addons = {str(item).casefold() for item in profile.get("addons", [])}
+                if profile.get("tube") or any(item.startswith("tube-") or item.startswith("master-") for item in addons):
+                    self._append_warning(
+                        target,
+                        f"{target_directory}: the selected hardware profile has a Tube second processor enabled. "
+                        "Many 8-bit games use fixed host addresses or direct hardware access and must be run "
+                        "with the Tube disabled unless the software explicitly supports it.",
                     )
         except Exception:
             if create_directory:

@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import json
 import hashlib
-import os
-import shlex
 import subprocess
 from pathlib import Path
 
 from flask import Blueprint, Response, jsonify, request
 
 from ..disk_service import DiskError, DiskService
+from ..emulator_config import emulator_status
 from ..rom_workbench import (
     RomWorkbenchError, apply_patch, audit_rom, bank_map, build_data_archive,
     build_sideways_rom, compare_roms, disassemble, hardware_export,
@@ -235,27 +234,13 @@ def create_rom_tools_blueprint(service: DiskService, root: Path) -> Blueprint:
     @blueprint.get("/api/images/<image_id>/rom/emulator")
     def rom_emulator_status(image_id):
         session, _data = session_bytes(image_id)
-        command = os.environ.get("ACORN_ROM_EMULATOR_COMMAND", "").strip()
-        return jsonify(available=bool(command), image=session.name,
-                       message="Configured by ACORN_ROM_EMULATOR_COMMAND." if command else
-                       "Set ACORN_ROM_EMULATOR_COMMAND with a {rom} placeholder to enable emulator tests.")
+        status = emulator_status(session)
+        return jsonify(available=False, image=session.name, command="", configuredBy=status["configuredBy"],
+                       message=f"{status['label']} is managed for this target. Direct sideways-ROM attachment is not exposed until the selected machine's ROM-slot mapping can be proved safely.")
 
     @blueprint.post("/api/images/<image_id>/rom/emulator")
     def rom_emulator_run(image_id):
         session, _data = session_bytes(image_id)
-        template = os.environ.get("ACORN_ROM_EMULATOR_COMMAND", "").strip()
-        if not template or "{rom}" not in template:
-            raise DiskError("No ROM emulator command is configured.")
-        arguments = [part.replace("{rom}", str(session.path)) for part in shlex.split(template)]
-        try:
-            completed = subprocess.run(arguments, capture_output=True, text=True, timeout=30, check=False)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise DiskError(f"The emulator test could not complete: {exc}") from exc
-        result = {"command": arguments[0], "returnCode": completed.returncode,
-                  "stdout": completed.stdout[-20000:], "stderr": completed.stderr[-20000:]}
-        project = dict(session.rom_project)
-        project["tests"] = [*project.get("tests", []), result][-512:]
-        service.save_rom_project(session, project)
-        return jsonify(result=result, project=session.rom_project)
+        raise DiskError("Direct ROM attachment is not enabled for this managed machine. Use the ROM programmer export or place the ROM in a machine-specific image first.")
 
     return blueprint

@@ -531,7 +531,9 @@ class DiskErrorTests(unittest.TestCase):
 
             restored = service._restore_session(image_id)
 
-            self.assertEqual(restored.warnings, ["A useful current warning"])
+            self.assertEqual(restored.warnings[0], "A useful current warning")
+            self.assertEqual(len(restored.warnings), 2)
+            self.assertIn("current path-aware results", restored.warnings[1])
 
     def test_descriptor_is_rejected_for_non_dat_image(self) -> None:
         with tempfile.TemporaryDirectory() as folder:

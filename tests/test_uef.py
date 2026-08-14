@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import unittest
 import zipfile
+import tempfile
 from pathlib import Path
 
-from app.disk_service import DiskService
+from app.disk_service import DiskError, DiskService
 from app.uef import (
     basic_unopened_channel_io,
     is_tokenized_basic,
@@ -120,6 +121,71 @@ class UEFTests(unittest.TestCase):
         )
         self.assertEqual(len(repairs), 2)
 
+    def test_adfs_directory_path_is_not_expanded_as_a_dfs_command(self):
+        source = b"*R.+AP2\r*L.+MANUAL\r"
+
+        patched, repairs = DiskService._expand_adfs_text_commands(
+            source, {"r.+ap2", "l.+manual"}
+        )
+
+        self.assertEqual(patched, source)
+        self.assertEqual(repairs, [])
+
+    def test_binary_adfs_directory_path_is_not_reported_as_ambiguous(self):
+        source = b"\xA2\x07\xA0\x20\x20\xF7\xFFR.+AP2\r"
+
+        patched, repairs, warnings = DiskService._expand_adfs_oscli_abbreviations(
+            source, 0x2000, [(0x2000, 0x2000 + len(source))], {"r.+ap2"}
+        )
+
+        self.assertEqual(patched, source)
+        self.assertEqual(repairs, [])
+        self.assertEqual(warnings, [])
+
+    def test_legacy_adfs_notices_are_consolidated(self):
+        warnings = DiskService._normalise_warnings([
+            "Repaired 4 old-ADFS directory sequence fields for 8-bit hardware.",
+            "Repaired 10 old-ADFS directory sequence fields for 8-bit hardware.",
+            "$.GAMES.QBIX: HAVEN: loader contains 1 ambiguous abbreviated command(s) (R.+AP2)",
+            "$.GAMES.QBIX: the selected hardware profile has a Tube second processor enabled.",
+            "$.GAMES.ZALAGA: ADFS compatibility change made: LOADER: expanded L. ZALAGA to LOAD ZALAGA.",
+        ])
+
+        self.assertEqual(len(warnings), 4)
+        self.assertEqual(sum("directory sequence" in item for item in warnings), 1)
+        self.assertEqual(sum("Tube second processor" in item for item in warnings), 1)
+        self.assertEqual(sum("current path-aware results" in item for item in warnings), 1)
+        self.assertTrue(any("ZALAGA" in item for item in warnings))
+
+    def test_tokenised_key_macro_is_expanded_and_line_length_is_rebuilt(self):
+        body = b'*KEY 0 *L. QBIX 1E00|M*S|F|M'
+        program = b"\x0D\x00\xFA" + bytes((len(body) + 4,)) + body + b"\x0D\xFF"
+
+        patched, repairs = DiskService._expand_adfs_basic_commands(
+            program, {"qbix", "s"}
+        )
+
+        self.assertTrue(is_tokenized_basic(patched))
+        self.assertIn(b"*LOAD QBIX 1E00|M*S|F|M", patched)
+        self.assertEqual(patched[3], len(body) + 6)
+        self.assertTrue(any("line 250" in item and "LOAD QBIX" in item for item in repairs))
+
+    def test_old_command_rewrite_with_stale_basic_length_is_repairable(self):
+        first = b"*LOAD SCREEN 3780"
+        second = b'*KEY 0 *L. QBIX 1E00|M*S|F|M'
+        program = (
+            b"\x0D\x00\x0A" + bytes((len(first) + 2,)) + first
+            + b"\x0D\x00\xFA" + bytes((len(second) + 4,)) + second
+            + b"\x0D\xFF"
+        )
+
+        normalised, repairs = DiskService._normalise_basic_line_lengths(program)
+
+        self.assertTrue(is_tokenized_basic(normalised))
+        self.assertEqual(normalised[3], len(first) + 4)
+        self.assertEqual(len(repairs), 1)
+        self.assertIn("line 10", repairs[0])
+
     def test_loader_repair_follows_boot_target_without_scanning_data_files(self):
         contents = parse_uef(sample_uef("Chuckulus-Electron-V1-0.uef"))
         chuck = contents.files[1]
@@ -156,7 +222,7 @@ class UEFTests(unittest.TestCase):
             {
                 "sourceName": "HAVEN",
                 "load": 0x2000,
-                "data": b"R.+FRAK\rR.+PRES5\r",
+                "data": b"\xA9\x00R.+FRAK\r\xA2\x00R.+PRES5\r",
             },
             {
                 "sourceName": "R.+FRAK",
@@ -169,8 +235,122 @@ class UEFTests(unittest.TestCase):
 
         self.assertEqual(repairs, [])
         self.assertEqual(len(warnings), 1)
-        self.assertIn("HAVEN: loader contains 2 ambiguous", warnings[0])
+        self.assertIn("HAVEN: loader contains 1 ambiguous", warnings[0])
+        self.assertIn("R.+PRES5", warnings[0])
+        self.assertNotIn("R.+FRAK", warnings[0])
         self.assertNotIn("ordinary review", warnings[0])
+
+    def test_data_driven_second_stage_loader_is_repaired(self):
+        boot = b'*BASIC\rCH."HAVEN"\r'
+        haven_body = b"DATA 1:DATA ZALAGA (Aardvark),LOADER"
+        haven = b"\x0D\x00\x0A" + bytes((len(haven_body) + 4,)) + haven_body + b"\x0D\xFF"
+        loader_body = b'*KEY0 "*L. ZALAGA 2000|M"'
+        loader = b"\x0D\x00\x0A" + bytes((len(loader_body) + 4,)) + loader_body + b"\x0D\xFF"
+        items = [
+            {"sourceName": "!BOOT", "load": 0, "data": boot},
+            {"sourceName": "HAVEN", "load": 0x1D00, "data": haven},
+            {"sourceName": "LOADER", "load": 0x1D00, "data": loader},
+            {"sourceName": "ZALAGA", "load": 0x2000, "data": b"machine code"},
+        ]
+
+        repairs, warnings = DiskService._repair_adfs_loader_items(items)
+
+        self.assertEqual(warnings, [])
+        self.assertTrue(any("LOADER" in repair and "LOAD ZALAGA" in repair for repair in repairs))
+        self.assertIn(b"*LOAD ZALAGA 2000", items[2]["data"])
+
+    def test_embedded_root_path_is_retargeted_without_moving_binary(self):
+        source = b"\xA9\x00$.DATA\r\x20\xF7\xFF"
+
+        patched, repairs, references = DiskService._rewrite_adfs_binary_root_paths(
+            source, {"data"}
+        )
+
+        self.assertEqual(len(patched), len(source))
+        self.assertIn(b"@.DATA\r", patched)
+        self.assertEqual(references, {"data"})
+        self.assertEqual(repairs, ["changed root path $.DATA to @.DATA"])
+
+    def test_direct_sector_and_disc_switch_loader_is_warned_not_rewritten(self):
+        risks = DiskService._adfs_loader_risks(b'*DISC\rOSWORD &72\r')
+
+        self.assertEqual(len(risks), 2)
+        self.assertTrue(any("filing system" in risk for risk in risks))
+        self.assertTrue(any("direct sector" in risk for risk in risks))
+
+    def test_adfs_installation_roots_use_provenance_and_avoid_nested_loaders(self):
+        roots = DiskService._adfs_installation_roots(
+            {
+                "$": ["!BOOT", "GAMDATA", "GAMINDX", "PUBDATA", "PUBINDX", "UNIMENU"],
+                "$.Games": [],
+                "$.Games.FRAK": ["!BOOT", "HAVEN"],
+                "$.Games.FRAK.Data": ["LOADER", "FRAK"],
+                "$.Games.NOBOOT": ["PROGRAM"],
+            },
+            {
+                "$.Games.FRAK": "HA-FRAK.adf",
+                "$.Games.NOBOOT": "NoBoot.adf",
+            },
+        )
+
+        self.assertEqual(roots, ["$.Games.FRAK", "$.Games.NOBOOT"])
+
+    def test_installed_disk_audit_is_not_offered_for_adfs_floppies(self):
+        with tempfile.TemporaryDirectory() as folder:
+            service = DiskService(folder)
+            session = service.create_blank("adfs-l", "FLOPPY")
+
+            with self.assertRaisesRegex(DiskError, "ADFS HDD"):
+                service.audit_adfs_installations(session)
+
+    def test_zalaga_adf_install_repairs_its_data_selected_loader(self):
+        fixture = ROOT / "samples" / "[ADF]" / "aardvark" / "HA-ZALA.adf"
+        if not fixture.is_file():
+            raise unittest.SkipTest("Optional Zalaga ADF fixture is not bundled")
+        with tempfile.TemporaryDirectory() as folder:
+            service = DiskService(folder)
+            with fixture.open("rb") as stream:
+                source = service.create_from_stream(fixture.name, stream)
+            target = service.create_blank("adfs-l", "TARGET")
+
+            installed = service.extract_image_to_adfs_directory(
+                source, target, "$", "ZALAGA"
+            )
+
+            loader = service.read_file(target, None, f"{installed}.LOADER")
+            self.assertIn(b"*LOAD ZALAGA 2000", loader)
+            self.assertNotIn(b"*L. ZALAGA 2000", loader)
+
+    def test_hdd_installation_audit_lists_and_repairs_zalaga_loader(self):
+        fixture = ROOT / "samples" / "[ADF]" / "aardvark" / "HA-ZALA.adf"
+        if not fixture.is_file():
+            raise unittest.SkipTest("Optional Zalaga ADF fixture is not bundled")
+        with tempfile.TemporaryDirectory() as folder:
+            service = DiskService(folder)
+            with fixture.open("rb") as stream:
+                source = service.create_from_stream(fixture.name, stream)
+            target = service.create_blank("adfs-hard", "TARGET", "4MB")
+            service.make_directory(target, "$.ZALAGA")
+            service._copy_image_listing_to_adfs(
+                source, None, None, target, "$.ZALAGA"
+            )
+            service.set_adfs_source_name(target, "$.ZALAGA", fixture.name)
+
+            audit = service.audit_adfs_installations(target)
+
+            self.assertEqual(audit["checked"], 1)
+            self.assertEqual(audit["repairable"], 1)
+            finding = audit["directories"][0]
+            self.assertEqual(finding["path"], "$.ZALAGA")
+            self.assertEqual(finding["source"], fixture.name)
+            self.assertTrue(any("LOAD ZALAGA" in item for item in finding["repairs"]))
+
+            result = service.repair_adfs_installations(target, ["$.ZALAGA"])
+
+            self.assertEqual(result["count"], 1)
+            loader = service.read_file(target, None, "$.ZALAGA.LOADER")
+            self.assertIn(b"*LOAD ZALAGA 2000", loader)
+            self.assertNotIn(b"*L. ZALAGA 2000", loader)
 
     def test_relocated_adfs_basic_loader_uses_proven_local_root_file(self):
         body = b"DATA FRAK (Superior),$.SS"
