@@ -12,10 +12,11 @@ class ContainerDefinitionTests(unittest.TestCase):
         runtime = dockerfile.rindex("FROM python:3.12-slim-trixie")
         self.assertLess(builder, runtime)
         self.assertIn("build-essential", dockerfile[builder:runtime])
-        self.assertIn("pip wheel", dockerfile[builder:runtime])
+        self.assertIn("--root=/python-install", dockerfile[builder:runtime])
+        self.assertIn("Staged Capstone ARM, M68K and MOS65XX support is available", dockerfile[builder:runtime])
         runtime_definition = dockerfile[runtime:]
-        self.assertIn("COPY --from=python-deps /wheels /wheels", runtime_definition)
-        self.assertIn("--no-index --find-links=/wheels", runtime_definition)
+        self.assertIn("COPY --from=python-deps /python-install/usr/local /usr/local", runtime_definition)
+        self.assertNotIn("/wheels", runtime_definition)
         self.assertNotIn("build-essential", runtime_definition)
 
     def test_runtime_dependencies_use_trixie_package_names(self):
