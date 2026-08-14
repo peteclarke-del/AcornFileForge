@@ -35,7 +35,7 @@ docker compose build --pull --progress=plain
 docker compose up -d
 ```
 
-Open `http://<pi-address>:8666` from a browser on the same trusted network. The multi-stage Dockerfile compiles Capstone when the architecture does not have a suitable wheel. It also compiles HxC, Elkulator and B-em. A first Pi build can therefore take a while, but it must keep producing build output. The compiler and headers remain in builder layers and are not copied into the runtime image.
+Open `http://<pi-address>:8666` from a browser on the same trusted network. The multi-stage Dockerfile compiles Capstone when the architecture does not have a suitable binary package. It installs the resulting native module into a staged Python tree so the runtime does not repeat wheel-tag compatibility checks after a successful native build. It also compiles HxC, Elkulator and B-em. A first Pi build can therefore take a while, but it must keep producing build output. The compiler and headers remain in builder layers and are not copied into the runtime image.
 
 ## Updates and retained work
 
@@ -63,4 +63,5 @@ A healthy API response contains `{"engine":"oaknut","status":"ok","version":"1.0
 - `no configuration file provided` usually means the shell is not inside the cloned `AcornFileForge` directory.
 - A historic `make: command not found` while building Capstone means an old Dockerfile is being used. Pull the current branch and rebuild.
 - `Package liballegro4.4 has no installation candidate` means the checkout predates the Debian Trixie package-name correction. Pull the current branch and rebuild with `--pull`.
+- `No matching distribution found for capstone` after a successful wheel build means the checkout still transports architecture-tagged wheels between build stages. Pull the current branch and rebuild; the current image copies a verified staged installation instead.
 - An out-of-memory failure on a small Pi is a host resource problem. Stop unrelated containers, enable sensible swap and rebuild with plain progress output.

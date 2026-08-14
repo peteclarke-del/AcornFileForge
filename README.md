@@ -2473,9 +2473,11 @@ conversion, metadata review, menu generation, and format-aware drag and drop.
 
 The Dockerfile is multi-architecture. It builds on `amd64`, `arm64` and
 32-bit Raspberry Pi Linux without assuming that PyPI provides a binary package
-for the host. Capstone is compiled in a temporary Python wheel stage when the
-architecture has no published wheel. The compiler, `make` and development
-headers are not copied into the final application image.
+for the host. Capstone is compiled into a staged Python installation when the
+architecture has no published package. Copying that verified installation,
+rather than a locally architecture-tagged wheel, avoids a second compatibility
+decision after the native build has succeeded. The compiler, `make` and
+development headers are not copied into the final application image.
 
 The first Docker build compiles HxC, Elkulator and B-em, and may also compile
 Capstone on 32-bit Raspberry Pi systems. It therefore takes longer than an
@@ -2493,7 +2495,9 @@ docker compose build --pull acorn-file-forge
 docker compose up -d
 ```
 
-The key diagnostic in the old failure is `make: command not found` beneath
-`Building wheel for capstone`. The current Dockerfile handles that source-build
-fallback itself. Installing development packages on the Raspberry Pi host does
-not fix an older Dockerfile because pip is running inside the container build.
+The key diagnostics in older failures are `make: command not found` beneath
+`Building wheel for capstone`, or `No matching distribution found for
+capstone` after that wheel was built. The current Dockerfile handles the source
+build and transfers the verified installed package without relying on an ARM
+wheel tag. Installing development packages on the Raspberry Pi host does not
+fix an older Dockerfile because pip is running inside the container build.
