@@ -10,11 +10,10 @@ from .checksum import sha256_path
 from .dfs_compat import dfs_catalogue_files, infer_dfs_launch_page
 from .disk_service import MMB_HEADER_SIZE, MMB_SLOT_SIZE, DiskError
 from .menu_interpreter import decode_basic
-from .menu_service import (
-    installed_adfs_menus,
+from .menu.adfs import installed_adfs_menus, test_installed_adfs_menu_entries
+from .menu.mmb import (
     installed_mmb_menus,
     parse_mmb_menu_data,
-    test_installed_adfs_menu_entries,
 )
 from .operations import OperationCancelled
 

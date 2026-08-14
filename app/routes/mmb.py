@@ -9,16 +9,15 @@ from flask import Blueprint, jsonify, request, send_file
 from ..archive_utils import iter_upload_images, open_single_upload_image
 from ..disk_service import DiskError, DiskService
 from ..formats import DFS_EXTENSIONS, HFE_EXTENSIONS
-from ..menu_service import (
-    analyse_disk,
-    best_distribution_filename,
+from ..menu.analysis import analyse_disk, best_distribution_filename, enrich_if_ambiguous
+from ..menu.mmb import (
     eject_mmb_slots,
-    enrich_if_ambiguous,
     find_menu_slot,
     installed_mmb_menu,
     refresh_mmc_desktop_catalogue,
 )
 from .common import optional_int, payload
+from .effects import image_mutation
 
 
 def _menu_metadata(
@@ -89,6 +88,7 @@ def create_mmb_blueprint(service: DiskService) -> Blueprint:
         )
 
     @blueprint.post("/api/images/<image_id>/slots/insert")
+    @image_mutation("inserting a disk")
     def insert_slot_upload(image_id):
         session = service.get(image_id)
         upload = request.files.get("image")
@@ -123,6 +123,7 @@ def create_mmb_blueprint(service: DiskService) -> Blueprint:
         )
 
     @blueprint.post("/api/images/<image_id>/slots/insert-many")
+    @image_mutation("inserting disks")
     def insert_many_slot_uploads(image_id):
         session = service.get(image_id)
         uploads = request.files.getlist("images")
@@ -203,6 +204,7 @@ def create_mmb_blueprint(service: DiskService) -> Blueprint:
         return jsonify(image=service.summary(session), items=items)
 
     @blueprint.post("/api/images/<image_id>/slots/insert-from-image")
+    @image_mutation("copying a disk into a slot")
     def insert_slot_from_image(image_id):
         data = payload()
         target = service.get(image_id)
@@ -221,6 +223,7 @@ def create_mmb_blueprint(service: DiskService) -> Blueprint:
         )
 
     @blueprint.post("/api/images/<image_id>/slots/create-blank")
+    @image_mutation("creating a blank disk")
     def create_blank_slot(image_id):
         data = payload()
         target = service.get(image_id)
@@ -248,6 +251,7 @@ def create_mmb_blueprint(service: DiskService) -> Blueprint:
         return jsonify(image=service.summary(target), slots=inserted, metadata=metadata, warnings=warnings)
 
     @blueprint.post("/api/images/<image_id>/slots/clear")
+    @image_mutation("ejecting a disk")
     def clear_slot(image_id):
         data = payload()
         session = service.get(image_id)
@@ -259,6 +263,7 @@ def create_mmb_blueprint(service: DiskService) -> Blueprint:
         return jsonify(image=service.summary(session), **result)
 
     @blueprint.post("/api/images/<image_id>/slots/move")
+    @image_mutation("moving an MMB slot")
     def move_slot(image_id):
         data = payload()
         session = service.get(image_id)
@@ -267,6 +272,7 @@ def create_mmb_blueprint(service: DiskService) -> Blueprint:
         return jsonify(image=service.summary(session))
 
     @blueprint.post("/api/images/<image_id>/slots/paste")
+    @image_mutation("pasting MMB slots")
     def paste_slots(image_id):
         data = payload()
         target = service.get(image_id)
@@ -325,6 +331,7 @@ def create_mmb_blueprint(service: DiskService) -> Blueprint:
             raise
 
     @blueprint.post("/api/images/<image_id>/slots/build-from-files")
+    @image_mutation("building MMB disks from files")
     def build_slots_from_files(image_id):
         data = payload()
         target = service.get(image_id)
@@ -385,6 +392,7 @@ def create_mmb_blueprint(service: DiskService) -> Blueprint:
         return jsonify(image=service.summary(target), slots=inserted_slots)
 
     @blueprint.post("/api/images/<image_id>/slots/protect")
+    @image_mutation("changing slot protection")
     def protect_slot(image_id):
         data = payload()
         session = service.get(image_id)
@@ -392,6 +400,7 @@ def create_mmb_blueprint(service: DiskService) -> Blueprint:
         return jsonify(image=service.summary(session))
 
     @blueprint.post("/api/images/<image_id>/slots/protect-many")
+    @image_mutation("changing slot protection")
     def protect_many_slots(image_id):
         data = payload()
         session = service.get(image_id)

@@ -2299,12 +2299,33 @@ Backend routes are split by responsibility:
 - `app/routes/tools.py` handles health checks, manifests, duplicate analysis,
   file inspection, editor projects, BASIC verification, disassembly, emulator
   hand-off and dependency reports.
+- `app/routes/effects.py` lets each image-changing route declare its own undo
+  checkpoint reason and target. The request boundary reads this metadata, so a
+  new write route cannot depend on a separate endpoint-name table remaining in
+  sync.
 - `app/image_session.py` defines the shared session model and ownership context used by disk, checkpoint, operation and download services.
 - `app/session_state.py` owns durable session metadata and warning compaction policy.
 - `app/disk_service.py` coordinates image operations and calls the disk engine.
+- `app/disk_tools.py` owns Oaknut and HxC process execution, timeout handling,
+  JSON decoding and user-facing engine error cleanup. `DiskService` retains
+  compatibility wrappers so established callers and tests remain stable.
 - `app/beebscsi_geometry.py` owns BeebSCSI descriptor and old-map geometry calculations.
 - `app/mmb_layout.py` owns MMB header, record, slot and image offset calculations.
+- `app/mmb_disk_service.py` owns sequential MMB slot catalogue reads and menu
+  signature searches. It is composed into `DiskService` as a focused mixin so
+  callers keep one stable image API.
+- `app/rom_disk_service.py` owns raw ROM bank inspection, layout, movement,
+  replacement, physical-component export and persistent ROM/editor projects.
+- `app/tape_disk_service.py` owns cached UEF access and UEF-to-DFS conversion,
+  including generated boot files, filename allocation and loader rewrites. It
+  is another focused `DiskService` mixin rather than a second service facade.
 - `app/menu_service.py` coordinates menu discovery, analysis and installation.
+- `app/menu/analysis.py`, `app/menu/adfs.py` and `app/menu/mmb.py` provide the
+  smaller domain APIs used by routes and analysis code. `menu_service.py`
+  remains the compatibility implementation while its internals are moved
+  behind those boundaries incrementally.
+- `app/adfs_menu_discovery.py` owns holder-directory recognition and the
+  single-mount ADFS catalogue view used for fast menu scans.
 - `app/menu_records.py` parses, validates and serialises Universal, SPI and ADFS menu database records.
 - `app/metadata_lookup.py` extracts distribution metadata and performs optional online enrichment.
 - `app/catalog_service.py` runs the configurable catalogue pipeline and retains
@@ -2337,6 +2358,11 @@ Frontend behaviour is split by responsibility. `app/static/core.js` contains
 shared request and formatting primitives, `workspace.js` owns pane state and
 selection paths, `file-visuals.js` classifies entries for consistent icons,
 and `import-planning.js` owns target naming, host metadata and DFS packing.
+`editor-workspace.js` owns bounded editor-tab persistence and restoration.
+`workspace-persistence.js` owns open-pane recovery, while `operation-ui.js`
+owns guarded actions and persistent job progress. Storage validation, recovery
+and operation polling therefore have one implementation each instead of being
+repeated through the pane controller.
 `help.js` owns the in-app handbook and its topic navigation.
 `hex-editor.js` owns raw fixed-range editing, `code-editor.js` owns language
 intelligence and source presentation, and `app.js` coordinates panes and
@@ -2389,9 +2415,18 @@ npx playwright install chromium
 npm run test:browser
 ```
 
-Set `ACORN_FILE_FORGE_URL` when the service is listening elsewhere. The test
-checks desktop editor menu transfer, command selection and outside-click
-dismissal in a real Chromium page.
+Set `ACORN_FILE_FORGE_URL` when the service is listening elsewhere. The browser
+suite checks editor menu transfer, command selection and outside-click
+dismissal. It also verifies the one-to-three pane lifecycle, the maximum-pane
+guard and close/re-enable behaviour in a real Chromium page. Its generated
+image flow creates an MMB, inserts a blank SSD, verifies the automatic
+checkpoint, performs undo, prepares a timestamped save and downloads the ZIP.
+No private sample media is required.
+
+`.github/workflows/ci.yml` runs the Python, JavaScript and Chromium suites on
+each pull request. A separate Buildx matrix builds both `linux/amd64` and
+`linux/arm64`, catching dependency or Dockerfile regressions that would stop a
+Raspberry Pi installation even when the x86 build remains healthy.
 
 Check the running service:
 
