@@ -4404,6 +4404,8 @@ class DiskService:
     def _expand_adfs_text_commands(
         data: bytes,
         local_names: set[str] | None = None,
+        *,
+        require_plain_text: bool = True,
     ) -> tuple[bytes, list[str]]:
         """Expand DFS-style command abbreviations in textual launch scripts."""
         try:
@@ -4411,7 +4413,7 @@ class DiskService:
         except UnicodeError:
             return data, []
         meaningful = [character for character in text if character not in "\r\n\t\f"]
-        if (
+        if require_plain_text and (
             not meaningful
             or sum(character.isprintable() for character in meaningful) / len(meaningful) < 0.9
         ):
@@ -4420,7 +4422,8 @@ class DiskService:
         commands = {"R": "RUN", "L": "LOAD", "LO": "LOAD"}
         local_paths = {name.casefold() for name in (local_names or set())}
         pattern = re.compile(
-            r"(?im)(?P<prefix>^|[\r\n:]|\"|\|M)(?P<space>\s*\*?\s*)"
+            r"(?im)(?P<prefix>^|[\r\n:]|\"|\|M|\*KEY\s+\d+\s+)"
+            r"(?P<space>\s*\*?\s*)"
             r"(?P<command>R|L|LO)\.(?P<tail>[^\r\n:|\"]*)"
         )
 
@@ -4436,6 +4439,89 @@ class DiskService:
 
         patched = pattern.sub(expand, text)
         return patched.encode("latin-1"), list(dict.fromkeys(repairs))
+
+    @staticmethod
+    def _normalise_basic_line_lengths(data: bytes) -> tuple[bytes, list[str]]:
+        """Repair the line-length byte in an otherwise intact tokenised program.
+
+        Older Acorn File Forge builds expanded commands inside raw BASIC bytes
+        without updating the enclosing line header. Follow plausible ascending
+        line markers through a real terminator before changing anything, so a
+        binary which merely begins with CR is never rewritten speculatively.
+        """
+        if len(data) < 7 or data[0] != 0x0D:
+            return data, []
+        positions = [0]
+        line_numbers: list[int] = []
+        position = 0
+        while position + 1 < len(data):
+            marker = data[position + 1]
+            if marker & 0x80:
+                if len(line_numbers) < 2:
+                    return data, []
+                rebuilt = bytearray(data)
+                repairs: list[str] = []
+                for offset, next_offset, line_number in zip(
+                    positions, positions[1:], line_numbers
+                ):
+                    actual = next_offset - offset
+                    if actual > 255:
+                        return data, []
+                    if rebuilt[offset + 3] != actual:
+                        repairs.append(
+                            f"corrected BASIC line {line_number} length "
+                            f"from {rebuilt[offset + 3]} to {actual} bytes"
+                        )
+                        rebuilt[offset + 3] = actual
+                return bytes(rebuilt), repairs
+            if position + 4 > len(data):
+                return data, []
+            line_number = (marker << 8) | data[position + 2]
+            if line_numbers and line_number <= line_numbers[-1]:
+                return data, []
+            line_numbers.append(line_number)
+            next_position = data.find(b"\x0d", position + 4)
+            if next_position < 0:
+                return data, []
+            positions.append(next_position)
+            position = next_position
+        return data, []
+
+    @classmethod
+    def _expand_adfs_basic_commands(
+        cls,
+        data: bytes,
+        local_names: set[str],
+    ) -> tuple[bytes, list[str]]:
+        """Expand commands in tokenised BASIC while rebuilding line lengths."""
+        if not is_tokenized_basic(data):
+            return data, []
+        rebuilt = bytearray()
+        repairs: list[str] = []
+        position = 0
+        while position + 2 <= len(data) and data[position] == 0x0D:
+            if data[position + 1] & 0x80:
+                rebuilt.extend(data[position:])
+                return bytes(rebuilt), list(dict.fromkeys(repairs))
+            length = data[position + 3]
+            if length < 5 or position + length > len(data):
+                return data, []
+            line_number = (data[position + 1] << 8) | data[position + 2]
+            body = data[position + 4 : position + length]
+            patched, line_repairs = cls._expand_adfs_text_commands(
+                body, local_names, require_plain_text=False
+            )
+            new_length = len(patched) + 4
+            if new_length > 255:
+                return data, []
+            rebuilt.extend(data[position : position + 3])
+            rebuilt.append(new_length)
+            rebuilt.extend(patched)
+            repairs.extend(
+                f"line {line_number}: {repair}" for repair in line_repairs
+            )
+            position += length
+        return data, []
 
     @staticmethod
     def _adfs_loader_references(data: bytes) -> set[str]:
@@ -4622,6 +4708,11 @@ class DiskService:
             item = queue.pop(0)
             scan_items.append(item)
             name = str(item.get("sourceName") or item.get("dst") or "loader")
+            normalised, length_repairs = cls._normalise_basic_line_lengths(item["data"])
+            if length_repairs:
+                item["data"] = normalised
+                item.setdefault("loaderRepairs", []).extend(length_repairs)
+                repairs.extend(f"{name}: {repair}" for repair in length_repairs)
             root_patched, root_repairs, root_references = cls._rewrite_adfs_basic_root_paths(
                 item["data"], local_names
             )
@@ -4642,8 +4733,10 @@ class DiskService:
             # context. This catches second-stage launchers named in DATA,
             # such as Zalaga's LOADER, rather than repairing !BOOT alone.
             if id(item) in queued:
-                text_patched, text_repairs = cls._expand_adfs_text_commands(
-                    item["data"], local_names
+                text_patched, text_repairs = (
+                    cls._expand_adfs_basic_commands(item["data"], local_names)
+                    if is_tokenized_basic(item["data"])
+                    else cls._expand_adfs_text_commands(item["data"], local_names)
                 )
                 if text_repairs:
                     item["data"] = text_patched

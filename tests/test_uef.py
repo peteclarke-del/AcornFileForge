@@ -157,6 +157,35 @@ class UEFTests(unittest.TestCase):
         self.assertEqual(sum("current path-aware results" in item for item in warnings), 1)
         self.assertTrue(any("ZALAGA" in item for item in warnings))
 
+    def test_tokenised_key_macro_is_expanded_and_line_length_is_rebuilt(self):
+        body = b'*KEY 0 *L. QBIX 1E00|M*S|F|M'
+        program = b"\x0D\x00\xFA" + bytes((len(body) + 4,)) + body + b"\x0D\xFF"
+
+        patched, repairs = DiskService._expand_adfs_basic_commands(
+            program, {"qbix", "s"}
+        )
+
+        self.assertTrue(is_tokenized_basic(patched))
+        self.assertIn(b"*LOAD QBIX 1E00|M*S|F|M", patched)
+        self.assertEqual(patched[3], len(body) + 6)
+        self.assertTrue(any("line 250" in item and "LOAD QBIX" in item for item in repairs))
+
+    def test_old_command_rewrite_with_stale_basic_length_is_repairable(self):
+        first = b"*LOAD SCREEN 3780"
+        second = b'*KEY 0 *L. QBIX 1E00|M*S|F|M'
+        program = (
+            b"\x0D\x00\x0A" + bytes((len(first) + 2,)) + first
+            + b"\x0D\x00\xFA" + bytes((len(second) + 4,)) + second
+            + b"\x0D\xFF"
+        )
+
+        normalised, repairs = DiskService._normalise_basic_line_lengths(program)
+
+        self.assertTrue(is_tokenized_basic(normalised))
+        self.assertEqual(normalised[3], len(first) + 4)
+        self.assertEqual(len(repairs), 1)
+        self.assertIn("line 10", repairs[0])
+
     def test_loader_repair_follows_boot_target_without_scanning_data_files(self):
         contents = parse_uef(sample_uef("Chuckulus-Electron-V1-0.uef"))
         chuck = contents.files[1]
