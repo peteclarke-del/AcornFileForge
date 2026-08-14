@@ -44,25 +44,33 @@ window.AcornOperationUI = (() => {
             ? ` (${progress.current ?? 0} of ${progress.total})`
             : "";
           const nextMessage = `${progress.message}${count}`;
-          if (
+          const displayChanged = (
             pane.loadingMessage !== nextMessage
             || pane.progressCurrent !== progress.current
             || pane.progressTotal !== progress.total
-          ) {
+          );
+          if (displayChanged) {
             pane.loadingMessage = nextMessage;
             pane.progressCurrent = progress.current;
             pane.progressTotal = progress.total;
-            if (modal.open) {
-              setModalProgress({
-                title: message,
-                message: progress.message,
-                details: progress.total != null ? [{
-                  label: "Progress",
-                  value: `${Math.round(100 * Number(progress.current || 0) / Number(progress.total || 1))}% complete`,
-                }] : [],
-              }, progress.current, progress.total);
-            }
             renderPane(index);
+          }
+          if (modal.open) {
+            const elapsed = Number(progress.elapsedSeconds || 0);
+            const rate = Number(progress.ratePerSecond || 0);
+            const eta = Number(progress.etaSeconds || 0);
+            const timing = [];
+            if (elapsed >= 1) timing.push({ label: "Elapsed", value: formatDuration(elapsed) });
+            if (rate > 0) timing.push({ label: "Throughput", value: `${rate.toFixed(rate >= 10 ? 1 : 2)} work units/second` });
+            if (eta > 0) timing.push({ label: "Estimated remaining", value: formatDuration(eta) });
+            setModalProgress({
+              title: message,
+              message: progress.message,
+              details: (progress.total != null ? [{
+                label: "Progress",
+                value: `${Math.round(100 * Number(progress.current || 0) / Number(progress.total || 1))}% complete`,
+              }] : []).concat(timing),
+            }, progress.current, progress.total);
           }
         } catch (_error) {
           // The first poll can arrive before the POST registers the operation.
@@ -90,6 +98,15 @@ window.AcornOperationUI = (() => {
           renderPane(index);
         }
       }
+    }
+
+    function formatDuration(seconds) {
+      const value = Math.max(0, Math.round(Number(seconds) || 0));
+      if (value < 60) return `${value}s`;
+      const minutes = Math.floor(value / 60);
+      const remainder = value % 60;
+      if (minutes < 60) return `${minutes}m ${remainder}s`;
+      return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
     }
 
     async function guardedPaneAction(index, action) {

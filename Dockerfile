@@ -118,6 +118,7 @@ RUN for profile in base plus1 plus3 plus1-plus3 ap4 plus1-ap4; do \
     done
 RUN ldconfig
 
+COPY VERSION ./VERSION
 COPY app ./app
 
 RUN mkdir -p /app/work

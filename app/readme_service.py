@@ -297,7 +297,7 @@ def build_download_readme(
             "Plain, complete ROMFS images are editable. Composite images containing executable bytes after the catalogue, and incomplete fragments from multi-ROM sets, are opened read-only so absolute code addresses are not moved.",
         ))
     if session.kind == "mmb":
-        from .menu_service import installed_mmb_menus
+        from .menu.mmb_discovery import installed_mmb_menus
 
         menus = installed_mmb_menus(service, session)
         lines.extend(
