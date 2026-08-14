@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import hashlib
-import subprocess
 from pathlib import Path
 
 from flask import Blueprint, Response, jsonify, request
@@ -39,10 +38,14 @@ def create_rom_tools_blueprint(service: DiskService, root: Path) -> Blueprint:
         target.write_text(json.dumps({"roms": records}, separators=(",", ":")), encoding="utf-8")
         return target
 
-    def session_bytes(image_id: str) -> tuple:
+    def rom_session(image_id: str):
         session = service.get(image_id)
         if session.kind != "rom":
             raise DiskError("This image is not a ROM.")
+        return session
+
+    def session_bytes(image_id: str) -> tuple:
+        session = rom_session(image_id)
         return session, session.path.read_bytes()
 
     @blueprint.get("/api/images/<image_id>/rom/map")
@@ -95,7 +98,7 @@ def create_rom_tools_blueprint(service: DiskService, root: Path) -> Blueprint:
 
     @blueprint.get("/api/images/<image_id>/rom/disassembly")
     def rom_disassembly(image_id):
-        session, _data = session_bytes(image_id)
+        session = rom_session(image_id)
         bank = int(request.args.get("bank", "0"))
         block = service.rom_bank_bytes(session, f"bank:{bank}")
         decoded = service.inspect_rom_bank(session, bank)
@@ -161,7 +164,7 @@ def create_rom_tools_blueprint(service: DiskService, root: Path) -> Blueprint:
 
     @blueprint.put("/api/images/<image_id>/rom/project")
     def rom_project(image_id):
-        session, _data = session_bytes(image_id)
+        session = rom_session(image_id)
         return jsonify(project=service.save_rom_project(session, payload()), image=service.summary(session))
 
     @blueprint.post("/api/images/<image_id>/rom/patch")
@@ -193,7 +196,7 @@ def create_rom_tools_blueprint(service: DiskService, root: Path) -> Blueprint:
 
     @blueprint.post("/api/images/<image_id>/rom/build")
     def rom_build(image_id):
-        session, _data = session_bytes(image_id)
+        session = rom_session(image_id)
         document = payload()
         try:
             if document.get("template") == "data-archive":
@@ -233,14 +236,14 @@ def create_rom_tools_blueprint(service: DiskService, root: Path) -> Blueprint:
 
     @blueprint.get("/api/images/<image_id>/rom/emulator")
     def rom_emulator_status(image_id):
-        session, _data = session_bytes(image_id)
+        session = rom_session(image_id)
         status = emulator_status(session)
         return jsonify(available=False, image=session.name, command="", configuredBy=status["configuredBy"],
                        message=f"{status['label']} is managed for this target. Direct sideways-ROM attachment is not exposed until the selected machine's ROM-slot mapping can be proved safely.")
 
     @blueprint.post("/api/images/<image_id>/rom/emulator")
     def rom_emulator_run(image_id):
-        session, _data = session_bytes(image_id)
+        rom_session(image_id)
         raise DiskError("Direct ROM attachment is not enabled for this managed machine. Use the ROM programmer export or place the ROM in a machine-specific image first.")
 
     return blueprint

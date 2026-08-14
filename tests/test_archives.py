@@ -5,7 +5,12 @@ import unittest
 import zipfile
 from types import SimpleNamespace
 
-from app.archive_utils import iter_upload_images, open_single_upload_image
+from app.archive_utils import (
+    MAX_ARCHIVE_MEMBERS,
+    iter_upload_images,
+    open_single_upload_image,
+    validated_zip_members,
+)
 from app.disk_service import DiskError
 
 
@@ -19,6 +24,13 @@ def zip_upload(name: str, members: dict[str, bytes]):
 
 
 class ArchiveTests(unittest.TestCase):
+    def test_shared_zip_validation_rejects_excessive_member_counts(self):
+        archive = SimpleNamespace(
+            infolist=lambda: [SimpleNamespace() for _ in range(MAX_ARCHIVE_MEMBERS + 1)]
+        )
+        with self.assertRaisesRegex(DiskError, "more than"):
+            validated_zip_members(archive)
+
     def test_mmb_import_expands_every_supported_disk_and_ignores_extras(self):
         upload = zip_upload(
             "Games (1984)(Acornsoft).zip",

@@ -179,6 +179,21 @@ def create_tools_blueprint(
             raise DiskError("The Workbench profile sent to the emulator is invalid.") from exc
         return {"hardwareProfile": profile}
 
+    def record_editor_run(
+        session,
+        path,
+        slot,
+        side,
+        result: dict,
+        *,
+        kind: str | None = None,
+    ) -> dict:
+        """Append one bounded emulator result to the file's shared project history."""
+        project = service.editor_project(session, path, slot, side)
+        stored = {**result, "kind": kind} if kind else result
+        project["tests"] = [*project.get("tests", []), stored][-100:]
+        return service.save_editor_project(session, path, slot, side, project)
+
     @contextmanager
     def isolated_basic_media(session, configured, data: dict):
         path = str(data.get("path") or "")
@@ -617,9 +632,7 @@ def create_tools_blueprint(
                 "summary": f"{emulator.label} is running in the browser display.",
                 "stdout": "", "stderr": "", "viewerPort": 8668,
             }
-            project = service.editor_project(session, path, slot, side)
-            project["tests"] = [*project.get("tests", []), result][-100:]
-            service.save_editor_project(session, path, slot, side, project)
+            project = record_editor_run(session, path, slot, side, result)
             return jsonify(result=result, project=project)
         try:
             with launch_media(session, configured, data) as (launch, media):
@@ -645,9 +658,7 @@ def create_tools_blueprint(
             "stdout": clean_emulator_output(completed.stdout)[-20000:],
             "stderr": clean_emulator_output(completed.stderr)[-20000:],
         }
-        project = service.editor_project(session, path, slot, side)
-        project["tests"] = [*project.get("tests", []), result][-100:]
-        service.save_editor_project(session, path, slot, side, project)
+        project = record_editor_run(session, path, slot, side, result)
         return jsonify(result=result, project=project)
 
     @blueprint.delete("/api/images/<image_id>/editor-emulator")
@@ -778,9 +789,7 @@ def create_tools_blueprint(
                 "breakpoint": str(data.get("breakpoint") or ""), "action": action,
                 "expression": expression, "kind": "debugger",
             }
-            project = service.editor_project(session, path, slot, side)
-            project["tests"] = [*project.get("tests", []), result][-100:]
-            service.save_editor_project(session, path, slot, side, project)
+            project = record_editor_run(session, path, slot, side, result)
             return jsonify(result=result, project=project)
         try:
             with launch_media(session, configured, data) as (launch, media):
@@ -806,9 +815,9 @@ def create_tools_blueprint(
             "stderr": clean_emulator_output(completed.stderr)[-50000:], "breakpoint": str(data.get("breakpoint") or ""),
             "action": action, "expression": expression,
         }
-        project = service.editor_project(session, path, slot, side)
-        project["tests"] = [*project.get("tests", []), {**result, "kind": "debugger"}][-100:]
-        service.save_editor_project(session, path, slot, side, project)
+        project = record_editor_run(
+            session, path, slot, side, result, kind="debugger"
+        )
         return jsonify(result=result, project=project)
 
     @blueprint.post("/api/images/<image_id>/inspect/basic/pack")

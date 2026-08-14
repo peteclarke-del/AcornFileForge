@@ -29,6 +29,12 @@ class CatalogueServiceTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    @patch("app.catalog_service.urllib.request.urlopen")
+    def test_fetch_rejects_non_http_url_before_opening_it(self, urlopen):
+        with self.assertRaisesRegex(DiskError, "invalid URL"):
+            self.service._fetch("file:///etc/passwd")
+        urlopen.assert_not_called()
+
     def test_online_install_source_name_matches_catalogue_title(self):
         self.assertIn("jetpac", _catalogue_identities("Jetpac (Ultimate Play The Game).ssd"))
         self.assertTrue(

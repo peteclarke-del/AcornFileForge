@@ -10,14 +10,44 @@ import subprocess
 import threading
 import uuid
 from contextlib import ExitStack, contextmanager
-from contextvars import ContextVar
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO, Callable
 
 from .checkpoints import CheckpointError, CheckpointStore
+from .beebscsi_geometry import (
+    MAX_SIZE as BEEBSCSI_MAX_SIZE,
+    OLD_DIRECTORY_ENTRY_OFFSET as ADFS_OLD_DIRECTORY_ENTRY_OFFSET,
+    OLD_DIRECTORY_ENTRY_SIZE as ADFS_OLD_DIRECTORY_ENTRY_SIZE,
+    OLD_DIRECTORY_MAX_ENTRIES as ADFS_OLD_DIRECTORY_MAX_ENTRIES,
+    OLD_DIRECTORY_SIZE as ADFS_OLD_DIRECTORY_SIZE,
+    OLD_DIRECTORY_TAIL as ADFS_OLD_DIRECTORY_TAIL,
+    OLD_ROOT_OFFSET as ADFS_OLD_ROOT_OFFSET,
+    SECTOR_SIZE as BEEBSCSI_SECTOR_SIZE,
+    SECTORS_PER_TRACK as BEEBSCSI_SECTORS_PER_TRACK,
+    descriptor_size,
+    old_map_checksum,
+    old_map_size,
+    range_is_zero,
+)
 from .content_kind import LISTING_SNIFF_LIMIT, analyse_content, metadata_kind
+from .editor_project import editor_project_key, normalise_editor_project
+from .errors import DestinationExistsError, DiskError, EmptyDiskError
+from .image_session import (
+    ImageSession as ImageSession,
+    SESSION_OWNER as SESSION_OWNER,
+)
 from .formats import ADFS_EXTENSIONS, DFS_EXTENSIONS, HFE_EXTENSIONS, MMB_EXTENSIONS, ROM_EXTENSIONS, TAPE_EXTENSIONS
+from .mmb_layout import (
+    ENTRY_SIZE as MMB_ENTRY_SIZE,
+    HEADER_SIZE as MMB_HEADER_SIZE,
+    MAX_SLOTS as MMB_MAX_SLOTS,
+    SLOT_SIZE as MMB_SLOT_SIZE,
+    available_slots as mmb_available_slots,
+    entry_offset as mmb_entry_offset,
+    image_size as mmb_image_size,
+    slot_offset as mmb_slot_offset,
+)
+from .session_state import normalise_warnings, session_metadata
 from .rom import (
     DEFAULT_BANK_SIZE,
     MAX_ROM_SIZE,
@@ -34,7 +64,6 @@ from .rom import (
     validate_platform,
 )
 from .rom_workbench import normalise_project
-from .editor_project import editor_project_key, normalise_editor_project
 from .dfs_compat import repair_dfs_basic_wildcards
 from .hfe import HFEError, HFEHeader, parse_hfe_header
 from .uef import (
@@ -48,93 +77,15 @@ from .uef import (
 )
 
 
-MMB_HEADER_SIZE = 8192
-MMB_SLOT_SIZE = 204800
-MMB_ENTRY_SIZE = 16
-MMB_MAX_SLOTS = 511
 COPY_BUFFER_SIZE = 8 * 1024 * 1024
 FICLONE = 0x40049409
-BEEBSCSI_SECTOR_SIZE = 256
-BEEBSCSI_SECTORS_PER_TRACK = 33
-BEEBSCSI_MAX_SECTORS = 0x1FFFFF
-BEEBSCSI_MAX_SIZE = BEEBSCSI_MAX_SECTORS * BEEBSCSI_SECTOR_SIZE
-ADFS_OLD_ROOT_OFFSET = 2 * BEEBSCSI_SECTOR_SIZE
-ADFS_OLD_DIRECTORY_TAIL = 0x4CB
-ADFS_OLD_DIRECTORY_SIZE = 5 * BEEBSCSI_SECTOR_SIZE
-ADFS_OLD_DIRECTORY_ENTRY_OFFSET = 5
-ADFS_OLD_DIRECTORY_ENTRY_SIZE = 26
-ADFS_OLD_DIRECTORY_MAX_ENTRIES = 47
-
-
-SESSION_OWNER: ContextVar[str | None] = ContextVar("acorn_session_owner", default=None)
-
-
-class DiskError(RuntimeError):
-    pass
-
-
-class EmptyDiskError(DiskError):
-    """Signals that a bulk extraction needs a user skip/abort decision."""
-
-    def __init__(self, disk: dict):
-        self.disk = disk
-        super().__init__(
-            f"MMB slot {disk['sourceSlot']} · {disk['sourceName']} has an empty DFS catalogue."
-        )
-
-
-class DestinationExistsError(DiskError):
-    """Signals that a bulk extraction needs a keep/replace/abort decision."""
-
-    def __init__(self, conflict: dict):
-        self.conflict = conflict
-        super().__init__(
-            f"MMB slot {conflict['sourceSlot']} · {conflict['sourceName']} cannot use "
-            f"{conflict['destination']} because that directory already exists."
-        )
-
-
-@dataclass
-class ImageSession:
-    id: str
-    name: str
-    kind: str
-    path: Path
-    descriptor_name: str | None = None
-    descriptor_path: Path | None = None
-    dirty: bool = False
-    slot_cache: dict[int, Path] = field(default_factory=dict)
-    tape: UEFContents | None = None
-    menu_slot: int | None = None
-    menu_type: str | None = None
-    menu_scanned: bool = False
-    menu_entries: list[dict] | None = None
-    adfs_menu_roots: list[str] | None = None
-    slot_source_names: dict[int, str] = field(default_factory=dict)
-    adfs_source_names: dict[str, str] = field(default_factory=dict)
-    distribution_name: str | None = None
-    target_hardware: str = "auto"
-    hardware_profile: dict = field(default_factory=dict)
-    warnings: list[str] = field(default_factory=list)
-    finalised_mtime_ns: int | None = None
-    hfe_original_path: Path | None = None
-    hfe_version: str | None = None
-    hfe_read_only: bool = False
-    hfe_layout: str | None = None
-    hfe_export_path: Path | None = None
-    rom_bank_size: int = DEFAULT_BANK_SIZE
-    rom_erase_byte: int = 0xFF
-    rom_platform: str = "bbc-master-electron"
-    rom_layout: str = "linear"
-    rom_component_names: list[str] = field(default_factory=list)
-    rom_project: dict = field(default_factory=lambda: normalise_project({}))
-    editor_projects: dict[str, dict] = field(default_factory=dict)
-    content_kind_cache: dict[tuple, str] = field(default_factory=dict)
-    owner_id: str | None = field(default_factory=lambda: SESSION_OWNER.get())
-    lock: threading.RLock = field(default_factory=threading.RLock)
-
-
 class DiskService:
+    _beebscsi_descriptor_size = staticmethod(descriptor_size)
+    _adfs_old_map_size = staticmethod(old_map_size)
+    _range_is_zero = staticmethod(range_is_zero)
+    _old_map_checksum = staticmethod(old_map_checksum)
+    _normalise_warnings = staticmethod(normalise_warnings)
+
     def __init__(self, work_dir: str | Path):
         self.work_dir = Path(work_dir)
         self.work_dir.mkdir(parents=True, exist_ok=True)
@@ -311,94 +262,15 @@ class DiskService:
             session.warnings.append(warning)
 
     @staticmethod
-    def _normalise_warnings(warnings: list[str]) -> list[str]:
-        """Keep durable image history concise and discard superseded diagnostics."""
-        result: list[str] = []
-        directory_fields_repaired = False
-        tube_warning = False
-        loader_review = False
-        for value in warnings:
-            warning = str(value).strip()
-            if not warning:
-                continue
-            if re.match(r"^Repaired \d+ old-ADFS directory sequence field", warning):
-                directory_fields_repaired = True
-                continue
-            if "selected hardware profile has a Tube second processor enabled" in warning:
-                tube_warning = True
-                continue
-            if (
-                "contains ambiguous ADFS command" in warning
-                or "loader contains" in warning
-                and "ambiguous abbreviated command" in warning
-            ):
-                # These are point-in-time analysis results. The current HDD
-                # audit resolves them against the current directory tree and
-                # is the authoritative place to show any which remain.
-                loader_review = True
-                continue
-            if warning not in result:
-                result.append(warning)
-        if directory_fields_repaired:
-            result.append(
-                "Maintained old-ADFS directory sequence fields for 8-bit hardware."
-            )
-        if tube_warning:
-            result.append(
-                "The selected hardware profile has a Tube second processor enabled. "
-                "Some 8-bit software requires the Tube to be disabled unless it explicitly supports it."
-            )
-        if loader_review:
-            result.append(
-                "Installed ADFS loader diagnostics have changed since this image was edited. "
-                "Run Tools > Check installed disk software for the current path-aware results."
-            )
-        return result
-
-    @staticmethod
     def safe_filename(name: str) -> str:
         name = Path(name or "image").name
         return re.sub(r"[^A-Za-z0-9._() +!-]", "_", name)[:180] or "image"
 
     def _persist_session(self, session: ImageSession) -> None:
         session.warnings = self._normalise_warnings(session.warnings)
-        metadata = {
-            "id": session.id,
-            "name": session.name,
-            "kind": session.kind,
-            "descriptorName": session.descriptor_name,
-            "descriptorFile": session.descriptor_path.name if session.descriptor_path else None,
-            "slotSourceNames": {
-                str(slot): name
-                for slot, name in session.slot_source_names.items()
-            },
-            "adfsSourceNames": session.adfs_source_names,
-            "distributionName": session.distribution_name,
-            "targetHardware": session.target_hardware,
-            "hardwareProfile": session.hardware_profile,
-            "workingFile": session.path.name,
-            "hfeOriginalFile": session.hfe_original_path.name if session.hfe_original_path else None,
-            "hfeVersion": session.hfe_version,
-            "hfeReadOnly": session.hfe_read_only,
-            "hfeLayout": session.hfe_layout,
-            "hfeExportFile": (
-                session.hfe_export_path.name if session.hfe_export_path else None
-            ),
-            "romBankSize": session.rom_bank_size,
-            "romEraseByte": session.rom_erase_byte,
-            "romPlatform": session.rom_platform,
-            "romLayout": session.rom_layout,
-            "romComponentNames": session.rom_component_names,
-            "romProject": session.rom_project,
-            "editorProjects": session.editor_projects,
-            "dirty": session.dirty,
-            "finalisedMtimeNs": session.finalised_mtime_ns,
-            "ownerId": session.owner_id,
-            "warnings": session.warnings,
-        }
         target = session.path.parent / "session.json"
         temporary = session.path.parent / "session.json.tmp"
-        temporary.write_text(json.dumps(metadata, separators=(",", ":")), encoding="utf-8")
+        temporary.write_text(json.dumps(session_metadata(session), separators=(",", ":")), encoding="utf-8")
         temporary.replace(target)
 
     def _restore_session(self, image_id: str) -> ImageSession:
@@ -777,51 +649,6 @@ class DiskService:
         return working, kind, original, header, read_only, hfe_layout, warnings
 
     @staticmethod
-    def _beebscsi_descriptor_size(descriptor_path: Path) -> int | None:
-        """Return the device capacity declared by a BeebSCSI mode descriptor."""
-        try:
-            descriptor = descriptor_path.read_bytes()
-        except OSError:
-            return None
-        if len(descriptor) < 16:
-            return None
-        cylinders = (descriptor[13] << 8) | descriptor[14]
-        heads = descriptor[15]
-        if not cylinders or not heads:
-            return None
-        return (
-            cylinders
-            * heads
-            * BEEBSCSI_SECTORS_PER_TRACK
-            * BEEBSCSI_SECTOR_SIZE
-        )
-
-    @staticmethod
-    def _adfs_old_map_size(image_path: Path) -> int | None:
-        """Return the filesystem extent stored in an old-format ADFS map."""
-        try:
-            with image_path.open("rb") as image:
-                map_sector = image.read(BEEBSCSI_SECTOR_SIZE)
-        except OSError:
-            return None
-        if len(map_sector) != BEEBSCSI_SECTOR_SIZE:
-            return None
-        sectors = int.from_bytes(map_sector[0xFC:0xFF], "little")
-        if not sectors or sectors > BEEBSCSI_MAX_SECTORS:
-            return None
-        return sectors * BEEBSCSI_SECTOR_SIZE
-
-    @staticmethod
-    def _range_is_zero(path: Path, start: int) -> bool:
-        """Check a prospective compatibility tail without loading it into RAM."""
-        with path.open("rb") as image:
-            image.seek(start)
-            while chunk := image.read(COPY_BUFFER_SIZE):
-                if chunk.strip(b"\0"):
-                    return False
-        return True
-
-    @staticmethod
     def _target_hardware(value: str | None) -> str:
         profile = str(value or "auto").strip().lower()
         if profile not in {
@@ -998,7 +825,7 @@ class DiskService:
         elif actual > map_size:
             self._append_warning(
                 session,
-                f"The DAT contains non-zero data beyond its ADFS map boundary and "
+                "The DAT contains non-zero data beyond its ADFS map boundary and "
                 "was not truncated.",
             )
         elif actual < map_size:
@@ -1124,23 +951,6 @@ class DiskService:
         if patches:
             session.dirty = True
         return len(patches)
-
-    @staticmethod
-    def _old_map_checksum(block: bytes | bytearray) -> int:
-        """Return the Acorn checksum for one old-map sector.
-
-        ADFS processes bytes &FE back to &00 and carries an overflow into
-        the *next* byte processed.  That makes byte order significant; a
-        forward end-around sum happens to agree for many maps, but can be
-        one out after the free-space list changes.
-        """
-        checksum = 0
-        carry = 0
-        for value in reversed(block[: BEEBSCSI_SECTOR_SIZE - 1]):
-            total = checksum + value + carry
-            checksum = total & 0xFF
-            carry = 1 if total > 0xFF else 0
-        return checksum
 
     @staticmethod
     def _advance_beebscsi_disc_id(session: ImageSession) -> bool:
@@ -1580,14 +1390,14 @@ class DiskService:
 
     def list_slots(self, session: ImageSession) -> list[dict]:
         size = session.path.stat().st_size
-        if size < MMB_HEADER_SIZE + MMB_SLOT_SIZE:
+        if size < mmb_image_size(1):
             raise DiskError("The MMB image is too small to contain a disk.")
-        count = min(MMB_MAX_SLOTS, (size - MMB_HEADER_SIZE) // MMB_SLOT_SIZE)
+        count = mmb_available_slots(size)
         with session.path.open("rb") as image:
             header = image.read(MMB_HEADER_SIZE)
         slots = []
         for number in range(count):
-            offset = 16 + number * MMB_ENTRY_SIZE
+            offset = mmb_entry_offset(number)
             entry = header[offset : offset + MMB_ENTRY_SIZE]
             if len(entry) < MMB_ENTRY_SIZE:
                 break
@@ -1767,7 +1577,7 @@ class DiskService:
                 if str(entry.get("name") or "").upper().startswith("MBACKUP-"):
                     continue
                 slot = int(entry["slot"])
-                image.seek(MMB_HEADER_SIZE + slot * MMB_SLOT_SIZE)
+                image.seek(mmb_slot_offset(slot))
                 catalogue = image.read(512)
                 if len(catalogue) != 512:
                     continue
@@ -1922,10 +1732,10 @@ class DiskService:
                 header = bytearray(MMB_HEADER_SIZE)
                 header[:4] = bytes((0, 1, 2, 3))
                 for slot in range(MMB_MAX_SLOTS):
-                    header[16 + slot * MMB_ENTRY_SIZE + 15] = 0xF0
+                    header[mmb_entry_offset(slot) + 15] = 0xF0
                 with path.open("wb") as image:
                     image.write(header)
-                    image.truncate(MMB_HEADER_SIZE + MMB_MAX_SLOTS * MMB_SLOT_SIZE)
+                    image.truncate(mmb_image_size())
                 session = ImageSession(image_id, path.name, "mmb", path, dirty=True)
             except Exception:
                 shutil.rmtree(folder, ignore_errors=True)
@@ -2057,9 +1867,9 @@ class DiskService:
         display_title = (title or self._dfs_title(padded) or f"DISK{slot:03d}")
         title_bytes = display_title.encode("latin-1", "replace")[:12].ljust(12, b"\0")
         with session.lock, session.path.open("r+b") as image:
-            image.seek(16 + slot * MMB_ENTRY_SIZE)
+            image.seek(mmb_entry_offset(slot))
             image.write(title_bytes + b"\0\0\0" + b"\x0f")
-            image.seek(MMB_HEADER_SIZE + slot * MMB_SLOT_SIZE)
+            image.seek(mmb_slot_offset(slot))
             image.write(padded)
         session.slot_cache.pop(slot, None)
         session.dirty = True
@@ -2184,9 +1994,9 @@ class DiskService:
             raise DiskError("Select at least one MMB disk to eject.")
         with session.lock, session.path.open("r+b") as image:
             for slot in checked:
-                image.seek(16 + slot * MMB_ENTRY_SIZE)
+                image.seek(mmb_entry_offset(slot))
                 image.write(b"\0" * 15 + b"\xf0")
-                image.seek(MMB_HEADER_SIZE + slot * MMB_SLOT_SIZE)
+                image.seek(mmb_slot_offset(slot))
                 image.write(b"\0" * MMB_SLOT_SIZE)
         for slot in checked:
             session.slot_cache.pop(slot, None)
@@ -2220,7 +2030,7 @@ class DiskService:
             )
         with session.lock, session.path.open("r+b") as image:
             for slot in checked:
-                image.seek(16 + slot * MMB_ENTRY_SIZE + 15)
+                image.seek(mmb_entry_offset(slot) + 15)
                 image.write(b"\x0f" if writable else b"\x00")
         session.dirty = True
         return checked
@@ -2231,21 +2041,21 @@ class DiskService:
         if source_slot == target_slot:
             return
         with session.lock, session.path.open("r+b") as image:
-            image.seek(16 + source_slot * MMB_ENTRY_SIZE)
+            image.seek(mmb_entry_offset(source_slot))
             source_entry = image.read(MMB_ENTRY_SIZE)
-            image.seek(16 + target_slot * MMB_ENTRY_SIZE)
+            image.seek(mmb_entry_offset(target_slot))
             target_entry = image.read(MMB_ENTRY_SIZE)
-            image.seek(MMB_HEADER_SIZE + source_slot * MMB_SLOT_SIZE)
+            image.seek(mmb_slot_offset(source_slot))
             source_data = image.read(MMB_SLOT_SIZE)
-            image.seek(MMB_HEADER_SIZE + target_slot * MMB_SLOT_SIZE)
+            image.seek(mmb_slot_offset(target_slot))
             target_data = image.read(MMB_SLOT_SIZE)
-            image.seek(16 + source_slot * MMB_ENTRY_SIZE)
+            image.seek(mmb_entry_offset(source_slot))
             image.write(target_entry)
-            image.seek(16 + target_slot * MMB_ENTRY_SIZE)
+            image.seek(mmb_entry_offset(target_slot))
             image.write(source_entry)
-            image.seek(MMB_HEADER_SIZE + source_slot * MMB_SLOT_SIZE)
+            image.seek(mmb_slot_offset(source_slot))
             image.write(target_data)
-            image.seek(MMB_HEADER_SIZE + target_slot * MMB_SLOT_SIZE)
+            image.seek(mmb_slot_offset(target_slot))
             image.write(source_data)
         session.slot_cache.pop(source_slot, None)
         session.slot_cache.pop(target_slot, None)
@@ -2326,9 +2136,9 @@ class DiskService:
         with self._locked_sessions(source, target):
             with source.path.open("rb") as image:
                 for slot in checked:
-                    image.seek(16 + slot * MMB_ENTRY_SIZE)
+                    image.seek(mmb_entry_offset(slot))
                     entry = image.read(MMB_ENTRY_SIZE)
-                    image.seek(MMB_HEADER_SIZE + slot * MMB_SLOT_SIZE)
+                    image.seek(mmb_slot_offset(slot))
                     disk = image.read(MMB_SLOT_SIZE)
                     if len(entry) != MMB_ENTRY_SIZE or len(disk) != MMB_SLOT_SIZE:
                         raise DiskError(f"MMB slot {slot} could not be read completely.")
@@ -2341,17 +2151,17 @@ class DiskService:
             if cut:
                 with source.path.open("r+b") as image:
                     for slot in checked:
-                        image.seek(16 + slot * MMB_ENTRY_SIZE)
+                        image.seek(mmb_entry_offset(slot))
                         image.write(b"\0" * 15 + b"\xf0")
-                        image.seek(MMB_HEADER_SIZE + slot * MMB_SLOT_SIZE)
+                        image.seek(mmb_slot_offset(slot))
                         image.write(b"\0" * MMB_SLOT_SIZE)
 
             with target.path.open("r+b") as image:
                 for slot, destination in mapping:
                     entry, disk, _source_name = snapshots[slot]
-                    image.seek(16 + destination * MMB_ENTRY_SIZE)
+                    image.seek(mmb_entry_offset(destination))
                     image.write(entry)
-                    image.seek(MMB_HEADER_SIZE + destination * MMB_SLOT_SIZE)
+                    image.seek(mmb_slot_offset(destination))
                     image.write(disk)
 
         destinations = {destination for _slot, destination in mapping}
@@ -2412,12 +2222,12 @@ class DiskService:
     def rename_slot(self, session: ImageSession, slot: int, title: str) -> None:
         title_bytes = title.encode("latin-1", "replace")[:12].ljust(12, b"\0")
         with session.lock, session.path.open("r+b") as image:
-            image.seek(16 + self._check_slot(session, slot) * MMB_ENTRY_SIZE)
+            image.seek(mmb_entry_offset(self._check_slot(session, slot)))
             image.write(title_bytes)
         session.dirty = True
 
     def _check_slot(self, session: ImageSession, slot: int) -> int:
-        count = min(MMB_MAX_SLOTS, (session.path.stat().st_size - MMB_HEADER_SIZE) // MMB_SLOT_SIZE)
+        count = mmb_available_slots(session.path.stat().st_size)
         if slot < 0 or slot >= count:
             raise DiskError("MMB slot is out of range.")
         return slot
@@ -2429,7 +2239,7 @@ class DiskService:
             return cached
         path = session.path.parent / f"slot-{slot:03d}.ssd"
         with session.lock, session.path.open("rb") as source, path.open("wb") as target:
-            source.seek(MMB_HEADER_SIZE + slot * MMB_SLOT_SIZE)
+            source.seek(mmb_slot_offset(slot))
             data = source.read(MMB_SLOT_SIZE)
             if len(data) != MMB_SLOT_SIZE:
                 raise DiskError("The MMB slot is truncated.")
@@ -2458,7 +2268,7 @@ class DiskService:
         if len(data) > MMB_SLOT_SIZE:
             raise DiskError("The edited DFS disk no longer fits in its MMB slot.")
         with session.lock, session.path.open("r+b") as target:
-            target.seek(MMB_HEADER_SIZE + slot * MMB_SLOT_SIZE)
+            target.seek(mmb_slot_offset(slot))
             target.write(data.ljust(MMB_SLOT_SIZE, b"\0"))
         session.dirty = True
 
@@ -5336,7 +5146,7 @@ class DiskService:
         if not rows:
             return
         source_path = self.resolve(source, source_slot)
-        report(f"Copying the complete disk catalogue in one batch", 0, len(rows))
+        report("Copying the complete disk catalogue in one batch", 0, len(rows))
         if target.kind == "adfs" and source.kind in {"dfs", "mmb"}:
             try:
                 from oaknut.disc.cli import (
