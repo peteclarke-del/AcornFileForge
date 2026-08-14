@@ -2438,9 +2438,10 @@ checkpoint, performs undo, prepares a timestamped save and downloads the ZIP.
 No private sample media is required.
 
 `.github/workflows/ci.yml` runs the Python, JavaScript and Chromium suites on
-each pull request. A separate Buildx matrix builds both `linux/amd64` and
-`linux/arm64`, catching dependency or Dockerfile regressions that would stop a
-Raspberry Pi installation even when the x86 build remains healthy.
+each pull request. A separate Buildx matrix builds `linux/amd64`,
+`linux/arm64` and 32-bit `linux/arm/v7`, catching dependency or Dockerfile
+regressions that would stop a Raspberry Pi installation even when the x86
+build remains healthy.
 
 See [Installing Acorn File Forge](docs/INSTALLATION.md) for complete desktop and Raspberry Pi instructions.
 

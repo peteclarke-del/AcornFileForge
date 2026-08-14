@@ -1,6 +1,6 @@
 # Installing Acorn File Forge
 
-Acorn File Forge is distributed as a Docker application. The same repository builds on 64-bit desktop Linux, Apple Silicon through Docker Desktop, x86-64 systems and Raspberry Pi Linux. CI builds both `linux/amd64` and `linux/arm64` on every pull request.
+Acorn File Forge is distributed as a Docker application. The same repository builds on 64-bit desktop Linux, Apple Silicon through Docker Desktop, x86-64 systems and Raspberry Pi Linux. CI builds `linux/amd64`, `linux/arm64` and 32-bit `linux/arm/v7` on every pull request.
 
 ## Desktop installation
 
@@ -18,7 +18,7 @@ The first build compiles the bundled disk conversion and emulator tools. Later b
 
 ## Raspberry Pi installation
 
-A 64-bit Raspberry Pi OS installation is recommended. Make sure the root filesystem has several gigabytes free for compiler layers, the final application image and working media.
+A 64-bit Raspberry Pi OS installation is recommended, although current 32-bit Raspberry Pi OS releases are also covered by the build matrix. Make sure the root filesystem has several gigabytes free for compiler layers, the final application image and working media.
 
 ```bash
 sudo apt update
@@ -62,4 +62,5 @@ A healthy API response contains `{"engine":"oaknut","status":"ok","version":"1.0
 - `git@github.com: Permission denied (publickey)` means SSH credentials are not configured. Use the HTTPS clone command above.
 - `no configuration file provided` usually means the shell is not inside the cloned `AcornFileForge` directory.
 - A historic `make: command not found` while building Capstone means an old Dockerfile is being used. Pull the current branch and rebuild.
+- `Package liballegro4.4 has no installation candidate` means the checkout predates the Debian Trixie package-name correction. Pull the current branch and rebuild with `--pull`.
 - An out-of-memory failure on a small Pi is a host resource problem. Stop unrelated containers, enable sensible swap and rebuild with plain progress output.
