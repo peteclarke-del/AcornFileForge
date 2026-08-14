@@ -5,11 +5,7 @@ from ..menu_service import (
     continuation_metadata_from_mmb_menu,
     edit_mmb_menu_entries,
     eject_mmb_slots,
-    find_menu_slot,
     install_mmb_menu,
-    installed_mmb_menu,
-    installed_mmb_menus,
-    is_mmb_menu_backup_title,
     metadata_records_from_mmb_menu,
     mmb_menu_data_path,
     mmb_metadata_for_adfs,
@@ -20,6 +16,12 @@ from ..menu_service import (
     replace_mmb_menu,
     restore_mmb_menu_slot,
     update_menu,
+)
+from .mmb_discovery import (
+    find_menu_slot,
+    installed_mmb_menu,
+    installed_mmb_menus,
+    is_mmb_menu_backup_title,
 )
 
 __all__ = [name for name in globals() if not name.startswith("_")]

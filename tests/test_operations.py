@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 import uuid
 import tempfile
+import time
 from pathlib import Path
 
 from app.disk_service import DiskError, SESSION_OWNER
@@ -36,6 +37,24 @@ class OperationRegistryTests(unittest.TestCase):
             registry.update(operation_id, "Starting another file")
         registry.cancelled(operation_id)
         self.assertEqual(registry.get(operation_id)["state"], "cancelled")
+
+    def test_progress_reports_elapsed_throughput_and_eta(self):
+        registry = OperationRegistry()
+        operation_id = str(uuid.uuid4())
+        registry.start(operation_id, "Copying")
+        registry._items[operation_id]["startedAt"] = time.time() - 2
+        registry.update(operation_id, "Copying", 4, 10)
+
+        progress = registry.get(operation_id)
+
+        self.assertGreaterEqual(progress["elapsedSeconds"], 2)
+        self.assertGreater(progress["ratePerSecond"], 1.5)
+        self.assertGreater(progress["etaSeconds"], 2)
+
+        registry.finish(operation_id)
+        finished = registry.get(operation_id)["elapsedSeconds"]
+        time.sleep(0.01)
+        self.assertAlmostEqual(registry.get(operation_id)["elapsedSeconds"], finished, places=3)
 
     def test_cancel_can_arrive_before_the_worker_starts(self):
         registry = OperationRegistry()

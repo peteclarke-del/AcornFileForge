@@ -4,7 +4,6 @@ import io
 import json
 import os
 import re
-import secrets
 import shutil
 import subprocess
 import threading
@@ -13,7 +12,8 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import BinaryIO, Callable
 
-from .checkpoints import CheckpointError, CheckpointStore
+from .checkpoints import CheckpointStore
+from .adfs_install_service import ADFSInstallMixin
 from .beebscsi_geometry import (
     MAX_SIZE as BEEBSCSI_MAX_SIZE,
     OLD_DIRECTORY_ENTRY_OFFSET as ADFS_OLD_DIRECTORY_ENTRY_OFFSET,
@@ -31,13 +31,13 @@ from .beebscsi_geometry import (
 )
 from .content_kind import LISTING_SNIFF_LIMIT, analyse_content, metadata_kind
 from .disk_tools import decode_disc_json, friendly_engine_error, run_disc, run_hxcfe
-from .editor_project import normalise_editor_project
 from .errors import DestinationExistsError, DiskError, EmptyDiskError
 from .image_session import (
     ImageSession as ImageSession,
     SESSION_OWNER as SESSION_OWNER,
 )
 from .formats import ADFS_EXTENSIONS, DFS_EXTENSIONS, HFE_EXTENSIONS, MMB_EXTENSIONS, ROM_EXTENSIONS, TAPE_EXTENSIONS
+from .filesystem_disk_service import FilesystemDiskMixin
 from .mmb_layout import (
     ENTRY_SIZE as MMB_ENTRY_SIZE,
     HEADER_SIZE as MMB_HEADER_SIZE,
@@ -50,13 +50,13 @@ from .mmb_layout import (
 )
 from .mmb_disk_service import MmbCatalogueMixin
 from .rom_disk_service import RomDiskMixin
+from .session_disk_service import SessionDiskMixin
 from .tape_disk_service import TapeDiskMixin
-from .session_state import normalise_warnings, session_metadata
+from .session_state import normalise_warnings
 from .rom import (
     DEFAULT_BANK_SIZE,
     MAX_ROM_SIZE,
     RomError,
-    bank_count,
     bank_number,
     make_sideways_template,
     parse_sideways_header,
@@ -64,7 +64,6 @@ from .rom import (
     validate_layout,
     validate_platform,
 )
-from .rom_workbench import normalise_project
 from .dfs_compat import repair_dfs_basic_wildcards
 from .hfe import HFEError, HFEHeader, parse_hfe_header
 from .uef import (
@@ -80,7 +79,7 @@ from .uef import (
 
 COPY_BUFFER_SIZE = 8 * 1024 * 1024
 FICLONE = 0x40049409
-class DiskService(MmbCatalogueMixin, RomDiskMixin, TapeDiskMixin):
+class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCatalogueMixin, RomDiskMixin, TapeDiskMixin):
     _beebscsi_descriptor_size = staticmethod(descriptor_size)
     _adfs_old_map_size = staticmethod(old_map_size)
     _range_is_zero = staticmethod(range_is_zero)
@@ -107,156 +106,6 @@ class DiskService(MmbCatalogueMixin, RomDiskMixin, TapeDiskMixin):
                 stack.enter_context(lock)
             yield
 
-    @contextmanager
-    def adfs_mount(self, session: ImageSession):
-        """Open a trusted working ADFS image without probing or copying it.
-
-        Oaknut's general-purpose resolver identifies an image from scratch on
-        every command.  Its ADFS probe deliberately copies the whole image and
-        walks the complete directory tree.  That is useful for an unknown host
-        file, but wasteful for a session which was already identified when it
-        was opened.  A BeebSCSI DAT can be hundreds of megabytes, so use one
-        live mmap for the duration of an application operation instead.
-        """
-        if session.kind != "adfs":
-            raise DiskError("This operation requires an ADFS image.")
-        try:
-            from oaknut.filesystem import create_filesystem, geometry_from_dsc, reader_for
-        except ImportError as exc:
-            raise DiskError("The Oaknut ADFS filesystem API is unavailable.") from exc
-
-        with session.lock:
-            reader = reader_for(session.path, writable=True)
-            mount = None
-            try:
-                geometry = None
-                if session.descriptor_path and session.descriptor_path.is_file():
-                    geometry = geometry_from_dsc(session.descriptor_path.read_bytes())
-                mount = create_filesystem("adfs").open(reader, geometry)
-                yield mount
-            except DiskError:
-                raise
-            except Exception as exc:
-                raise DiskError(self._friendly_engine_error(str(exc))) from exc
-            finally:
-                # _ADFSMount does not currently expose close(), but its
-                # DiscImage owns the memoryview borrowed from ImageReader.
-                # Release that view before closing the mmap.
-                if mount is not None:
-                    adfs = getattr(mount, "_adfs", None)
-                    unified = getattr(adfs, "_d", None)
-                    disc_image = getattr(unified, "_disc_image", None)
-                    try:
-                        close_adfs = getattr(adfs, "close", None)
-                        if callable(close_adfs):
-                            close_adfs()
-                    finally:
-                        close_disc = getattr(disc_image, "close", None)
-                        if callable(close_disc):
-                            close_disc()
-                reader.close()
-
-    @contextmanager
-    def romfs_mount(self, session: ImageSession, *, writable: bool = False):
-        """Open one already-identified ROMFS image without probing it again."""
-        if session.kind != "romfs":
-            raise DiskError("This operation requires an Acorn ROMFS image.")
-        if writable:
-            self.require_writable_geometry(session)
-        try:
-            from oaknut.filesystem import create_filesystem, reader_for
-        except ImportError as exc:
-            raise DiskError("The Oaknut ROMFS filesystem API is unavailable.") from exc
-        with session.lock:
-            reader = reader_for(session.path, writable=writable)
-            try:
-                mount = create_filesystem("acorn-romfs").open(reader, None)
-                yield mount
-            except DiskError:
-                raise
-            except Exception as exc:
-                raise DiskError(self._friendly_engine_error(str(exc))) from exc
-            finally:
-                reader.close()
-
-    def romfs_details(self, session: ImageSession) -> dict:
-        """Return decoded ROMFS identity, safety and capacity information."""
-        try:
-            from oaknut.romfs.romfs import ROMFS
-            romfs = ROMFS.from_bytes(session.path.read_bytes())
-        except Exception as exc:
-            raise DiskError(f"The ROMFS catalogue is invalid: {exc}") from exc
-        warnings = []
-        if not romfs.is_complete:
-            warnings.append(
-                "The ROMFS block chain has no end marker. It may be truncated or one part of a multi-ROM set."
-            )
-        if romfs.is_complete and not romfs.is_plain:
-            warnings.append(
-                "Executable or opaque content follows the ROMFS catalogue, so this composite image is read-only."
-            )
-        fs_end = int(getattr(romfs, "_fs_end", session.path.stat().st_size))
-        total = session.path.stat().st_size
-        return {
-            "title": romfs.title,
-            "headerTitle": romfs.header_title,
-            "version": romfs.version,
-            "copyright": romfs.copyright,
-            "romType": romfs.rom_type,
-            "dataOffset": romfs.data_offset,
-            "fileCount": len(romfs.data_files),
-            "complete": romfs.is_complete,
-            "plain": romfs.is_plain,
-            "readOnly": not romfs.is_complete or not romfs.is_plain,
-            "capacity": {
-                "available": romfs.is_complete and romfs.is_plain,
-                "unit": "bytes",
-                "total": total,
-                "used": min(total, fs_end),
-                "free": max(0, total - fs_end),
-                "reason": "Composite and multi-ROM images cannot report safely writable tail space."
-                if not (romfs.is_complete and romfs.is_plain) else None,
-            },
-            "warnings": warnings,
-        }
-
-    def set_romfs_properties(
-        self,
-        session: ImageSession,
-        *,
-        title: str,
-        version: int,
-        copyright_text: str,
-    ) -> None:
-        """Update ROMFS catalogue and paged-ROM identity as one guarded edit."""
-        if session.kind != "romfs":
-            raise DiskError("This image does not contain an Acorn ROMFS filesystem.")
-        title = str(title or "").strip()
-        if not title or len(title) > 8:
-            raise DiskError("A ROMFS title can contain 1 to 8 characters.")
-        copyright_text = str(copyright_text or "").strip()
-        if not copyright_text.startswith("(C)"):
-            raise DiskError("A paged-ROM copyright must begin with (C).")
-        if len(copyright_text) > 120:
-            raise DiskError("A paged-ROM copyright can contain at most 120 characters.")
-        try:
-            version = int(version)
-        except (TypeError, ValueError) as exc:
-            raise DiskError("ROMFS version must be from 0 to 255.") from exc
-        if not 0 <= version <= 255:
-            raise DiskError("ROMFS version must be from 0 to 255.")
-        original = session.path.read_bytes()
-        try:
-            with self.romfs_mount(session, writable=True) as mount:
-                mount.set_title(title)
-            from oaknut.romfs.romfs import set_copyright, set_version
-            data = set_version(session.path.read_bytes(), version)
-            session.path.write_bytes(set_copyright(data, copyright_text))
-        except Exception as exc:
-            session.path.write_bytes(original)
-            raise DiskError(f"The ROMFS paged-ROM header could not be updated: {exc}") from exc
-        self._mark_mutated(session, None)
-
     @staticmethod
     def _append_warning(session: ImageSession, warning: str) -> None:
         if warning not in session.warnings:
@@ -266,108 +115,6 @@ class DiskService(MmbCatalogueMixin, RomDiskMixin, TapeDiskMixin):
     def safe_filename(name: str) -> str:
         name = Path(name or "image").name
         return re.sub(r"[^A-Za-z0-9._() +!-]", "_", name)[:180] or "image"
-
-    def _persist_session(self, session: ImageSession) -> None:
-        session.warnings = self._normalise_warnings(session.warnings)
-        target = session.path.parent / "session.json"
-        temporary = session.path.parent / "session.json.tmp"
-        temporary.write_text(json.dumps(session_metadata(session), separators=(",", ":")), encoding="utf-8")
-        temporary.replace(target)
-
-    def _restore_session(self, image_id: str) -> ImageSession:
-        if not re.fullmatch(r"[0-9a-f]{32}", image_id):
-            raise DiskError("That image session no longer exists.")
-        folder = self.work_dir / image_id
-        metadata_path = folder / "session.json"
-        try:
-            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-            name = self.safe_filename(metadata["name"])
-            path = folder / self.safe_filename(metadata.get("workingFile") or name)
-            if not path.is_file() or path.parent != folder:
-                raise ValueError
-            descriptor_name = metadata.get("descriptorName")
-            descriptor_file = metadata.get("descriptorFile")
-            descriptor_path = folder / descriptor_file if descriptor_file else None
-            if descriptor_path and (not descriptor_path.is_file() or descriptor_path.parent != folder):
-                descriptor_path = None
-                descriptor_name = None
-            kind = metadata.get("kind") or self.detect_kind(name)
-            if kind not in {"mmb", "dfs", "adfs", "tape", "rom"}:
-                raise ValueError
-            session = ImageSession(
-                id=image_id,
-                name=name,
-                kind=kind,
-                path=path,
-                descriptor_name=descriptor_name,
-                descriptor_path=descriptor_path,
-                dirty=bool(metadata.get("dirty", True)),
-                slot_source_names={
-                    int(slot): str(name)
-                    for slot, name in metadata.get("slotSourceNames", {}).items()
-                },
-                adfs_source_names={
-                    str(path): str(name)
-                    for path, name in metadata.get("adfsSourceNames", {}).items()
-                },
-                distribution_name=metadata.get("distributionName"),
-                target_hardware=str(metadata.get("targetHardware") or "auto"),
-                hardware_profile=(
-                    dict(metadata.get("hardwareProfile") or {})
-                    if isinstance(metadata.get("hardwareProfile"), dict)
-                    else {}
-                ),
-                hfe_original_path=(
-                    folder / self.safe_filename(metadata["hfeOriginalFile"])
-                    if metadata.get("hfeOriginalFile")
-                    else None
-                ),
-                hfe_version=metadata.get("hfeVersion"),
-                hfe_read_only=bool(metadata.get("hfeReadOnly")),
-                hfe_layout=metadata.get("hfeLayout"),
-                hfe_export_path=(
-                    folder / self.safe_filename(metadata["hfeExportFile"])
-                    if metadata.get("hfeExportFile")
-                    else None
-                ),
-                rom_bank_size=validate_bank_size(int(metadata.get("romBankSize", DEFAULT_BANK_SIZE))),
-                rom_erase_byte=int(metadata.get("romEraseByte", 0xFF)) & 0xFF,
-                rom_platform=str(metadata.get("romPlatform") or "bbc-master-electron"),
-                rom_layout=str(metadata.get("romLayout") or "linear"),
-                rom_component_names=[
-                    self.safe_filename(name)
-                    for name in metadata.get("romComponentNames", [])
-                    if name
-                ],
-                rom_project=normalise_project(metadata.get("romProject")),
-                editor_projects={
-                    str(key): normalise_editor_project(value)
-                    for key, value in dict(metadata.get("editorProjects") or {}).items()
-                },
-                finalised_mtime_ns=(
-                    int(metadata["finalisedMtimeNs"])
-                    if metadata.get("finalisedMtimeNs") is not None
-                    else None
-                ),
-                owner_id=metadata.get("ownerId"),
-                warnings=self._normalise_warnings(
-                    [str(warning) for warning in metadata.get("warnings", [])]
-                ),
-            )
-            if session.hfe_original_path and not session.hfe_original_path.is_file():
-                raise ValueError
-            if session.hfe_export_path and not session.hfe_export_path.is_file():
-                session.hfe_export_path = None
-            if session.kind == "tape":
-                session.tape = parse_uef(path.read_bytes())
-            self._normalise_beebscsi_dat_size(session)
-            if session.descriptor_path and session.path.suffix.lower() == ".dat":
-                self._optimise_sparse_file(session.path)
-        except (OSError, KeyError, ValueError, json.JSONDecodeError, UEFError) as exc:
-            raise DiskError("That image session no longer exists.") from exc
-        with self._lock:
-            self.sessions[image_id] = session
-        return session
 
     @staticmethod
     def detect_kind(name: str) -> str:
@@ -490,16 +237,14 @@ class DiskService(MmbCatalogueMixin, RomDiskMixin, TapeDiskMixin):
         folder = self.work_dir / image_id
         folder.mkdir()
         path = folder / safe_name
-        self._copy_stream(stream, path)
-
-        descriptor_name = None
-        descriptor_path = None
-        if descriptor:
-            descriptor_name = self.safe_filename(descriptor[0])
-            descriptor_path = folder / descriptor_name
-            self._copy_stream(descriptor[1], descriptor_path)
-
         try:
+            self._copy_stream(stream, path)
+            descriptor_name = None
+            descriptor_path = None
+            if descriptor:
+                descriptor_name = self.safe_filename(descriptor[0])
+                descriptor_path = folder / descriptor_name
+                self._copy_stream(descriptor[1], descriptor_path)
             return self._finalize_new_session(
                 image_id,
                 safe_name,
@@ -1124,270 +869,6 @@ class DiskService(MmbCatalogueMixin, RomDiskMixin, TapeDiskMixin):
         except (OSError, subprocess.CalledProcessError):
             target.unlink(missing_ok=True)
         shutil.copyfile(source, target)
-
-    def get(self, image_id: str) -> ImageSession:
-        try:
-            session = self.sessions[image_id]
-        except KeyError:
-            session = self._restore_session(image_id)
-        owner_id = SESSION_OWNER.get()
-        if owner_id is None:
-            return session
-        if not session.owner_id or not secrets.compare_digest(
-            session.owner_id,
-            owner_id,
-        ):
-            raise DiskError("That image session no longer exists.")
-        return session
-
-    def recoverable_sessions(self, limit: int = 50) -> list[dict]:
-        """List persisted working images without opening their large data files."""
-        recovered: list[dict] = []
-        owner_id = SESSION_OWNER.get()
-        for metadata_path in self.work_dir.glob("*/session.json"):
-            image_id = metadata_path.parent.name
-            if not re.fullmatch(r"[0-9a-f]{32}", image_id):
-                continue
-            try:
-                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-                persisted_owner = metadata.get("ownerId")
-                if owner_id is not None and persisted_owner != owner_id:
-                    continue
-                name = self.safe_filename(metadata["name"])
-                working_name = self.safe_filename(metadata.get("workingFile") or name)
-                image_path = metadata_path.parent / working_name
-                if not image_path.is_file() or image_path.parent != metadata_path.parent:
-                    continue
-                stat = image_path.stat()
-                descriptor_file = metadata.get("descriptorFile")
-                descriptor_path = (
-                    metadata_path.parent / self.safe_filename(descriptor_file)
-                    if descriptor_file
-                    else None
-                )
-                recovered.append({
-                    "id": image_id,
-                    "name": name,
-                    "kind": str(metadata.get("kind") or self.detect_kind(name)),
-                    "size": stat.st_size,
-                    "modified": stat.st_mtime_ns // 1_000_000,
-                    "hasDescriptor": bool(descriptor_path and descriptor_path.is_file()),
-                    "targetHardware": str(metadata.get("targetHardware") or "auto"),
-                })
-            except (OSError, KeyError, ValueError, json.JSONDecodeError):
-                continue
-        recovered.sort(key=lambda item: item["modified"], reverse=True)
-        return recovered[: max(1, min(int(limit), 100))]
-
-    def clear_recoverable_sessions(self, image_ids: list[str] | None = None) -> int:
-        """Delete only working copies owned by the current browser identity."""
-        owner_id = SESSION_OWNER.get()
-        if owner_id is None:
-            raise DiskError("Session ownership is unavailable for this request.")
-        requested = set(image_ids) if image_ids is not None else None
-        removed = 0
-        for metadata_path in tuple(self.work_dir.glob("*/session.json")):
-            image_id = metadata_path.parent.name
-            if requested is not None and image_id not in requested:
-                continue
-            try:
-                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-                persisted_owner = str(metadata.get("ownerId") or "")
-                if not persisted_owner or not secrets.compare_digest(persisted_owner, owner_id):
-                    continue
-            except (OSError, ValueError, json.JSONDecodeError):
-                continue
-            with self._lock:
-                self.sessions.pop(image_id, None)
-            shutil.rmtree(metadata_path.parent, ignore_errors=True)
-            removed += 1
-        return removed
-
-    def discard_session(self, session: ImageSession) -> None:
-        with self._lock:
-            self.sessions.pop(session.id, None)
-        shutil.rmtree(session.path.parent, ignore_errors=True)
-
-    def rename_session(self, session: ImageSession, requested_name: str) -> None:
-        """Rename an image for display, recovery and download without moving its working file."""
-        requested_name = str(requested_name or "").strip()
-        if not requested_name or requested_name != Path(requested_name).name:
-            raise DiskError("Enter a filename without a directory path.")
-
-        current_suffix = Path(session.name).suffix
-        requested_suffix = Path(requested_name).suffix
-        if current_suffix:
-            if not requested_suffix:
-                requested_name += current_suffix
-            elif requested_suffix.casefold() != current_suffix.casefold():
-                raise DiskError(f"Keep the {current_suffix} extension for this image.")
-        elif requested_suffix:
-            raise DiskError("This image has no extension; keep its filename extensionless.")
-
-        safe_name = self.safe_filename(requested_name)
-        if safe_name != requested_name:
-            raise DiskError("Use letters, numbers, spaces and ordinary filename punctuation only.")
-        if not Path(safe_name).stem:
-            raise DiskError("Enter a filename before the extension.")
-        if safe_name == session.name:
-            return
-
-        with session.lock:
-            session.name = safe_name
-            if session.descriptor_path:
-                descriptor_suffix = Path(session.descriptor_name or ".dsc").suffix or ".dsc"
-                session.descriptor_name = f"{Path(safe_name).stem}{descriptor_suffix}"
-            session.hfe_export_path = None
-            self._persist_session(session)
-
-    def list_checkpoints(self, session: ImageSession) -> list[dict]:
-        with session.lock:
-            return self.checkpoints.list(session)
-
-    def create_checkpoint(
-        self,
-        session: ImageSession,
-        name: str,
-        *,
-        automatic: bool = False,
-        reason: str | None = None,
-    ) -> dict:
-        with session.lock:
-            try:
-                return self.checkpoints.create(
-                    session,
-                    name,
-                    automatic=automatic,
-                    reason=reason,
-                )
-            except CheckpointError as exc:
-                raise DiskError(str(exc)) from exc
-
-    def begin_automatic_checkpoint(self, session: ImageSession, reason: str) -> dict:
-        """Capture the image before one API operation and return a finalisation token."""
-        with session.lock:
-            fingerprint = self.checkpoints.fingerprint(session)
-            checkpoint = self.create_checkpoint(
-                session,
-                f"Before {reason}",
-                automatic=True,
-                reason=reason,
-            )
-        return {"checkpoint": checkpoint, "fingerprint": fingerprint}
-
-    def finish_automatic_checkpoint(self, session: ImageSession, token: dict) -> None:
-        """Discard a speculative undo point when the request changed nothing."""
-        with session.lock:
-            try:
-                unchanged = self.checkpoints.fingerprint(session) == token["fingerprint"]
-            except OSError:
-                unchanged = False
-            if unchanged:
-                try:
-                    self.checkpoints.delete(session, token["checkpoint"]["id"])
-                except CheckpointError:
-                    pass
-            else:
-                self.checkpoints.prune_automatic(session)
-            # Every API mutation passes through this finaliser. Persist the
-            # resulting dirty/export state here so recovery cannot resurrect
-            # an edited image as though it were still saved.
-            self._persist_session(session)
-
-    def rollback_automatic_checkpoint(self, session: ImageSession, token: dict) -> None:
-        """Restore a failed mutation and remove its now-redundant undo point."""
-        checkpoint_id = str(token["checkpoint"]["id"])
-        self.restore_checkpoint(session, checkpoint_id)
-        try:
-            self.delete_checkpoint(session, checkpoint_id)
-        except DiskError:
-            pass
-
-    def restore_checkpoint(self, session: ImageSession, checkpoint_id: str) -> dict:
-        with session.lock:
-            try:
-                restored = self.checkpoints.restore(session, checkpoint_id)
-            except CheckpointError as exc:
-                raise DiskError(str(exc)) from exc
-            for cached in session.slot_cache.values():
-                cached.unlink(missing_ok=True)
-            session.slot_cache.clear()
-            session.menu_slot = None
-            session.menu_type = None
-            session.menu_scanned = False
-            session.menu_entries = None
-            session.adfs_menu_roots = None
-            session.hfe_export_path = None
-            session.finalised_mtime_ns = None
-            if session.kind == "tape":
-                try:
-                    session.tape = parse_uef(session.path.read_bytes())
-                except UEFError as exc:
-                    raise DiskError(str(exc)) from exc
-            self._persist_session(session)
-            return restored
-
-    def undo_last_change(self, session: ImageSession) -> dict:
-        with session.lock:
-            latest = self.checkpoints.latest_automatic(session)
-            if latest is None:
-                raise DiskError("There is no automatic checkpoint to undo.")
-            restored = self.restore_checkpoint(session, latest["id"])
-            try:
-                self.checkpoints.delete(session, latest["id"])
-            except CheckpointError as exc:
-                raise DiskError(str(exc)) from exc
-            return restored
-
-    def delete_checkpoint(self, session: ImageSession, checkpoint_id: str) -> None:
-        with session.lock:
-            try:
-                self.checkpoints.delete(session, checkpoint_id)
-            except CheckpointError as exc:
-                raise DiskError(str(exc)) from exc
-
-    def summary(self, session: ImageSession) -> dict:
-        checkpoints = self.list_checkpoints(session)
-        romfs = self.romfs_details(session) if session.kind == "romfs" else None
-        image_size = session.path.stat().st_size
-        return {
-            "id": session.id,
-            "name": session.name,
-            "kind": session.kind,
-            "size": image_size,
-            "hardDisk": session.kind == "adfs" and (
-                bool(session.descriptor_path)
-                or session.path.suffix.lower() in {".dat", ".dsc", ".hdf", ".hd4"}
-                or image_size > 2 * 1024 * 1024
-            ),
-            "dirty": session.dirty,
-            "hasDescriptor": bool(session.descriptor_path),
-            "descriptorName": session.descriptor_name,
-            "doubleSided": session.path.name.lower().endswith(".dsd"),
-            "containerFormat": "hfe" if session.hfe_original_path else None,
-            "readOnly": session.hfe_read_only or bool(romfs and romfs["readOnly"]),
-            "rom": ({
-                "bankSize": session.rom_bank_size,
-                "bankCount": bank_count(image_size, session.rom_bank_size),
-                "eraseByte": session.rom_erase_byte,
-                "platform": session.rom_platform,
-                "layout": session.rom_layout,
-                "componentNames": session.rom_component_names,
-                "project": session.rom_project,
-            } if session.kind == "rom" else None),
-            "romfs": romfs,
-            "targetHardware": session.target_hardware,
-            "hardwareProfile": session.hardware_profile,
-            "warnings": [
-                *self._normalise_warnings(session.warnings),
-                *(list(session.tape.warnings) if session.tape else []),
-            ],
-            "checkpoints": {
-                "total": len(checkpoints),
-                "named": sum(not item["automatic"] for item in checkpoints),
-                "canUndo": any(item["automatic"] for item in checkpoints),
-            },
-        }
 
     def preview_image_contents(
         self,
@@ -4183,183 +3664,6 @@ class DiskService(MmbCatalogueMixin, RomDiskMixin, TapeDiskMixin):
                 else:
                     warnings.extend(f"{name}: {warning}" for warning in item_warnings)
         return repairs, warnings
-
-    @staticmethod
-    def _adfs_directory_items(mount, directory: str, file_item) -> list[dict]:
-        """Read one installed tree using an already-open ADFS mount."""
-        pending = [directory]
-        items: list[dict] = []
-        while pending:
-            parent = pending.pop()
-            for entry in mount.iter_entries(parent):
-                path = str(entry.path)
-                if entry.is_dir:
-                    pending.append(path)
-                    continue
-                item = file_item(mount, path, path)
-                item["sourceName"] = (
-                    path[len(directory) + 1 :]
-                    if path.startswith(f"{directory}.")
-                    else path.rsplit(".", 1)[-1]
-                )
-                items.append(item)
-        return items
-
-    def _repair_copied_adfs_loaders(self, target: ImageSession, directory: str) -> tuple[list[str], list[str]]:
-        """Repair an already copied SSD/DSD tree in one writable ADFS mount."""
-        try:
-            from oaknut.disc.cli import _file_item, _write_copy_item
-        except ImportError as exc:
-            raise DiskError("The Oaknut loader-repair API is unavailable.") from exc
-
-        with self.adfs_mount(target) as mount:
-            items = self._adfs_directory_items(mount, directory, _file_item)
-            repairs, warnings = self._repair_adfs_loader_items(items)
-            for item in items:
-                if item.get("loaderRepairs"):
-                    _write_copy_item(mount, str(item["dst"]), item, True)
-        if repairs:
-            target.dirty = True
-        return repairs, warnings
-
-    @staticmethod
-    def _adfs_installation_roots(
-        directory_files: dict[str, list[str]],
-        source_names: dict[str, str],
-    ) -> list[str]:
-        """Identify imported software roots without treating menu folders as games."""
-        loader_names = {"!BOOT", "BOOT", "GO", "MENU", "LOADER", "START"}
-        menu_markers = {"GAMDATA", "GAMINDX", "PUBDATA", "PUBINDX", "UNIMENU"}
-        candidates: set[str] = {
-            path for path in source_names if path in directory_files
-        }
-        for path, names in directory_files.items():
-            upper = {name.upper() for name in names}
-            if upper & loader_names and not menu_markers.issubset(upper):
-                candidates.add(path)
-
-        # One imported image can contain its own subdirectories and loaders.
-        # Audit it once from its outer installation root.
-        roots: list[str] = []
-        for candidate in sorted(candidates, key=lambda item: (item.count("."), item.casefold())):
-            if any(candidate.casefold().startswith(f"{root.casefold()}.") for root in roots):
-                continue
-            roots.append(candidate)
-        return roots
-
-    def audit_adfs_installations(
-        self,
-        session: ImageSession,
-        root: str = "$",
-        progress: Callable[[str, int | None, int | None], None] | None = None,
-    ) -> dict:
-        """Dry-run HDD-installed floppy loader repairs under ``root``."""
-        if session.kind != "adfs" or not self.summary(session)["hardDisk"]:
-            raise DiskError("Installed disk auditing is available only for ADFS HDD images.")
-        report = progress or (lambda _message, _current=None, _total=None: None)
-        try:
-            from oaknut.disc.cli import _file_item
-        except ImportError as exc:
-            raise DiskError("The Oaknut ADFS audit API is unavailable.") from exc
-
-        with self.adfs_mount(session) as mount:
-            if not mount.exists(root):
-                raise DiskError(f"Path not found: {root}")
-            directory_files: dict[str, list[str]] = {}
-            pending = [root]
-            while pending:
-                directory = pending.pop()
-                entries = list(mount.iter_entries(directory))
-                directory_files[directory] = [
-                    str(entry.name) for entry in entries if not entry.is_dir
-                ]
-                pending.extend(str(entry.path) for entry in entries if entry.is_dir)
-
-            source_names = {
-                path: name
-                for path, name in session.adfs_source_names.items()
-                if path == root or path.startswith(f"{root}.")
-            }
-            roots = self._adfs_installation_roots(directory_files, source_names)
-            findings: list[dict] = []
-            for offset, directory in enumerate(roots):
-                report(
-                    f"Checking installed software in {directory}",
-                    offset,
-                    len(roots),
-                )
-                files = self._adfs_directory_items(mount, directory, _file_item)
-                proposed = [dict(item) for item in files]
-                repairs, warnings = self._repair_adfs_loader_items(proposed)
-                findings.append({
-                    "path": directory,
-                    "source": source_names.get(directory, ""),
-                    "fileCount": len(files),
-                    "repairs": repairs,
-                    "warnings": warnings,
-                    "status": "repairable" if repairs else "warning" if warnings else "clean",
-                })
-            report("Installed software audit complete", len(roots), len(roots))
-        return {
-            "root": root,
-            "directories": findings,
-            "checked": len(findings),
-            "repairable": sum(bool(item["repairs"]) for item in findings),
-            "warnings": sum(bool(item["warnings"]) for item in findings),
-        }
-
-    def repair_adfs_installations(
-        self,
-        session: ImageSession,
-        directories: list[str],
-        progress: Callable[[str, int | None, int | None], None] | None = None,
-    ) -> dict:
-        """Apply only the deterministic repairs shown by the dry-run audit."""
-        if session.kind != "adfs" or not self.summary(session)["hardDisk"]:
-            raise DiskError("Installed disk repair is available only for ADFS HDD images.")
-        unique = list(dict.fromkeys(str(path) for path in directories if str(path)))
-        if not unique:
-            raise DiskError("Choose at least one repairable installed disk directory.")
-        current = self.audit_adfs_installations(session)
-        available = {
-            item["path"]: item
-            for item in current["directories"]
-            if item["repairs"]
-        }
-        unknown = [path for path in unique if path not in available]
-        if unknown:
-            raise DiskError(
-                "The audit result is stale or no deterministic repair remains for: "
-                + ", ".join(unknown)
-            )
-        report = progress or (lambda _message, _current=None, _total=None: None)
-        repaired: list[dict] = []
-        try:
-            from oaknut.disc.cli import _file_item, _write_copy_item
-        except ImportError as exc:
-            raise DiskError("The Oaknut loader-repair API is unavailable.") from exc
-        # DAT images are expensive to mount and finalise. Keep the complete
-        # selected repair batch inside one writable mount.
-        with self.adfs_mount(session) as mount:
-            for offset, directory in enumerate(unique):
-                report(f"Repairing installed software in {directory}", offset, len(unique))
-                items = self._adfs_directory_items(mount, directory, _file_item)
-                repairs, warnings = self._repair_adfs_loader_items(items)
-                for item in items:
-                    if item.get("loaderRepairs"):
-                        _write_copy_item(mount, str(item["dst"]), item, True)
-                for repair in repairs:
-                    self._append_warning(
-                        session,
-                        f"{directory}: ADFS compatibility change made: {repair}.",
-                    )
-                for warning in warnings:
-                    self._append_warning(session, f"{directory}: {warning}")
-                repaired.append({"path": directory, "repairs": repairs, "warnings": warnings})
-        session.dirty = True
-        self._persist_session(session)
-        report("Installed software repair complete", len(unique), len(unique))
-        return {"repaired": repaired, "count": len(repaired)}
 
     @staticmethod
     def _is_empty_directory(mount, path: str) -> bool:

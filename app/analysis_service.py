@@ -11,10 +11,8 @@ from .dfs_compat import dfs_catalogue_files, infer_dfs_launch_page
 from .disk_service import MMB_HEADER_SIZE, MMB_SLOT_SIZE, DiskError
 from .menu_interpreter import decode_basic
 from .menu.adfs import installed_adfs_menus, test_installed_adfs_menu_entries
-from .menu.mmb import (
-    installed_mmb_menus,
-    parse_mmb_menu_data,
-)
+from .menu.mmb import parse_mmb_menu_data
+from .menu.mmb_discovery import installed_mmb_menus
 from .operations import OperationCancelled
 
 

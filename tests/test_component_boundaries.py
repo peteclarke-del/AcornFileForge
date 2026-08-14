@@ -3,11 +3,14 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from app.beebscsi_geometry import descriptor_size, old_map_checksum, old_map_size
+from app.adfs_install_service import ADFSInstallMixin
 from app.menu_records import normalise_page, parse_menu_data, serialise_menu
 from app.mmb_layout import ENTRY_SIZE, HEADER_SIZE, INDEX_START, SLOT_SIZE, entry_offset, image_size, slot_offset
 from app.menu import adfs, analysis, mmb
 from app.disk_service import DiskService
+from app.filesystem_disk_service import FilesystemDiskMixin
 from app.rom_disk_service import RomDiskMixin
+from app.session_disk_service import SessionDiskMixin
 from app.tape_disk_service import TapeDiskMixin
 
 
@@ -71,6 +74,22 @@ class ComponentBoundaryTests(unittest.TestCase):
         self.assertTrue(issubclass(DiskService, RomDiskMixin))
         self.assertNotIn("put_rom_bank", DiskService.__dict__)
         self.assertIs(DiskService.put_rom_bank, RomDiskMixin.put_rom_bank)
+
+    def test_session_operations_are_owned_by_the_session_component(self):
+        self.assertTrue(issubclass(DiskService, SessionDiskMixin))
+        self.assertNotIn("recoverable_sessions", DiskService.__dict__)
+        self.assertIs(DiskService.recoverable_sessions, SessionDiskMixin.recoverable_sessions)
+
+    def test_filesystem_mounts_are_owned_by_the_filesystem_component(self):
+        self.assertTrue(issubclass(DiskService, FilesystemDiskMixin))
+        self.assertNotIn("adfs_mount", DiskService.__dict__)
+        self.assertIs(DiskService.adfs_mount, FilesystemDiskMixin.adfs_mount)
+        self.assertIs(DiskService.romfs_details, FilesystemDiskMixin.romfs_details)
+
+    def test_adfs_installation_audit_is_owned_by_its_component(self):
+        self.assertTrue(issubclass(DiskService, ADFSInstallMixin))
+        self.assertNotIn("audit_adfs_installations", DiskService.__dict__)
+        self.assertIs(DiskService.audit_adfs_installations, ADFSInstallMixin.audit_adfs_installations)
 
 
 if __name__ == "__main__":

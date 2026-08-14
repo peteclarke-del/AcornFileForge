@@ -36,6 +36,9 @@ const {
   toast,
   trapFocus,
 } = window.AcornUI;
+const { archiveCrumbs, capacityMarkup, crumbs, paneFormat } = window.AcornPaneView.create({ esc, humanSize });
+const { folderTargetPlans } = window.AcornTransferPlanning.create({ targetNameRule });
+const { confirmPageOverride } = window.AcornSafetyDialogs.create({ esc, normalisePage, trapFocus });
 const showHelp = window.AcornHelp.create({ showModal, modalContent });
 const formats = window.AcornFormats;
 const OPEN_PANES_STORAGE_KEY = "acorn-file-forge-dynamic-panes";
@@ -198,70 +201,6 @@ function fitPaneMenus(host) {
       panel.classList.toggle("tool-menu-panel-right", panel.getBoundingClientRect().right > window.innerWidth - 8);
     });
   }));
-}
-
-function confirmPageOverride(defaultPage, chosenPage, subjects = []) {
-  if (Array.isArray(defaultPage)) {
-    const overrides = defaultPage.filter(item => item?.defaultPage && item?.chosenPage);
-    if (!overrides.length) return Promise.resolve(true);
-    return new Promise(resolve => {
-      const overlay = document.createElement("div");
-      overlay.className = "page-warning-overlay";
-      overlay.setAttribute("role", "alertdialog");
-      overlay.setAttribute("aria-modal", "true");
-      overlay.setAttribute("aria-labelledby", "page-warning-title");
-      overlay.innerHTML = `<div class="page-warning-card">
-        <span class="page-warning-icon" aria-hidden="true">!</span>
-        <h2 id="page-warning-title">Use ${overrides.length} changed PAGE ${overrides.length === 1 ? "value" : "values"}?</h2>
-        <p>These values differ from the launchers in the actual disk images.</p>
-        <div class="page-warning-list">${overrides.slice(0, 8).map(item =>
-          `<span><b>${esc(item.title)}</b><small>&amp;${esc(normalisePage(item.defaultPage))} recommended → &amp;${esc(normalisePage(item.chosenPage))} entered</small></span>`
-        ).join("")}${overrides.length > 8 ? `<em>and ${overrides.length - 8} more…</em>` : ""}</div>
-        <div class="help-warning"><strong>Risk:</strong> the wrong PAGE can overwrite filing-system workspace or loader data, corrupt BASIC, hang, or crash on real hardware.</div>
-        <div class="modal-actions"><button type="button" class="button ghost" data-page-cancel>Cancel</button><button type="button" class="button primary" data-page-confirm>Yes, use changed values</button></div>
-      </div>`;
-      const previouslyFocused = document.activeElement;
-      const finish = result => { overlay.remove(); previouslyFocused?.focus(); resolve(result); };
-      overlay.querySelector("[data-page-cancel]").onclick = () => finish(false);
-      overlay.querySelector("[data-page-confirm]").onclick = () => finish(true);
-      overlay.onkeydown = event => { if (event.key === "Escape") finish(false); else trapFocus(overlay, event); };
-      document.body.append(overlay);
-      overlay.querySelector("[data-page-cancel]").focus();
-    });
-  }
-  if (!defaultPage || normalisePage(defaultPage) === normalisePage(chosenPage)) {
-    return Promise.resolve(true);
-  }
-  const labels = Array.isArray(subjects) ? subjects.filter(Boolean) : [subjects].filter(Boolean);
-  return new Promise(resolve => {
-    const overlay = document.createElement("div");
-    overlay.className = "page-warning-overlay";
-    overlay.setAttribute("role", "alertdialog");
-    overlay.setAttribute("aria-modal", "true");
-    overlay.setAttribute("aria-labelledby", "page-warning-title");
-    overlay.innerHTML = `<div class="page-warning-card">
-      <span class="page-warning-icon" aria-hidden="true">!</span>
-      <h2 id="page-warning-title">Use a different PAGE value?</h2>
-      <p>The actual launcher in the disk image indicates <strong>&amp;${esc(normalisePage(defaultPage))}</strong>, but you entered <strong>&amp;${esc(normalisePage(chosenPage))}</strong>.</p>
-      ${labels.length ? `<p class="page-warning-subject">${esc(labels.slice(0, 4).join(", "))}${labels.length > 4 ? ` and ${labels.length - 4} more` : ""}</p>` : ""}
-      <div class="help-warning"><strong>Risk:</strong> the wrong PAGE can overwrite filing-system workspace or loader data, corrupt BASIC, hang, or crash on real hardware.</div>
-      <div class="modal-actions"><button type="button" class="button ghost" data-page-cancel>Cancel</button><button type="button" class="button primary" data-page-confirm>Yes, use &amp;${esc(normalisePage(chosenPage))}</button></div>
-    </div>`;
-    const previouslyFocused = document.activeElement;
-    const finish = result => {
-      overlay.remove();
-      previouslyFocused?.focus();
-      resolve(result);
-    };
-    overlay.querySelector("[data-page-cancel]").onclick = () => finish(false);
-    overlay.querySelector("[data-page-confirm]").onclick = () => finish(true);
-    overlay.onkeydown = event => {
-      if (event.key === "Escape") finish(false);
-      else trapFocus(overlay, event);
-    };
-    document.body.append(overlay);
-    overlay.querySelector("[data-page-cancel]").focus();
-  });
 }
 
 async function mmbRecommendedPage(imageId, slot, filename, action) {
@@ -522,29 +461,6 @@ async function openHexEditor(index, initialOffset = 0, { host: requestedHost = n
   if (panes[index] === pane) await refreshCurrentView(index);
 }
 
-function paneFormat(image) {
-  if (image.containerFormat === "hfe") return "HFE";
-  if (image.kind === "mmb") return "MMB";
-  if (image.kind === "tape") return "UEF";
-  if (image.kind === "rom") return "ROM";
-  if (image.kind === "romfs") return "RFS";
-  if (image.kind === "dfs") return image.name.toLowerCase().endsWith(".dsd") ? "DSD" : "SSD";
-  return "ADFS";
-}
-
-function capacityMarkup(capacity) {
-  if (!capacity?.available || !capacity.total) {
-    const reason = capacity?.reason || "Free-space information is loading.";
-    return `<span class="capacity unavailable" title="${esc(reason)}" aria-label="${esc(reason)}"><i></i></span>`;
-  }
-  const usedPercent = Math.max(0, Math.min(100, capacity.used * 100 / capacity.total));
-  const level = usedPercent >= 90 ? "critical" : usedPercent >= 70 ? "warning" : "healthy";
-  const details = ["slots", "banks"].includes(capacity.unit)
-    ? `${capacity.free} empty ${capacity.unit.slice(0, -1)}${capacity.free === 1 ? "" : "s"} of ${capacity.total} · ${capacity.used} populated · ${usedPercent.toFixed(1)}% full`
-    : `${humanSize(capacity.free)} free of ${humanSize(capacity.total)} · ${humanSize(capacity.used)} used · ${usedPercent.toFixed(1)}% full`;
-  return `<span class="capacity ${level}" role="progressbar" aria-label="${esc(details)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${usedPercent.toFixed(1)}" title="${esc(details)}" style="--capacity-used:${usedPercent}%"><i></i></span>`;
-}
-
 async function fetchCapacity(imageId, slot = null) {
   const query = new URLSearchParams();
   if (slot !== null) query.set("slot", slot);
@@ -555,31 +471,6 @@ async function fetchCapacity(imageId, slot = null) {
   } catch (_error) {
     return null;
   }
-}
-
-function crumbs(path, dfs = false) {
-  if (dfs) {
-    if (path === "") return '<span class="crumb current">Catalogues</span>';
-    return `<button class="crumb" data-path="">Catalogues</button><span>›</span><span class="crumb current">${esc(path)}</span>`;
-  }
-  const parts = path.split(".");
-  let current = "";
-  return parts.map((part, index) => {
-    current = index ? `${current}.${part}` : part;
-    const klass = index === parts.length - 1 ? "crumb current" : "crumb";
-    return `<button class="${klass}" data-path="${esc(current)}">${index ? "› " : ""}${esc(part)}</button>`;
-  }).join("");
-}
-
-function archiveCrumbs(pane) {
-  const parts = String(pane.archiveMember || "").split("/").filter(Boolean);
-  let member = "";
-  const children = parts.map((part, index) => {
-    member = member ? `${member}/${part}` : part;
-    const current = index === parts.length - 1;
-    return `${current ? "<span class=\"crumb current\">" : `<button class="crumb" data-archive-member="${esc(member)}">`}› ${esc(part)}${current ? "</span>" : "</button>"}`;
-  }).join("");
-  return `<button class="crumb archive-exit" title="Return to the containing filing system">${esc(pane.archiveName || "Archive")}</button>${children}`;
 }
 
 function selectedEntries(index) {
@@ -3533,45 +3424,6 @@ async function collectDroppedHostFiles(dataTransfer) {
     file,
     relativePath: file.webkitRelativePath || file.name,
   }));
-}
-
-function folderTargetPlans(pane, records, mode) {
-  const preserve = mode === "preserve" && pane.image.kind === "adfs";
-  const componentNames = new Map();
-  const usedByParent = new Map();
-  const changes = [];
-  const allocate = (parent, original, identity = "") => {
-    const mapKey = `${parent}\u0000${original}\u0000${identity}`;
-    if (componentNames.has(mapKey)) return componentNames.get(mapKey);
-    const rule = targetNameRule(pane, original);
-    const used = usedByParent.get(parent) || new Set();
-    let candidate = rule.suggested;
-    let suffix = 1;
-    while (used.has(candidate.toLowerCase())) {
-      const tail = String(suffix++);
-      candidate = `${rule.suggested.slice(0, rule.limit - tail.length)}${tail}`;
-    }
-    used.add(candidate.toLowerCase());
-    usedByParent.set(parent, used);
-    componentNames.set(mapKey, candidate);
-    if (candidate !== original) changes.push(`${original} → ${candidate}`);
-    return candidate;
-  };
-  return {
-    changes,
-    plans: records.map(item => {
-      const sourceParts = item.relativePath.replace(/\\/g, "/").split("/").filter(Boolean);
-      if (item.metadata?.targetName) sourceParts[sourceParts.length - 1] = item.metadata.targetName;
-      const keptParts = preserve ? sourceParts : sourceParts.slice(-1);
-      const targetParts = [];
-      for (const [partIndex, part] of keptParts.entries()) {
-        const parent = targetParts.join("/").toLowerCase();
-        const identity = !preserve && partIndex === keptParts.length - 1 ? item.relativePath : "";
-        targetParts.push(allocate(parent, part, identity));
-      }
-      return { ...item, targetPath: targetParts.join("/") };
-    }),
-  };
 }
 
 async function prepareHostFolderMetadata(records) {
