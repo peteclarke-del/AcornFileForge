@@ -172,6 +172,22 @@ window.AcornUI = (() => {
     setTimeout(() => item.remove(), error ? 6500 : 3500);
   }
 
+  function trapFocus(container, event) {
+    if (event.key !== "Tab") return;
+    const controls = [...container.querySelectorAll('a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex]:not([tabindex="-1"])')]
+      .filter(control => !control.hidden && !control.closest("[inert]") && control.getClientRects().length);
+    if (!controls.length) return event.preventDefault();
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
   function setModalProgress(message, current, total) {
     const update = typeof message === "object" && message !== null
       ? message
@@ -275,21 +291,7 @@ window.AcornUI = (() => {
     modalReturnFocus = null;
     modal.querySelector(".modal-toast-region")?.remove();
   });
-  modal.addEventListener("keydown", event => {
-    if (event.key !== "Tab") return;
-    const controls = [...modal.querySelectorAll('a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex]:not([tabindex="-1"])')]
-      .filter(control => !control.hidden && !control.closest("[inert]") && control.getClientRects().length);
-    if (!controls.length) return event.preventDefault();
-    const first = controls[0];
-    const last = controls[controls.length - 1];
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault();
-      last.focus();
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault();
-      first.focus();
-    }
-  });
+  modal.addEventListener("keydown", event => trapFocus(modal, event));
 
   function showModal(html, onSubmit, { replace = false } = {}) {
     const replacing = modal.open;
@@ -350,5 +352,5 @@ window.AcornUI = (() => {
     return closed;
   }
 
-  return { api, uploadApi, esc, humanSize, modal, modalContent, setModalAbort, setModalProgress, showModal, toast };
+  return { api, uploadApi, esc, humanSize, modal, modalContent, setModalAbort, setModalProgress, showModal, toast, trapFocus };
 })();

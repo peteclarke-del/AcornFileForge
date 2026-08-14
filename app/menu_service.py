@@ -1,18 +1,38 @@
 from __future__ import annotations
 
-import html
-import json
 import re
-import struct
 import tempfile
-import urllib.error
-import urllib.parse
-import urllib.request
-from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .dfs_compat import dfs_catalogue_files, infer_dfs_launch_page
+from .errors import DiskError
+from .metadata_lookup import (
+    best_distribution_filename as best_distribution_filename,
+    enrich_from_distribution_filename,
+    enrich_if_ambiguous as enrich_if_ambiguous,
+    lookup_online as lookup_online,
+    parse_distribution_filename as parse_distribution_filename,
+)
+from .menu_records import (
+    build_index as build_index,
+    fit_menu_display_fields as fit_menu_display_fields,
+    legacy_page_field_count as _legacy_page_field_count,
+    menu_title_case as menu_title_case,
+    normalise_mmb_record as _normalise_mmb_record,
+    normalise_page as _normalise_page,
+    normalise_record as _normalise_record,
+    parse_menu_data as parse_menu_data,
+    parse_mmb_menu_data as parse_mmb_menu_data,
+    parse_spi_menu_data as parse_spi_menu_data,
+    serialise_menu as serialise_menu,
+    serialise_spi_menu as serialise_spi_menu,
+)
+from .mmb_layout import (
+    SLOT_SIZE as MMB_SLOT_SIZE,
+    entry_offset as mmb_entry_offset,
+    slot_offset as mmb_slot_offset,
+)
 
 if TYPE_CHECKING:
     from .disk_service import DiskService, ImageSession
@@ -39,9 +59,6 @@ UNIVERSAL_4R_FILES = {
 MMC_DESKTOP_FILES = {"!BOOT", "DISCCAT", "GO-DTOP", "GO-MMC"}
 ELECTRON_MAGAZINE_FILES = {"!BOOT", "EUITEMS", "EUVOLUM", "MAGMENU", "UNIMENU"}
 ACORN_USER_FILES = {"!BOOT", "AU1DATA", "AU2DATA", "UNIMENU"}
-BBC_ARCHIVE = "https://www.bbcmicro.co.uk"
-ARCHIVE_ORG_SEARCH = "https://archive.org/advancedsearch.php"
-ITCH_SEARCH = "https://itch.io/search"
 CONVENTIONAL_LAUNCHERS = (
     "!RUN",
     "!START",
@@ -78,158 +95,6 @@ def _clean_title(value: str) -> str:
     value = re.sub(r"[_-]+", " ", value or "")
     value = re.sub(r"\b(?:SIDE|DISC|DISK)\s*[012AB]?\b", "", value, flags=re.I)
     return re.sub(r"\s+", " ", value).strip().title()
-
-
-_DISTRIBUTION_SUFFIXES = {
-    ".zip",
-    ".ssd",
-    ".dsd",
-    ".uef",
-    ".mmb",
-    ".adf",
-    ".adl",
-    ".adm",
-    ".ads",
-    ".dat",
-    ".dsk",
-    ".hdd",
-    ".hdf",
-    ".img",
-    ".raw",
-    ".hfe",
-}
-
-
-def parse_distribution_filename(filename: str) -> dict:
-    """Extract cautious TOSEC/Ghostware-style metadata from a host filename."""
-    name = Path(str(filename or "").replace("\\", "/")).name
-    stem = name
-    while Path(stem).suffix.lower() in _DISTRIBUTION_SUFFIXES:
-        stem = Path(stem).stem
-    stem = re.sub(r"\s*\[[^\]]*]\s*$", "", stem).strip()
-    groups = [
-        value.strip()
-        for value in re.findall(r"\(([^()]*)\)", stem)
-    ]
-    title_part = re.split(r"\s*\(", stem, maxsplit=1)[0]
-    title = re.sub(r"[_\s]+", " ", title_part).strip(" ._-")
-    if re.fullmatch(r"ZZZ[-_ ]UNK.*", title, re.I):
-        title = ""
-    article = re.fullmatch(r"(.+),\s*(The|A|An)", title, re.I)
-    if article:
-        title = f"{article.group(2)} {article.group(1)}"
-
-    date_index = next(
-        (
-            offset
-            for offset, value in enumerate(groups)
-            if re.fullmatch(r"(?:19|20)[0-9x]{2}(?:-[0-9x]{2}(?:-[0-9x]{2})?)?", value, re.I)
-        ),
-        None,
-    )
-    date = groups[date_index] if date_index is not None else ""
-    publisher = ""
-    if date_index is not None and date_index + 1 < len(groups):
-        candidate = groups[date_index + 1].strip()
-        if candidate != "-" and not re.fullmatch(
-            r"(?:UK|US|USA|EU|Europe|World|GB|DE|FR|ES|IT|JP|AU|"
-            r"BBC|Electron|Master|A3000|A5000|Archimedes|RISC ?OS)",
-            candidate,
-            re.I,
-        ):
-            publisher = candidate
-
-    # A common non-TOSEC archive form separates the same fields with dashes.
-    if not date:
-        loose = re.fullmatch(
-            r"(.+?)\s+-\s+((?:19|20)\d{2})\s+-\s+(.+)",
-            stem,
-        )
-        if loose:
-            title, date, publisher = (
-                loose.group(1).strip(),
-                loose.group(2),
-                loose.group(3).strip(),
-            )
-    return {
-        "title": title,
-        "year": date,
-        "publisher": publisher,
-        "sourceFilename": name,
-    }
-
-
-def best_distribution_filename(filenames: list[str]) -> str:
-    """Prefer the archive/member name carrying the richest usable metadata."""
-    candidates = [str(name) for name in filenames if name]
-    if not candidates:
-        return ""
-    parsed = [
-        (name, parse_distribution_filename(name))
-        for name in candidates
-    ]
-    return max(
-        parsed,
-        key=lambda item: (
-            bool(item[1]["publisher"]),
-            bool(item[1]["year"]),
-            len(item[1]["title"]),
-        ),
-    )[0]
-
-
-def enrich_from_distribution_filename(metadata: dict, filename: str) -> dict:
-    """Apply distribution-name facts before an ambiguous online lookup."""
-    parsed = parse_distribution_filename(filename)
-    facts = []
-    if parsed["title"]:
-        metadata["title"] = parsed["title"]
-        metadata["confidence"] = min(100, int(metadata.get("confidence", 0)) + 15)
-        facts.append(f"title “{parsed['title']}”")
-    if parsed["publisher"]:
-        metadata["publisher"] = parsed["publisher"]
-        metadata["confidence"] = min(100, int(metadata.get("confidence", 0)) + 10)
-        facts.append(f"publisher “{parsed['publisher']}”")
-    if parsed["year"]:
-        metadata["year"] = parsed["year"]
-        metadata["confidence"] = min(100, int(metadata.get("confidence", 0)) + 5)
-        facts.append(f"date {parsed['year']}")
-    if facts:
-        metadata.setdefault("evidence", []).append(
-            f"Distribution filename {parsed['sourceFilename']} supplied "
-            + ", ".join(facts)
-        )
-        metadata["distributionFilename"] = parsed["sourceFilename"]
-        metadata["ambiguous"] = (
-            int(metadata.get("confidence", 0)) < 75
-            or not metadata.get("filename")
-        )
-    return metadata
-
-
-def _normalise_page(value: object, default: str = "1900") -> str:
-    """Return the complete hexadecimal PAGE address used by Universal Menu."""
-    text = str(value or "").strip().upper().removeprefix("&")
-    if not text:
-        return default
-    if not re.fullmatch(r"[0-9A-F]{1,4}", text):
-        return text
-    number = int(text, 16)
-    if len(text) <= 2:
-        number <<= 8
-    return f"{number:X}"
-
-
-def _menu_page_field(value: object) -> str:
-    """Encode PAGE as the high-byte field expected by Universal Menu.
-
-    The installed BASIC reader evaluates ``"&" + field + "00"``. Editors and
-    APIs deliberately expose complete addresses such as 1900 or E00, so the
-    database must store 19 or E respectively rather than appending a second
-    pair of zeroes at launch time.
-    """
-    page = _normalise_page(value)
-    return page[:-2] if len(page) > 2 and page.endswith("00") else page
 
 
 def _exec_script(data: bytes) -> str | None:
@@ -695,412 +560,6 @@ def scan_adfs_menu_directories(
     return metadata, holders
 
 
-def _plain_text(source: str) -> str:
-    source = re.sub(r"(?is)<script.*?</script>|<style.*?</style>", " ", source)
-    source = re.sub(r"(?s)<[^>]+>", "\n", source)
-    return re.sub(r"[ \t]+", " ", html.unescape(source))
-
-
-def _lookup_bbc_archive(query: str, timeout: float) -> list[dict]:
-    url = f"{BBC_ARCHIVE}/index.php?on_Z=on&search={urllib.parse.quote_plus(query)}"
-    request = urllib.request.Request(url, headers={"User-Agent": "AcornFileForge/1.0 metadata lookup"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        source = response.read(1_000_000).decode("utf-8", "replace")
-    links: list[tuple[str, str]] = []
-    for match in re.finditer(r'(?is)href=["\'](?:https?://[^"\']+)?/?game\.php\?id=(\d+)[^"\']*["\'][^>]*>(.*?)</a>', source):
-        title = re.sub(r"<[^>]+>", "", html.unescape(match.group(2))).strip()
-        item = (match.group(1), title)
-        if title and item not in links:
-            links.append(item)
-    results = []
-    for game_id, link_title in links[:5]:
-        detail_url = f"{BBC_ARCHIVE}/game.php?id={game_id}"
-        detail_request = urllib.request.Request(detail_url, headers={"User-Agent": "AcornFileForge/1.0 metadata lookup"})
-        try:
-            with urllib.request.urlopen(detail_request, timeout=timeout) as response:
-                detail = _plain_text(response.read(1_000_000).decode("utf-8", "replace"))
-        except (OSError, urllib.error.URLError):
-            detail = ""
-        title_match = re.search(r"\bTitle\s*\n+\s*([^\n]+)", detail, re.I)
-        publisher_match = re.search(r"\bPublishers?\s*\n+\s*([^\n]+)", detail, re.I)
-        year_match = re.search(r"\bYear\s*\n+\s*(\d{4})", detail, re.I)
-        results.append(
-            {
-                "title": (title_match.group(1).strip() if title_match else link_title),
-                "publisher": (publisher_match.group(1).strip() if publisher_match else ""),
-                "year": (year_match.group(1) if year_match else ""),
-                "url": detail_url,
-                "source": "Complete BBC Micro Games Archive",
-            }
-        )
-    return results
-
-
-def _lookup_archive_org(query: str, timeout: float) -> list[dict]:
-    params = urllib.parse.urlencode(
-        {
-            "q": f'title:"{query}" AND (bbc micro OR acorn electron OR archimedes)',
-            "fl[]": ["identifier", "title", "creator", "date"],
-            "rows": 5,
-            "page": 1,
-            "output": "json",
-        },
-        doseq=True,
-    )
-    request = urllib.request.Request(
-        f"{ARCHIVE_ORG_SEARCH}?{params}",
-        headers={"User-Agent": "AcornFileForge/1.0 metadata lookup"},
-    )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        payload = json.loads(response.read(1_000_000).decode("utf-8", "replace"))
-    return [
-        {
-            "title": str(item.get("title") or query),
-            "publisher": str(item.get("creator") or ""),
-            "year": str(item.get("date") or "")[:4],
-            "url": f"https://archive.org/details/{urllib.parse.quote(str(item['identifier']))}",
-            "source": "Internet Archive",
-        }
-        for item in payload.get("response", {}).get("docs", [])
-        if item.get("identifier")
-    ]
-
-
-def _lookup_itch(query: str, timeout: float) -> list[dict]:
-    url = f"{ITCH_SEARCH}?q={urllib.parse.quote_plus(query + ' acorn')}"
-    request = urllib.request.Request(
-        url,
-        headers={"User-Agent": "AcornFileForge/1.0 metadata lookup"},
-    )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        source = response.read(1_000_000).decode("utf-8", "replace")
-    results = []
-    for match in re.finditer(r"(?is)<a\s+([^>]+)>(.*?)</a>", source):
-        attributes = match.group(1)
-        class_match = re.search(r'class=["\']([^"\']*)["\']', attributes, re.I)
-        href_match = re.search(
-            r'href=["\'](https://[^"\']+\.itch\.io/[^"\']+)["\']',
-            attributes,
-            re.I,
-        )
-        if not href_match or not class_match or "title" not in class_match.group(1).casefold():
-            continue
-        title = re.sub(r"<[^>]+>", "", html.unescape(match.group(2))).strip()
-        if title:
-            results.append(
-                {
-                    "title": title,
-                    "publisher": "",
-                    "year": "",
-                    "url": href_match.group(1),
-                    "source": "itch.io",
-                }
-            )
-        if len(results) == 5:
-            break
-    return results
-
-
-@lru_cache(maxsize=512)
-def lookup_online(query: str, timeout: float = 6.0) -> list[dict]:
-    """Search curated Acorn records first, then broader archive/homebrew catalogues."""
-    query = re.sub(r"\s+", " ", query).strip()
-    if len(query) < 2:
-        return []
-    results: list[dict] = []
-    for lookup in (_lookup_bbc_archive, _lookup_archive_org, _lookup_itch):
-        try:
-            found = lookup(query, timeout)
-        except (OSError, ValueError, urllib.error.URLError, TimeoutError):
-            continue
-        for item in found:
-            identity = (item["title"].casefold(), item["source"])
-            if identity not in {
-                (existing["title"].casefold(), existing["source"])
-                for existing in results
-            }:
-                results.append(item)
-        # A unique specialist-archive result is stronger than broad search noise.
-        if lookup is _lookup_bbc_archive and len(found) == 1:
-            return results
-    return results[:10]
-
-
-def enrich_if_ambiguous(metadata: dict) -> dict:
-    if not metadata["ambiguous"]:
-        return metadata
-    query = metadata["title"] or metadata["diskTitle"]
-    leaf = str(query or "").rsplit(".", 1)[-1].strip()
-    if re.fullmatch(
-        r"(?:\d+|DISC-?\d+|DISK-?\d+|GAMES?\d+|DISCS?\d+)",
-        leaf,
-        re.I,
-    ):
-        metadata["warnings"].append(
-            "Online lookup was skipped because the generic directory name "
-            "does not identify the software."
-        )
-        return metadata
-    try:
-        metadata["matches"] = lookup_online(query)
-    except (OSError, urllib.error.URLError, TimeoutError) as exc:
-        metadata["warnings"].append(f"Online lookup was unavailable: {exc}")
-        return metadata
-    if len(metadata["matches"]) == 1:
-        match = metadata["matches"][0]
-        metadata["title"] = match["title"]
-        metadata["publisher"] = match["publisher"]
-        metadata["sources"] = [{"label": match["source"], "url": match["url"]}]
-        metadata["confidence"] = min(100, metadata["confidence"] + 15)
-    elif metadata["matches"]:
-        metadata["warnings"].append("Several online matches were found; choose the correct one.")
-    else:
-        metadata["warnings"].append("No matching record was found online.")
-    return metadata
-
-
-def _basic_integer(value: int) -> bytes:
-    return b"\x40" + struct.pack(">I", max(0, int(value)))
-
-
-def build_index(lines: list[bytes]) -> bytes:
-    screens = [lines[pos : pos + 26] for pos in range(0, len(lines), 26)] or [[]]
-    first_screen: list[int] = []
-    current = 0
-    for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
-        first_screen.append(current)
-        for index, page in enumerate(screens):
-            if any(line[:1].decode("latin-1", "ignore").upper() == letter for line in page):
-                current = index
-                first_screen[-1] = index
-                break
-    values = [len(screens), len(screens[-1]), *first_screen, *(sum(len(line) + 2 for line in page) for page in screens)]
-    return b"".join(_basic_integer(value) for value in values)
-
-
-_MENU_MINOR_WORDS = {
-    "a", "an", "and", "as", "at", "but", "by", "for", "from", "in",
-    "into", "nor", "of", "on", "or", "the", "to", "vs", "with",
-}
-_MENU_ACRONYMS = {
-    "ADFS", "AQOS", "BBC", "CPU", "DFS", "FIFA", "MMFS", "RAM", "REVS",
-    "RISC", "ROM", "SAS", "UFO", "UK", "USA",
-}
-_ROMAN_NUMERAL = re.compile(r"^(?:I|II|III|IV|V|VI|VII|VIII|IX|X)$")
-
-
-def menu_title_case(value: object) -> str:
-    """Apply readable title case only to metadata supplied wholly in capitals."""
-    title = " ".join(str(value or "").strip().split())
-    letters = [character for character in title if character.isalpha()]
-    if not letters or not all(character.isupper() for character in letters):
-        return title
-    parts = re.split(r"([\s-]+)", title)
-    word_positions = [index for index, part in enumerate(parts) if part and not re.fullmatch(r"[\s-]+", part)]
-    first_word = word_positions[0] if word_positions else -1
-    last_word = word_positions[-1] if word_positions else -1
-    for index in word_positions:
-        word = parts[index]
-        bare = re.sub(r"^[^A-Z0-9]+|[^A-Z0-9]+$", "", word)
-        if not bare:
-            continue
-        if bare in _MENU_ACRONYMS or _ROMAN_NUMERAL.fullmatch(bare) or any(character.isdigit() for character in bare):
-            replacement = bare
-        elif bare.casefold() in _MENU_MINOR_WORDS and index not in {first_word, last_word}:
-            replacement = bare.lower()
-        else:
-            replacement = bare[:1].upper() + bare[1:].lower()
-        parts[index] = word.replace(bare, replacement, 1)
-    return "".join(parts)
-
-
-def fit_menu_display_fields(title: object, publisher: object, width: int = 38) -> tuple[str, str]:
-    """Fit ``title,publisher`` after the menu's two-character A- label."""
-    def trim(value: str, limit: int) -> str:
-        if len(value) <= limit:
-            return value
-        shortened = value[:limit].rstrip()
-        boundary = shortened.rfind(" ")
-        return shortened[:boundary] if boundary >= max(1, limit * 2 // 3) else shortened
-
-    clean_title = menu_title_case(title)
-    clean_publisher = " ".join(str(publisher or "").strip().split())
-    if not clean_publisher:
-        return trim(clean_title, width), ""
-    title_limit = min(30, max(1, width - 2))
-    clean_title = trim(clean_title, title_limit)
-    publisher_limit = max(0, width - len(clean_title) - 1)
-    return clean_title, trim(clean_publisher, publisher_limit)
-
-
-def parse_menu_data(data: bytes, publisher_view: bool = False) -> list[dict]:
-    rows = []
-    for offset, raw in enumerate(data.decode("latin-1", "replace").splitlines()):
-        fields = raw.split(",")
-        if len(fields) < 6:
-            continue
-        first, second, filename, action, page, disk = fields[:6]
-        system = action[:1] if offset == 0 and action[:1] in {"D", "B", "M", "H"} else "M"
-        if offset == 0 and action[:1] in {"D", "B", "M", "H"}:
-            action = action[1:]
-            # The original database format sacrificed the first record's
-            # action to store its one-character system marker.  A command-file
-            # !BOOT cannot sensibly be CHAINed, so recover that legacy case.
-            if not action and filename.upper() == "!BOOT":
-                action = "E"
-        rows.append(
-            {
-                "title": second if publisher_view else first,
-                "publisher": first if publisher_view else second,
-                "filename": filename,
-                "action": action,
-                "page": _normalise_page(page),
-                "diskTitle": disk,
-                "system": system,
-            }
-        )
-    return rows
-
-
-def parse_spi_menu_data(data: bytes, publisher_view: bool = False) -> list[dict]:
-    """Read Ray Harper's three-field Electron SPI/SDI menu records."""
-    rows = []
-    for raw in data.decode("latin-1", "replace").splitlines():
-        fields = raw.split(",")
-        if len(fields) < 3:
-            continue
-        first, second, disk = fields[:3]
-        rows.append(
-            {
-                "title": second if publisher_view else first,
-                "publisher": first if publisher_view else second,
-                "filename": "!BOOT",
-                "action": "E",
-                "page": "1900",
-                "diskTitle": disk,
-                "system": "M",
-            }
-        )
-    return rows
-
-
-def parse_mmb_menu_data(
-    data: bytes,
-    menu_type: str | None,
-    publisher_view: bool = False,
-) -> list[dict]:
-    if menu_type == "spi-game-menu":
-        return parse_spi_menu_data(data, publisher_view=publisher_view)
-    return parse_menu_data(data, publisher_view=publisher_view)
-
-
-def serialise_menu(
-    entries: list[dict],
-    publisher_view: bool = False,
-    system: str = "M",
-    *,
-    preserve_order: bool = False,
-    preserve_first_action: bool = False,
-) -> tuple[bytes, bytes]:
-    key = (lambda item: (item["publisher"].casefold(), item["title"].casefold())) if publisher_view else (
-        lambda item: (item["title"].casefold(), item["publisher"].casefold())
-    )
-    ordered = list(entries) if preserve_order else sorted(entries, key=key)
-    lines = []
-    for offset, item in enumerate(ordered):
-        display_title, display_publisher = fit_menu_display_fields(item["title"], item["publisher"])
-        first, second = (display_publisher, display_title) if publisher_view else (display_title, display_publisher)
-        action = (
-            f"{system}{item['action']}"
-            if offset == 0 and preserve_first_action
-            else system if offset == 0
-            else item["action"]
-        )
-        fields = [
-            first,
-            second,
-            item["filename"],
-            action,
-            _menu_page_field(item["page"]),
-            item["diskTitle"],
-        ]
-        safe = [str(value or "").replace(",", " ").replace("\r", " ").replace("\n", " ") for value in fields]
-        lines.append(",".join(safe).encode("latin-1", "replace"))
-    return b"\r\n".join(lines) + (b"\r\n" if lines else b""), build_index(lines)
-
-
-def serialise_spi_menu(
-    entries: list[dict],
-    publisher_view: bool = False,
-) -> tuple[bytes, bytes]:
-    key = (
-        (lambda item: (item["publisher"].casefold(), item["title"].casefold()))
-        if publisher_view
-        else (lambda item: (item["title"].casefold(), item["publisher"].casefold()))
-    )
-    lines = []
-    for item in sorted(entries, key=key):
-        display_title, display_publisher = fit_menu_display_fields(item["title"], item["publisher"])
-        first, second = (
-            (display_publisher, display_title)
-            if publisher_view
-            else (display_title, display_publisher)
-        )
-        fields = (first, second, item["diskTitle"])
-        safe = [
-            str(value or "").replace(",", " ").replace("\r", " ").replace("\n", " ")
-            for value in fields
-        ]
-        lines.append(",".join(safe).encode("latin-1", "replace"))
-    return b"\r\n".join(lines) + (b"\r\n" if lines else b""), build_index(lines)
-
-
-def _normalise_record(metadata: dict, system: str) -> dict:
-    from .disk_service import DiskError
-
-    is_adfs = system == "H"
-    title, publisher = fit_menu_display_fields(metadata.get("title", ""), metadata.get("publisher", ""))
-    record = {
-        "title": title,
-        "publisher": publisher,
-        "filename": str(metadata.get("filename", "")).strip()[: 10 if is_adfs else 7],
-        "action": str(metadata.get("action", "")).strip().upper(),
-        "page": _normalise_page(metadata.get("page", "1900")),
-        "diskTitle": str(
-            (metadata.get("path") or metadata.get("diskTitle", ""))
-            if is_adfs
-            else metadata.get("diskTitle", "")
-        ).strip(),
-        "system": system,
-    }
-    if not is_adfs:
-        record["diskTitle"] = record["diskTitle"][:12]
-    if not record["title"] or not record["filename"] or not record["diskTitle"]:
-        location = "ADFS directory path" if is_adfs else "MMB disk title"
-        raise DiskError(f"Title, launch filename and {location} are required.")
-    return record
-
-
-def _normalise_mmb_record(metadata: dict, menu_type: str | None) -> dict:
-    if menu_type != "spi-game-menu":
-        return _normalise_record(metadata, "M")
-    from .disk_service import DiskError
-
-    title, publisher = fit_menu_display_fields(metadata.get("title", ""), metadata.get("publisher", ""))
-    record = {
-        "title": title,
-        "publisher": publisher,
-        "filename": "!BOOT",
-        "action": "E",
-        "page": "1900",
-        "diskTitle": str(metadata.get("diskTitle", "")).strip()[:12],
-        "system": "M",
-    }
-    if not record["title"] or not record["diskTitle"]:
-        raise DiskError("Title and MMB disk title are required for an SPI Game Menu entry.")
-    return record
-
-
 def _put_bytes(
     service: DiskService,
     session: ImageSession,
@@ -1141,7 +600,7 @@ def _write_databases(
     root: str = "$",
     preserve_game_order: bool = False,
 ) -> None:
-    launcher_path = f"$.UNIMENU" if slot is not None else _adfs_child(root, "UNIMENU")
+    launcher_path = "$.UNIMENU" if slot is not None else _adfs_child(root, "UNIMENU")
     launcher_update: bytes | None = None
     preserve_first_action = False
     is_upgradeable_universal = (
@@ -1220,7 +679,8 @@ def _write_databases(
         with session.lock, resolve_mount(f"{disk_path}:$", writable=True) as resolved:
             write_to_mount(resolved.mount)
     if session.kind == "mmb":
-        assert slot is not None
+        if slot is None:
+            raise DiskError("An MMB menu operation requires a target slot.")
         service._sync_slot(session, slot)
     else:
         session.dirty = True
@@ -1335,10 +795,8 @@ def _adfs_boot_content(root: str) -> bytes:
 def _template_slot_path(service: DiskService, template_dir: Path) -> Path:
     template = template_dir / "universal.ssd"
     if not template.is_file():
-        from .disk_service import DiskError
         raise DiskError("No Universal Menu template is available.")
-    if template.stat().st_size != 204800:
-        from .disk_service import DiskError
+    if template.stat().st_size != MMB_SLOT_SIZE:
         raise DiskError("The Universal Menu template is truncated.")
     return template
 
@@ -1350,8 +808,6 @@ def create_adfs_menu(
     entries: list[dict],
     template_dir: Path,
 ) -> dict:
-    from .disk_service import DiskError
-
     if session.kind != "adfs":
         raise DiskError("An ADFS menu can only be created in an ADFS image.")
     if not entries:
@@ -1609,8 +1065,6 @@ def move_adfs_items(
     items: list[dict],
 ) -> dict:
     """Move ADFS objects and rewrite relevant installed-menu launch paths."""
-    from .disk_service import DiskError
-
     if session.kind != "adfs":
         raise DiskError("Same-image drag moves are available for ADFS images.")
     if not items:
@@ -1708,8 +1162,6 @@ def delete_adfs_items(
     paths: list[str],
 ) -> dict:
     """Delete ADFS objects and rewrite affected installed menus once."""
-    from .disk_service import DiskError
-
     if session.kind != "adfs":
         raise DiskError("This deletion helper requires an ADFS image.")
     service.require_writable_geometry(session)
@@ -1880,7 +1332,6 @@ def append_adfs_menu_entries(
     """Append or replace many ADFS menu records with one database rewrite."""
     records = [_normalise_record(metadata, "H") for metadata in metadata_items]
     if not records:
-        from .disk_service import DiskError
         raise DiskError("No ADFS menu entries were supplied.")
     if not has_adfs_menu(service, session, root):
         return create_adfs_menu(service, session, root, records, template_dir)
@@ -1933,8 +1384,6 @@ def reorder_adfs_menu(
     ordered_entries: list[object],
 ) -> dict:
     """Rewrite an installed ADFS menu in an explicit title-view order."""
-    from .disk_service import DiskError
-
     if session.kind != "adfs":
         raise DiskError("Directory-menu ordering is only available for ADFS images.")
     if not has_adfs_menu(service, session, root):
@@ -2047,21 +1496,13 @@ def audit_adfs_menu_pages(
     root: str,
 ) -> dict:
     """Audit and repair PAGE records in an installed ADFS directory menu."""
-    from .disk_service import DiskError
-
     if session.kind != "adfs":
         raise DiskError("ADFS PAGE auditing requires an ADFS image.")
     if not has_adfs_menu(service, session, root):
         raise DiskError(f"No installed ADFS menu was found in {root}.")
     raw_database = service.read_file(session, None, _adfs_child(root, "GAMDATA"))
     entries = parse_menu_data(raw_database)
-    legacy_fields = sum(
-        1
-        for line in raw_database.decode("latin-1", "replace").splitlines()
-        if len(line.split(",")) >= 5
-        and len(line.split(",")[4].strip()) > 2
-        and line.split(",")[4].strip().upper().endswith("00")
-    )
+    legacy_fields = _legacy_page_field_count(raw_database)
     corrections: list[dict] = []
     unresolved: list[dict] = []
     verified = 0
@@ -2266,8 +1707,6 @@ def backup_mmb_menu_slot(
     destination_slot: int,
 ) -> dict:
     """Copy the active menu SSD to a read-only, detection-safe backup slot."""
-    from .disk_service import DiskError, MMB_ENTRY_SIZE, MMB_HEADER_SIZE, MMB_SLOT_SIZE
-
     if session.kind != "mmb":
         raise DiskError("Menu-slot backups require an MMB image.")
     source_slot, menu_type = installed_mmb_menu(service, session)
@@ -2283,9 +1722,9 @@ def backup_mmb_menu_slot(
     title = f"MBACKUP-{source_slot:03d}"[:12]
     title_bytes = title.encode("latin-1").ljust(12, b"\0")
     with session.lock, session.path.open("r+b") as image:
-        image.seek(16 + destination_slot * MMB_ENTRY_SIZE)
+        image.seek(mmb_entry_offset(destination_slot))
         image.write(title_bytes + b"\0\0\0" + b"\0")
-        image.seek(MMB_HEADER_SIZE + destination_slot * MMB_SLOT_SIZE)
+        image.seek(mmb_slot_offset(destination_slot))
         image.write(data)
     session.slot_cache.pop(destination_slot, None)
     session.dirty = True
@@ -2305,8 +1744,6 @@ def restore_mmb_menu_slot(
     backup_slot: int,
 ) -> dict:
     """Restore a labelled menu backup over the active menu slot, with rollback."""
-    from .disk_service import DiskError, MMB_HEADER_SIZE, MMB_SLOT_SIZE
-
     if session.kind != "mmb":
         raise DiskError("Menu-slot restore requires an MMB image.")
     menu_slot, _current_type = installed_mmb_menu(service, session)
@@ -2323,13 +1760,13 @@ def restore_mmb_menu_slot(
     original = service._slot_path(session, menu_slot).read_bytes()
     try:
         with session.lock, session.path.open("r+b") as image:
-            image.seek(MMB_HEADER_SIZE + menu_slot * MMB_SLOT_SIZE)
+            image.seek(mmb_slot_offset(menu_slot))
             image.write(replacement)
         session.slot_cache.pop(menu_slot, None)
         service.validate(session, menu_slot)
     except Exception:
         with session.lock, session.path.open("r+b") as image:
-            image.seek(MMB_HEADER_SIZE + menu_slot * MMB_SLOT_SIZE)
+            image.seek(mmb_slot_offset(menu_slot))
             image.write(original)
         session.slot_cache.pop(menu_slot, None)
         raise
@@ -2568,7 +2005,7 @@ def install_template(
     if not template.is_file():
         raise RuntimeError("No MMB menu template is available.")
     data = template.read_bytes()
-    if len(data) != 204800:
+    if len(data) != MMB_SLOT_SIZE:
         raise RuntimeError("The MMB menu template is truncated.")
     titles = {
         "universal": "AFF_UNIMENU",
@@ -2590,8 +2027,6 @@ def refresh_mmc_desktop_catalogue(
     menu_slot: int,
 ) -> int:
     """Rebuild MMC Desktop's fixed-width DISCCAT from current MMB slots."""
-    from .disk_service import DiskError
-
     raw = bytearray(service.read_file(session, menu_slot, "$.DISCCAT"))
     record_offset = 10
     record_size = 16
@@ -2629,8 +2064,6 @@ def install_mmb_menu(
     template_dir: Path,
     menu_type: str = "universal",
 ) -> dict:
-    from .disk_service import DiskError
-
     if session.kind != "mmb":
         raise DiskError("A menu disk can only be installed in an MMB image.")
     existing, existing_type = installed_mmb_menu(service, session)
@@ -2666,8 +2099,6 @@ def configure_mmb_universal_page(
     page: str,
 ) -> dict:
     """Configure the Universal Menu boot script without guessing MMFS safety."""
-    from .disk_service import DiskError
-
     menu_slot = find_menu_slot(service, session)
     if menu_slot is None or session.menu_type != "universal":
         raise DiskError("A Games Universal Menu must be installed before setting its PAGE.")
@@ -2702,8 +2133,6 @@ def update_menu(
     menu_slot: int,
     template_dir: Path,
 ) -> dict:
-    from .disk_service import DiskError
-
     actual = find_menu_slot(service, session)
     installed = actual is None
     if actual is None:
@@ -2799,8 +2228,6 @@ def replace_mmb_menu(
 
 def audit_mmb_menu_pages(service: DiskService, session: ImageSession) -> dict:
     """Check every Universal Menu launcher and repair provable PAGE errors."""
-    from .disk_service import DiskError
-
     if session.kind != "mmb":
         raise DiskError("PAGE auditing requires an MMB image.")
     menu_slot = find_menu_slot(service, session)
@@ -2814,13 +2241,7 @@ def audit_mmb_menu_pages(service: DiskService, session: ImageSession) -> dict:
     data_path = mmb_menu_data_path(session)
     raw_database = service.read_file(session, menu_slot, data_path)
     entries = parse_mmb_menu_data(raw_database, session.menu_type)
-    legacy_fields = sum(
-        1
-        for line in raw_database.decode("latin-1", "replace").splitlines()
-        if len(line.split(",")) >= 5
-        and len(line.split(",")[4].strip()) > 2
-        and line.split(",")[4].strip().upper().endswith("00")
-    )
+    legacy_fields = _legacy_page_field_count(raw_database)
     slots_by_title: dict[str, list[int]] = {}
     for item in service.list_slots(session):
         if item.get("formatted") and int(item["slot"]) != menu_slot:
@@ -2886,8 +2307,7 @@ def audit_mmb_menu_pages(service: DiskService, session: ImageSession) -> dict:
             service.validate(session, menu_slot)
         except Exception:
             with session.lock, session.path.open("r+b") as image:
-                from .disk_service import MMB_HEADER_SIZE, MMB_SLOT_SIZE
-                image.seek(MMB_HEADER_SIZE + menu_slot * MMB_SLOT_SIZE)
+                image.seek(mmb_slot_offset(menu_slot))
                 image.write(original_slot)
             session.slot_cache.pop(menu_slot, None)
             raise
@@ -2918,8 +2338,6 @@ def edit_mmb_menu_entries(
     expected_entries: list[object],
 ) -> dict:
     """Atomically replace a Universal Menu after validating every record."""
-    from .disk_service import DiskError
-
     if session.kind != "mmb":
         raise DiskError("Universal Menu editing requires an MMB image.")
     menu_slot = find_menu_slot(service, session)

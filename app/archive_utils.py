@@ -8,10 +8,32 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Iterator
 
-from .disk_service import DiskError
+from .errors import DiskError
 
 MAX_ARCHIVE_MEMBERS = 2048
 MAX_ARCHIVE_EXPANDED_BYTES = 2 * 1024 * 1024 * 1024
+
+
+def validated_zip_members(
+    archive: zipfile.ZipFile,
+    *,
+    max_expanded_bytes: int = MAX_ARCHIVE_EXPANDED_BYTES,
+) -> list[zipfile.ZipInfo]:
+    """Return members after applying shared ZIP bomb and encryption limits."""
+    members = archive.infolist()
+    if len(members) > MAX_ARCHIVE_MEMBERS:
+        raise DiskError(
+            f"The ZIP contains more than {MAX_ARCHIVE_MEMBERS:,} entries."
+        )
+    files = [item for item in members if not item.is_dir()]
+    if any(item.flag_bits & 0x1 for item in files):
+        raise DiskError("Password-protected ZIP members are not supported.")
+    if sum(item.file_size for item in files) > max_expanded_bytes:
+        limit_mb = max_expanded_bytes // (1024 * 1024)
+        raise DiskError(
+            f"The ZIP expands beyond the {limit_mb:,} MB safety limit."
+        )
+    return members
 
 
 @dataclass
@@ -25,11 +47,7 @@ def _supported_members(
     archive: zipfile.ZipFile,
     extensions: set[str],
 ) -> list[zipfile.ZipInfo]:
-    all_members = archive.infolist()
-    if len(all_members) > MAX_ARCHIVE_MEMBERS:
-        raise DiskError(
-            f"The ZIP contains more than {MAX_ARCHIVE_MEMBERS:,} entries."
-        )
+    all_members = validated_zip_members(archive)
     members = [
         item
         for item in all_members
@@ -37,13 +55,6 @@ def _supported_members(
         and not item.filename.startswith("__MACOSX/")
         and Path(item.filename).suffix.lower() in extensions
     ]
-    if any(item.flag_bits & 0x1 for item in members):
-        raise DiskError("Password-protected ZIP members are not supported.")
-    expanded = sum(item.file_size for item in members)
-    if expanded > MAX_ARCHIVE_EXPANDED_BYTES:
-        raise DiskError(
-            "The supported images in this ZIP expand beyond the 2 GiB safety limit."
-        )
     return members
 
 
