@@ -4,7 +4,9 @@ import json
 import re
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Callable, Iterator
 
 from .disk_service import SESSION_OWNER, DiskError
 
@@ -81,6 +83,30 @@ class OperationRegistry:
                 "ownerId": SESSION_OWNER.get(),
             }
             self._persist()
+
+    @contextmanager
+    def tracked(
+        self,
+        operation_id: str | None,
+        start_message: str,
+        complete_message: str = "Complete",
+    ) -> Iterator[Callable[..., None]]:
+        """Own the complete lifecycle of one cancellable operation."""
+        if operation_id:
+            self.start(operation_id, start_message)
+        progress = lambda message, current=None, total=None: self.update(
+            operation_id, message, current, total
+        )
+        try:
+            yield progress
+        except OperationCancelled as exc:
+            self.cancelled(operation_id, str(exc))
+            raise
+        except Exception as exc:
+            self.fail(operation_id, str(exc))
+            raise
+        else:
+            self.finish(operation_id, complete_message)
 
     def update(
         self,

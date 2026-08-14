@@ -42,55 +42,45 @@ const OPEN_PANES_STORAGE_KEY = "acorn-file-forge-dynamic-panes";
 const EDITOR_DOCUMENTS_STORAGE_KEY = "acorn-file-forge-editor-documents-v1";
 const MAX_RETAINED_EDITOR_DOCUMENTS = 24;
 const MAX_RETAINED_EDITOR_DRAFT = 512 * 1024;
-let workspacePersistenceReady = false;
 let workspaceClipboard = null;
 let clipboardMutationInProgress = false;
-const editorDocuments = new Map();
-let activeEditorDocument = null;
-let editorDocumentToRestore = null;
+const editorWorkspace = window.AcornEditorWorkspace.create({
+  storage: sessionStorage,
+  key: EDITOR_DOCUMENTS_STORAGE_KEY,
+  maxDocuments: MAX_RETAINED_EDITOR_DOCUMENTS,
+  maxDraftBytes: MAX_RETAINED_EDITOR_DRAFT,
+  maxPanes: MAX_PANES,
+});
+const editorDocuments = editorWorkspace.state.documents;
+const persistEditorDocuments = editorWorkspace.persist;
+editorWorkspace.restore();
 
-function persistEditorDocuments() {
-  try {
-    const documents = [...editorDocuments.values()].slice(-MAX_RETAINED_EDITOR_DOCUMENTS).map(document => ({
-      ...document,
-      draft: typeof document.draft === "string" ? document.draft.slice(0, MAX_RETAINED_EDITOR_DRAFT) : null,
-      savedValue: typeof document.savedValue === "string" ? document.savedValue.slice(0, MAX_RETAINED_EDITOR_DRAFT) : null,
-    }));
-    sessionStorage.setItem(EDITOR_DOCUMENTS_STORAGE_KEY, JSON.stringify({ active: activeEditorDocument, documents }));
-  } catch (_error) {
-    // Private browsing and storage quotas must never prevent normal editing.
-  }
-}
-
-function restoreEditorDocuments() {
-  try {
-    const saved = JSON.parse(sessionStorage.getItem(EDITOR_DOCUMENTS_STORAGE_KEY) || "{}");
-    if (!Array.isArray(saved.documents)) return;
-    saved.documents.slice(-MAX_RETAINED_EDITOR_DOCUMENTS).forEach(document => {
-      if (!document || typeof document.key !== "string" || !/^[0-9a-f]{32}$/.test(String(document.imageId || ""))) return;
-      if (!Number.isInteger(document.index) || document.index < 0 || document.index >= MAX_PANES) return;
-      if (typeof document.path !== "string" || typeof document.name !== "string") return;
-      editorDocuments.set(document.key, {
-        ...document,
-        draft: typeof document.draft === "string" ? document.draft.slice(0, MAX_RETAINED_EDITOR_DRAFT) : null,
-        savedValue: typeof document.savedValue === "string" ? document.savedValue.slice(0, MAX_RETAINED_EDITOR_DRAFT) : null,
-      });
-    });
-    if (editorDocuments.has(saved.active)) editorDocumentToRestore = saved.active;
-  } catch (_error) {
-    sessionStorage.removeItem(EDITOR_DOCUMENTS_STORAGE_KEY);
-  }
-}
-
-restoreEditorDocuments();
+const workspacePersistence = window.AcornWorkspacePersistence.create({
+  panes,
+  storage: localStorage,
+  storageKey: OPEN_PANES_STORAGE_KEY,
+  maxPanes: MAX_PANES,
+  newPaneState,
+  restoredDfsPath,
+  api,
+  rebuildPaneHosts,
+  renderPane,
+  acceptImage,
+  loadDirectory,
+  editorWorkspace,
+  activateEditorDocument,
+  toast,
+});
+const rememberOpenPanes = workspacePersistence.remember;
+const restoreOpenPanes = workspacePersistence.restore;
 
 function editorDocumentKey(index, pane, path) {
   return [index, pane.image?.id || "", pane.slot ?? "-", pane.side ?? "-", path].join("|");
 }
 
 function captureActiveEditorDocument() {
-  if (!activeEditorDocument) return;
-  const document = editorDocuments.get(activeEditorDocument);
+  if (!editorWorkspace.state.active) return;
+  const document = editorDocuments.get(editorWorkspace.state.active);
   const textarea = modalContent.querySelector(".source-editor .source-content");
   if (!document || !textarea) return;
   document.draft = textarea.value;
@@ -110,13 +100,13 @@ function retainEditorDocument(index, pane, entry, path, view = "source") {
     ...existing, key, index, imageId: pane.image.id, imageName: pane.image.name,
     path, directory: pane.path || "$", name: entry.name, slot: pane.slot, side: pane.side, view,
   });
-  activeEditorDocument = key;
+  editorWorkspace.state.active = key;
   persistEditorDocuments();
   return editorDocuments.get(key);
 }
 
 async function activateEditorDocument(key, force = false) {
-  if (key === activeEditorDocument && !force) return;
+  if (key === editorWorkspace.state.active && !force) return;
   captureActiveEditorDocument();
   const document = editorDocuments.get(key);
   if (!document) return;
@@ -134,13 +124,13 @@ async function activateEditorDocument(key, force = false) {
 }
 
 function installEditorDocumentTabs(root, pane) {
-  if (!root || !activeEditorDocument) return;
+  if (!root || !editorWorkspace.state.active) return;
   root.querySelector(".editor-document-tabs")?.remove();
   const relevant = [...editorDocuments.values()].filter(document => document.imageId === pane.image.id);
   const bar = document.createElement("nav");
   bar.className = "editor-document-tabs";
   bar.setAttribute("aria-label", "Open files in this image");
-  bar.innerHTML = `<div>${relevant.map(document => `<button type="button" data-editor-document="${esc(document.key)}" class="${document.key === activeEditorDocument ? "active" : ""}" title="${esc(document.path)}"><span>${esc(document.name)}</span>${document.draft != null && document.draft !== document.savedValue ? "<i>●</i>" : ""}<b data-editor-document-close="${esc(document.key)}" aria-label="Close ${esc(document.name)}">×</b></button>`).join("")}</div><button type="button" data-editor-navigate-image title="Search and open another file in this image">Open from image…</button>`;
+  bar.innerHTML = `<div>${relevant.map(document => `<button type="button" data-editor-document="${esc(document.key)}" class="${document.key === editorWorkspace.state.active ? "active" : ""}" title="${esc(document.path)}"><span>${esc(document.name)}</span>${document.draft != null && document.draft !== document.savedValue ? "<i>●</i>" : ""}<b data-editor-document-close="${esc(document.key)}" aria-label="Close ${esc(document.name)}">×</b></button>`).join("")}</div><button type="button" data-editor-navigate-image title="Search and open another file in this image">Open from image…</button>`;
   root.querySelector("header")?.after(bar);
   bar.querySelectorAll("[data-editor-document]").forEach(button => button.addEventListener("click", event => {
     if (event.target.closest("[data-editor-document-close]")) return;
@@ -154,8 +144,8 @@ function installEditorDocumentTabs(root, pane) {
     if (document?.draft != null && document.draft !== document.savedValue && !confirm(`Close ${document.name} and discard its unsaved changes?`)) return;
     editorDocuments.delete(key);
     persistEditorDocuments();
-    if (key !== activeEditorDocument) return installEditorDocumentTabs(root, pane);
-    activeEditorDocument = null;
+    if (key !== editorWorkspace.state.active) return installEditorDocumentTabs(root, pane);
+    editorWorkspace.state.active = null;
     persistEditorDocuments();
     const next = [...editorDocuments.values()].find(item => item.imageId === pane.image.id);
     if (next) await activateEditorDocument(next.key); else modal.close();
@@ -280,109 +270,6 @@ async function mmbRecommendedPage(imageId, slot, filename, action) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ slot, filename, action })
   });
-}
-
-function rememberOpenPanes() {
-  if (!workspacePersistenceReady) return;
-  const snapshot = panes.map(pane => pane.image ? {
-    imageId: pane.image.id,
-    slot: pane.slot,
-    side: pane.side,
-    path: pane.path,
-    archivePath: pane.archivePath,
-    archiveName: pane.archiveName,
-    archiveMember: pane.archiveMember,
-    pathModel: isDfsPane(pane) ? "dfs-prefixes" : "hierarchical",
-  } : null);
-  try {
-    localStorage.setItem(OPEN_PANES_STORAGE_KEY, JSON.stringify(snapshot));
-  } catch (_error) {
-    // Recovery remains available from the server when browser storage is unavailable.
-  }
-}
-
-function storedOpenPanes() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(OPEN_PANES_STORAGE_KEY) || "[]");
-    return Array.isArray(saved) ? saved.slice(0, MAX_PANES) : [];
-  } catch (_error) {
-    return [];
-  }
-}
-
-function hasStoredOpenPanes() {
-  try {
-    return localStorage.getItem(OPEN_PANES_STORAGE_KEY) !== null;
-  } catch (_error) {
-    return true;
-  }
-}
-
-async function restoreOpenPanes() {
-  let savedPanes = storedOpenPanes();
-  if (!hasStoredOpenPanes()) {
-    try {
-      const recoverable = await api("/api/images/recoverable");
-      const newest = recoverable.images?.[0];
-      if (newest) savedPanes = [{ imageId: newest.id, slot: null, side: null, path: "$" }];
-    } catch (_error) {
-      // Leave the normal empty workspace available if recovery is unavailable.
-    }
-  }
-  const restoredPaneCount = Math.max(1, Math.min(MAX_PANES, savedPanes.length || 1));
-  while (panes.length < restoredPaneCount) panes.push(newPaneState());
-  rebuildPaneHosts();
-  for (const [index, saved] of savedPanes.entries()) {
-    if (!saved || !/^[0-9a-f]{32}$/.test(String(saved.imageId || ""))) continue;
-    panes[index].loading = true;
-    panes[index].loadingMessage = "Restoring your open image…";
-    renderPane(index);
-    try {
-      const data = await api(`/api/images/${encodeURIComponent(saved.imageId)}`);
-      await acceptImage(index, data.image);
-      const pane = panes[index];
-      pane.side = saved.side === 2 ? 2 : data.image.doubleSided ? 0 : null;
-      if (data.image.kind === "mmb" && Number.isInteger(saved.slot)) {
-        const disk = pane.entries.find(entry => entry.slot === saved.slot && entry.formatted);
-        if (disk) {
-          pane.slot = saved.slot;
-          pane.slotName = disk.name;
-          pane.path = restoredDfsPath(saved);
-          await loadDirectory(index);
-        }
-      } else if (
-        data.image.kind !== "mmb"
-        && typeof saved.path === "string"
-        && (
-          (data.image.kind === "dfs" && restoredDfsPath(saved) !== "")
-          || (data.image.kind !== "dfs" && saved.path !== "$")
-          || pane.side !== (data.image.doubleSided ? 0 : null)
-        )
-      ) {
-        pane.path = data.image.kind === "dfs" ? restoredDfsPath(saved) : saved.path;
-        await loadDirectory(index);
-      }
-      if (typeof saved.archivePath === "string" && saved.archivePath) {
-        pane.archivePath = saved.archivePath;
-        pane.archiveName = String(saved.archiveName || "Archive");
-        pane.archiveMember = String(saved.archiveMember || "");
-        await loadDirectory(index);
-      }
-    } catch (error) {
-      panes[index] = newPaneState();
-      renderPane(index);
-      if (error.status !== 404) toast(`Could not restore an open pane: ${error.message}`, true);
-    }
-  }
-  workspacePersistenceReady = true;
-  rememberOpenPanes();
-  panes.forEach((_pane, index) => renderPane(index));
-  if (editorDocumentToRestore) {
-    const key = editorDocumentToRestore;
-    editorDocumentToRestore = null;
-    activeEditorDocument = null;
-    await activateEditorDocument(key, true);
-  }
 }
 
 function updateAddPaneButton() {
@@ -555,16 +442,16 @@ function swapPanes(sourceIndex, targetIndex) {
   const targetScroll = document.querySelector(`.pane[data-pane="${targetIndex}"] .list-wrap`)?.scrollTop || 0;
   captureActiveEditorDocument();
   const remappedDocuments = new Map();
-  let remappedActive = activeEditorDocument;
+  let remappedActive = editorWorkspace.state.active;
   for (const document of editorDocuments.values()) {
     const nextIndex = document.index === sourceIndex ? targetIndex : document.index === targetIndex ? sourceIndex : document.index;
     const nextKey = [nextIndex, document.imageId, document.slot ?? "-", document.side ?? "-", document.path].join("|");
-    if (document.key === activeEditorDocument) remappedActive = nextKey;
+    if (document.key === editorWorkspace.state.active) remappedActive = nextKey;
     remappedDocuments.set(nextKey, { ...document, index: nextIndex, key: nextKey });
   }
   editorDocuments.clear();
   remappedDocuments.forEach((document, key) => editorDocuments.set(key, document));
-  activeEditorDocument = remappedActive;
+  editorWorkspace.state.active = remappedActive;
   persistEditorDocuments();
   [panes[sourceIndex], panes[targetIndex]] = [panes[targetIndex], panes[sourceIndex]];
   renderPane(sourceIndex);
@@ -600,116 +487,15 @@ async function paneOperation(index, message, operation) {
   }
 }
 
-async function trackedPaneOperation(index, message, operation) {
-  const pane = panes[index];
-  const operationId = crypto.randomUUID();
-  let polling = true;
-  let abortRequested = false;
-  setLoading(index, true, message);
-  if (modal.open) {
-    setModalAbort(async () => {
-      abortRequested = true;
-      setModalProgress({
-        title: "Stopping operation safely",
-        message: "Finishing the current atomic disk command. No further disks or files will be started.",
-        details: [
-          { label: "Safety", value: "The current image write will complete or be cleaned up before stopping" },
-          { label: "Completed work", value: "Previously completed batch items will be preserved" }
-        ]
-      });
-      await api(`/api/operations/${operationId}/cancel`, { method: "POST" });
-    });
-  }
-  const poll = async () => {
-    try {
-      const data = await api(`/api/operations/${operationId}`);
-      if (!polling || panes[index] !== pane) return;
-      const progress = data.operation;
-      if (progress.state === "cancelling") {
-        pane.loadingMessage = progress.message;
-        if (modal.open) {
-          setModalProgress({
-            title: "Stopping operation safely",
-            message: "Finishing the current atomic disk command. No further disks or files will be started.",
-            details: [
-              { label: "Safety", value: "The current image write will complete or be cleaned up before stopping" },
-              { label: "Completed work", value: "Previously completed batch items will be preserved" }
-            ]
-          });
-        }
-        renderPane(index);
-        return;
-      }
-      const count = progress.total != null
-        ? ` (${progress.current ?? 0} of ${progress.total})`
-        : "";
-      const nextMessage = `${progress.message}${count}`;
-      if (
-        pane.loadingMessage !== nextMessage
-        || pane.progressCurrent !== progress.current
-        || pane.progressTotal !== progress.total
-      ) {
-        pane.loadingMessage = nextMessage;
-        pane.progressCurrent = progress.current;
-        pane.progressTotal = progress.total;
-        if (modal.open) {
-          setModalProgress({
-            title: message,
-            message: progress.message,
-            details: progress.total != null ? [
-              { label: "Progress", value: `${Math.round(100 * Number(progress.current || 0) / Number(progress.total || 1))}% complete` }
-            ] : []
-          }, progress.current, progress.total);
-        }
-        renderPane(index);
-      }
-    } catch {
-      // The first poll can arrive before the POST has registered the operation.
-    }
-  };
-  const timer = setInterval(poll, 300);
-  try {
-    return await operation(operationId);
-  } catch (error) {
-    if (abortRequested) {
-      const aborted = new Error("Operation aborted safely. Completed items were preserved.");
-      aborted.data = error.data;
-      throw aborted;
-    }
-    throw error;
-  } finally {
-    setModalAbort(null);
-    polling = false;
-    clearInterval(timer);
-    if (panes[index] === pane) {
-      pane.loading = false;
-      pane.loadingMessage = "";
-      pane.progressCurrent = null;
-      pane.progressTotal = null;
-      renderPane(index);
-    }
-  }
-}
-
-async function guardedPaneAction(index, action) {
-  const pane = panes[index];
-  if (!pane || pane.loading || pane.actionPending) return;
-  pane.actionPending = true;
-  renderPane(index);
-  try {
-    await action();
-    if (modal.open) {
-      await new Promise(resolve => {
-        modal.addEventListener("close", resolve, { once: true });
-      });
-    }
-  } finally {
-    if (panes[index] === pane) {
-      pane.actionPending = false;
-      renderPane(index);
-    }
-  }
-}
+const { guardedPaneAction, trackedPaneOperation } = window.AcornOperationUI.create({
+  panes,
+  api,
+  setLoading,
+  renderPane,
+  modal,
+  setModalAbort,
+  setModalProgress,
+});
 
 async function openHexEditor(index, initialOffset = 0, { host: requestedHost = null, onClose = null, afterSave = null, pageSize = 256 } = {}) {
   const pane = panes[index];
@@ -3214,20 +3000,20 @@ function removePane(index) {
   const imageName = pane.image?.name;
   captureActiveEditorDocument();
   const rebuiltDocuments = new Map();
-  let rebuiltActive = activeEditorDocument;
+  let rebuiltActive = editorWorkspace.state.active;
   for (const document of editorDocuments.values()) {
     if (document.index === index) {
-      if (document.key === activeEditorDocument) rebuiltActive = null;
+      if (document.key === editorWorkspace.state.active) rebuiltActive = null;
       continue;
     }
     const nextIndex = document.index > index ? document.index - 1 : document.index;
     const nextKey = [nextIndex, document.imageId, document.slot ?? "-", document.side ?? "-", document.path].join("|");
-    if (document.key === activeEditorDocument) rebuiltActive = nextKey;
+    if (document.key === editorWorkspace.state.active) rebuiltActive = nextKey;
     rebuiltDocuments.set(nextKey, { ...document, index: nextIndex, key: nextKey });
   }
   editorDocuments.clear();
   rebuiltDocuments.forEach((document, key) => editorDocuments.set(key, document));
-  activeEditorDocument = rebuiltActive;
+  editorWorkspace.state.active = rebuiltActive;
   persistEditorDocuments();
   panes.splice(index, 1);
   rebuildPaneHosts();
@@ -9187,7 +8973,7 @@ async function openFileEditor(index, name, target = null, pathOverride = null) {
         persistenceTimer = setTimeout(captureActiveEditorDocument, 250);
       });
     }
-    const retained = !target ? editorDocuments.get(activeEditorDocument) : null;
+    const retained = !target ? editorDocuments.get(editorWorkspace.state.active) : null;
     if (retained?.draft != null) {
       editor.value = retained.draft;
       editor.dataset.savedValue = retained.savedValue ?? report.text;

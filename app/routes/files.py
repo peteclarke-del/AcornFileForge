@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from flask import Blueprint, jsonify, request, send_file
+from .effects import image_mutation, request_effect
 
 from ..archive_utils import open_single_upload_image
 from ..archive_browser import (
@@ -35,17 +36,18 @@ from ..file_editor import (
     inspect_file_data,
     replace_file_bytes,
 )
-from ..menu_service import (
+from ..menu.adfs import delete_adfs_items, move_adfs_items
+from ..menu.analysis import (
     analyse_adfs_directory,
     analyse_disk,
     best_distribution_filename,
-    continuation_metadata_from_mmb_menu,
-    delete_adfs_items,
     enrich_if_ambiguous,
     enrich_from_distribution_filename,
+)
+from ..menu.mmb import (
+    continuation_metadata_from_mmb_menu,
     metadata_records_from_mmb_menu,
     mmb_metadata_for_adfs,
-    move_adfs_items,
 )
 from ..operations import OperationCancelled, OperationRegistry
 from .common import optional_int, payload
@@ -223,6 +225,7 @@ def create_files_blueprint(
         return jsonify(operations=operations.list())
 
     @blueprint.delete("/api/operations")
+    @request_effect("external", "clearing completed operation records")
     def clear_operation_history():
         return jsonify(removed=operations.clear_terminal())
 
@@ -231,6 +234,7 @@ def create_files_blueprint(
         return jsonify(operation=operations.get(operation_id))
 
     @blueprint.post("/api/operations/<operation_id>/cancel")
+    @request_effect("external", "requesting operation cancellation")
     def cancel_operation(operation_id):
         return jsonify(operation=operations.cancel(operation_id))
 
@@ -303,6 +307,7 @@ def create_files_blueprint(
         ) | {"archiveSha256": hashlib.sha256(archive_data).hexdigest(), "archiveEditable": writable})
 
     @blueprint.put("/api/images/<image_id>/archive/inspect")
+    @image_mutation("editing a file inside an archive")
     def save_archive_inspect(image_id):
         body = payload()
         session = service.get(image_id)
@@ -374,6 +379,7 @@ def create_files_blueprint(
         )
 
     @blueprint.post("/api/images/<image_id>/validate")
+    @request_effect("read-only", "validating an image without changing it")
     def validate(image_id):
         data = payload()
         return jsonify(
@@ -384,6 +390,7 @@ def create_files_blueprint(
         )
 
     @blueprint.post("/api/images/<image_id>/rename")
+    @image_mutation("renaming an item")
     def rename(image_id):
         data = payload()
         session = service.get(image_id)
@@ -426,6 +433,7 @@ def create_files_blueprint(
         return jsonify(image=service.summary(session), **result)
 
     @blueprint.post("/api/images/<image_id>/move")
+    @image_mutation("moving items")
     def move_items(image_id):
         session = service.get(image_id)
         result = move_adfs_items(
@@ -436,6 +444,7 @@ def create_files_blueprint(
         return jsonify(image=service.summary(session), **result)
 
     @blueprint.post("/api/images/<image_id>/move-dfs")
+    @image_mutation("moving DFS files between catalogue groups")
     def move_dfs_items(image_id):
         data = payload()
         session = service.get(image_id)
@@ -448,6 +457,7 @@ def create_files_blueprint(
         return jsonify(image=service.summary(session), moved=moved)
 
     @blueprint.post("/api/images/<image_id>/delete")
+    @image_mutation("deleting an item")
     def delete(image_id):
         data = payload()
         session = service.get(image_id)
@@ -501,6 +511,7 @@ def create_files_blueprint(
         return jsonify(image=service.summary(session), **result)
 
     @blueprint.post("/api/images/<image_id>/mkdir")
+    @image_mutation("creating a folder")
     def mkdir(image_id):
         data = payload()
         session = service.get(image_id)
@@ -517,6 +528,7 @@ def create_files_blueprint(
         return jsonify(image=service.summary(session))
 
     @blueprint.post("/api/images/<image_id>/empty-file")
+    @image_mutation("creating a file")
     def create_empty_file(image_id):
         data = payload()
         session = service.get(image_id)
@@ -547,6 +559,7 @@ def create_files_blueprint(
         return jsonify(image=service.summary(session), path=destination)
 
     @blueprint.post("/api/images/<image_id>/lock")
+    @image_mutation("changing file protection")
     def lock(image_id):
         data = payload()
         session = service.get(image_id)
@@ -565,6 +578,7 @@ def create_files_blueprint(
         return jsonify(image=service.summary(session), paths=updated)
 
     @blueprint.post("/api/images/<image_id>/files")
+    @image_mutation("adding a file")
     def put_file(image_id):
         upload = request.files.get("file")
         if not upload or not upload.filename:
@@ -601,6 +615,7 @@ def create_files_blueprint(
         return jsonify(image=service.summary(session))
 
     @blueprint.post("/api/images/<image_id>/rom-banks/blank")
+    @image_mutation("appending a blank ROM bank")
     def append_blank_rom_bank(image_id):
         session = service.get(image_id)
         if session.kind != "rom":
@@ -618,6 +633,7 @@ def create_files_blueprint(
         return jsonify(bank=service.inspect_rom_bank(session, bank))
 
     @blueprint.post("/api/images/<image_id>/rom-banks/move")
+    @image_mutation("moving ROM banks")
     def move_rom_banks(image_id):
         data = payload()
         session = service.get(image_id)
@@ -629,6 +645,7 @@ def create_files_blueprint(
         return jsonify(image=service.summary(session), banks=targets)
 
     @blueprint.post("/api/images/<image_id>/folder-import")
+    @image_mutation("importing a host folder")
     def put_folder(image_id):
         uploads = request.files.getlist("files")
         try:
@@ -674,6 +691,7 @@ def create_files_blueprint(
         return jsonify(image=service.summary(session), **result)
 
     @blueprint.post("/api/transfer")
+    @image_mutation("copying files", target="targetImage")
     def transfer():
         data = payload()
         source = service.get(data["sourceImage"])
@@ -692,18 +710,19 @@ def create_files_blueprint(
         return jsonify(image=service.summary(target))
 
     @blueprint.post("/api/transfer-slot-to-directory")
+    @image_mutation("copying an MMB disk to ADFS", target="targetImage")
     def transfer_slot_to_directory():
         data = payload()
         source = service.get(data["sourceImage"])
         target = service.get(data["targetImage"])
         source_slot = int(data["sourceSlot"])
         operation_id = data.get("operationId")
-        if operation_id:
-            operations.start(operation_id, "Preparing MMB slot transfer")
-        try:
+        with operations.tracked(
+            operation_id, "Preparing MMB slot transfer", "Transfer complete"
+        ) as progress:
             menu_metadata: list[dict] = []
             if data.get("addMenu"):
-                operations.update(operation_id, "Checking the MMB Universal Menu")
+                progress("Checking the MMB Universal Menu")
                 menu_metadata = metadata_records_from_mmb_menu(
                     service,
                     source,
@@ -715,17 +734,12 @@ def create_files_blueprint(
                 target,
                 data.get("targetPath", "$"),
                 data["directoryName"],
-                lambda message, current=None, total=None: operations.update(
-                    operation_id,
-                    message,
-                    current,
-                    total,
-                ),
+                progress,
             )
             metadata = None
             metadata_entries: list[dict] = []
             if data.get("addMenu"):
-                operations.update(operation_id, "Analysing launch files in the copied directory")
+                progress("Analysing launch files in the copied directory")
                 detected = analyse_adfs_directory(service, target, destination)
                 if menu_metadata:
                     metadata_entries = [
@@ -740,18 +754,11 @@ def create_files_blueprint(
                     metadata = metadata_entries[0]
                 else:
                     if detected["ambiguous"]:
-                        operations.update(operation_id, "Checking the online software archive")
+                        progress("Checking the online software archive")
                         metadata = enrich_if_ambiguous(detected)
                     else:
                         metadata = detected
                     metadata_entries = [metadata]
-            operations.finish(operation_id, "Transfer complete")
-        except OperationCancelled as exc:
-            operations.cancelled(operation_id, str(exc))
-            raise
-        except Exception as exc:
-            operations.fail(operation_id, str(exc))
-            raise
         return jsonify(
             image=service.summary(target),
             path=destination,
@@ -760,6 +767,7 @@ def create_files_blueprint(
         )
 
     @blueprint.post("/api/transfer-mmb-batch-to-adfs")
+    @image_mutation("copying MMB disks to ADFS", target="targetImage")
     def transfer_mmb_batch_to_adfs():
         data = payload()
         source = service.get(data["sourceImage"])
@@ -880,23 +888,22 @@ def create_files_blueprint(
             return jsonify(partial_response(exc)), 400
 
     @blueprint.post("/api/transfer-image-to-directory")
+    @image_mutation("extracting an image to ADFS", target="targetImage")
     def transfer_image_to_directory():
         data = payload()
         source = service.get(data["sourceImage"])
         target = service.get(data["targetImage"])
         create_directory = data.get("createDirectory", True) is not False
         operation_id = data.get("operationId")
-        if operation_id:
-            operations.start(operation_id, "Preparing image extraction")
-        try:
+        with operations.tracked(
+            operation_id, "Preparing image extraction", "Extraction complete"
+        ) as progress:
             destination = service.extract_image_to_adfs_directory(
                 source,
                 target,
                 data.get("targetPath", "$"),
                 data.get("directoryName"),
-                lambda message, current=None, total=None: operations.update(
-                    operation_id, message, current, total
-                ),
+                progress,
                 create_directory=create_directory,
             )
             service.set_adfs_source_name(
@@ -913,13 +920,6 @@ def create_files_blueprint(
                 if data.get("addMenu")
                 else None
             )
-            operations.finish(operation_id, "Extraction complete")
-        except OperationCancelled as exc:
-            operations.cancelled(operation_id, str(exc))
-            raise
-        except Exception as exc:
-            operations.fail(operation_id, str(exc))
-            raise
         return jsonify(
             image=service.summary(target),
             path=destination,
@@ -927,6 +927,7 @@ def create_files_blueprint(
         )
 
     @blueprint.post("/api/images/<image_id>/extract-to-directory")
+    @image_mutation("extracting an image")
     def extract_to_directory(image_id):
         target = service.get(image_id)
         upload = request.files.get("image")
@@ -934,45 +935,35 @@ def create_files_blueprint(
             raise DiskError("Choose a supported disk or tape image to extract.")
         operation_id = request.form.get("operationId")
         create_directory = request.form.get("createDirectory", "yes") != "no"
-        if operation_id:
-            operations.start(operation_id, "Preparing uploaded image extraction")
         extensions = (
             DFS_EXTENSIONS | MMB_EXTENSIONS | TAPE_EXTENSIONS | ADFS_EXTENSIONS | HFE_EXTENSIONS
         )
         with open_single_upload_image(upload, extensions) as image:
             source = service.create_from_stream(image.filename, image.stream)
             try:
-                destination = service.extract_image_to_adfs_directory(
-                    source,
-                    target,
-                    request.form.get("targetPath", "$"),
-                    request.form.get("directoryName"),
-                    lambda message, current=None, total=None: operations.update(
-                        operation_id, message, current, total
-                    ),
-                    create_directory=create_directory,
-                )
-                service.set_adfs_source_name(
-                    target,
-                    destination,
-                    best_distribution_filename(image.metadata_names),
-                )
-                metadata = (
-                    _metadata_for_directory(
-                        service,
+                with operations.tracked(
+                    operation_id,
+                    "Preparing uploaded image extraction",
+                    "Extraction complete",
+                ) as progress:
+                    destination = service.extract_image_to_adfs_directory(
+                        source,
+                        target,
+                        request.form.get("targetPath", "$"),
+                        request.form.get("directoryName"),
+                        progress,
+                        create_directory=create_directory,
+                    )
+                    service.set_adfs_source_name(
                         target,
                         destination,
+                        best_distribution_filename(image.metadata_names),
                     )
-                    if request.form.get("addMenu") == "yes"
-                    else None
-                )
-                operations.finish(operation_id, "Extraction complete")
-            except OperationCancelled as exc:
-                operations.cancelled(operation_id, str(exc))
-                raise
-            except Exception as exc:
-                operations.fail(operation_id, str(exc))
-                raise
+                    metadata = (
+                        _metadata_for_directory(service, target, destination)
+                        if request.form.get("addMenu") == "yes"
+                        else None
+                    )
             finally:
                 service.discard_session(source)
         return jsonify(

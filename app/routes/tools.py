@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import Blueprint, Response, jsonify, request
+from .effects import image_mutation, request_effect
 
 from ..analysis_service import (
     build_manifest,
@@ -41,9 +42,9 @@ from ..file_editor import (
     verify_basic_source,
     encode_editor_replacement,
 )
-from ..operations import OperationCancelled, OperationRegistry
-from ..menu_service import (
-    audit_adfs_menu_pages,
+from ..operations import OperationRegistry
+from ..menu.adfs import audit_adfs_menu_pages
+from ..menu.mmb import (
     audit_mmb_menu_pages,
     edit_mmb_menu_entries,
     installed_mmb_menu,
@@ -307,32 +308,23 @@ def create_tools_blueprint(
         return parent_media()
 
     @blueprint.post("/api/images/<image_id>/preflight")
+    @request_effect("read-only", "building an import preflight report")
     def preflight(image_id):
         return jsonify(preflight_report(service, service.get(image_id), payload()))
 
     @blueprint.get("/api/images/<image_id>/health")
     def health(image_id):
         operation_id = request.args.get("operationId")
-        if operation_id:
-            operations.start(operation_id, "Preparing image health checks")
-        try:
-            report = health_report(
-                service,
-                service.get(image_id),
-                lambda message, current=None, total=None: operations.update(
-                    operation_id, message, current, total
-                ),
-            )
-            operations.finish(operation_id, "Image health check complete")
+        with operations.tracked(
+            operation_id,
+            "Preparing image health checks",
+            "Image health check complete",
+        ) as progress:
+            report = health_report(service, service.get(image_id), progress)
             return jsonify(report)
-        except OperationCancelled as exc:
-            operations.cancelled(operation_id, str(exc))
-            raise
-        except Exception as exc:
-            operations.fail(operation_id, str(exc))
-            raise
 
     @blueprint.post("/api/images/<image_id>/health/repair")
+    @image_mutation("applying a safe image-health repair")
     def repair_health(image_id):
         data = payload()
         session = service.get(image_id)
@@ -349,26 +341,16 @@ def create_tools_blueprint(
         session = service.get(image_id)
         operation_id = request.args.get("operationId")
         root = str(request.args.get("root") or "$")
-        if operation_id:
-            operations.start(operation_id, "Finding installed ADFS software")
-        try:
-            result = service.audit_adfs_installations(
-                session,
-                root,
-                lambda message, current=None, total=None: operations.update(
-                    operation_id, message, current, total
-                ),
-            )
-            operations.finish(operation_id, "Installed ADFS software audit complete")
+        with operations.tracked(
+            operation_id,
+            "Finding installed ADFS software",
+            "Installed ADFS software audit complete",
+        ) as progress:
+            result = service.audit_adfs_installations(session, root, progress)
             return jsonify(result)
-        except OperationCancelled as exc:
-            operations.cancelled(operation_id, str(exc))
-            raise
-        except Exception as exc:
-            operations.fail(operation_id, str(exc))
-            raise
 
     @blueprint.post("/api/images/<image_id>/adfs-installations/repair")
+    @image_mutation("repairing installed ADFS software")
     def repair_adfs_installations(image_id):
         session = service.get(image_id)
         data = payload()
@@ -376,24 +358,13 @@ def create_tools_blueprint(
         directories = data.get("directories")
         if not isinstance(directories, list):
             raise DiskError("Choose the installed disk directories to repair.")
-        if operation_id:
-            operations.start(operation_id, "Rechecking proposed ADFS repairs")
-        try:
-            result = service.repair_adfs_installations(
-                session,
-                directories,
-                lambda message, current=None, total=None: operations.update(
-                    operation_id, message, current, total
-                ),
-            )
-            operations.finish(operation_id, "Installed ADFS software repair complete")
+        with operations.tracked(
+            operation_id,
+            "Rechecking proposed ADFS repairs",
+            "Installed ADFS software repair complete",
+        ) as progress:
+            result = service.repair_adfs_installations(session, directories, progress)
             return jsonify(image=service.summary(session), repair=result)
-        except OperationCancelled as exc:
-            operations.cancelled(operation_id, str(exc))
-            raise
-        except Exception as exc:
-            operations.fail(operation_id, str(exc))
-            raise
 
     @blueprint.get("/api/images/<image_id>/manifest")
     def manifest(image_id):
@@ -416,6 +387,7 @@ def create_tools_blueprint(
         )
 
     @blueprint.post("/api/images/<image_id>/manifest/apply")
+    @image_mutation("applying reviewed menu metadata")
     def apply_manifest(image_id):
         session = service.get(image_id)
         if session.kind != "mmb":
@@ -492,6 +464,7 @@ def create_tools_blueprint(
         ))
 
     @blueprint.put("/api/images/<image_id>/inspect")
+    @image_mutation("editing a BASIC or text file")
     def save_inspected_text(image_id):
         data = payload()
         session = service.get(image_id)
@@ -519,6 +492,7 @@ def create_tools_blueprint(
         return jsonify(image=image, path=path, inspection=inspect_editable_file(service, session, path, slot, side))
 
     @blueprint.put("/api/images/<image_id>/inspect/properties")
+    @image_mutation("editing file properties")
     def save_inspected_properties(image_id):
         data = payload()
         session = service.get(image_id)
@@ -537,6 +511,7 @@ def create_tools_blueprint(
         return jsonify(image=image, inspection=inspect_editable_file(service, session, path, slot, side))
 
     @blueprint.post("/api/images/<image_id>/inspect/basic/renumber")
+    @request_effect("read-only", "previewing a BASIC renumber operation")
     def renumber_basic(image_id):
         service.get(image_id)
         data = payload()
@@ -548,11 +523,13 @@ def create_tools_blueprint(
         return jsonify(prepare_basic_source(str(data.get("text") or ""), start, step))
 
     @blueprint.post("/api/images/<image_id>/inspect/basic/normalise")
+    @request_effect("read-only", "normalising BASIC source for review")
     def normalise_basic(image_id):
         service.get(image_id)
         return jsonify(normalise_basic_source(str(payload().get("text") or "")))
 
     @blueprint.post("/api/images/<image_id>/inspect/basic/verify")
+    @request_effect("read-only", "verifying BASIC source")
     def verify_basic(image_id):
         service.get(image_id)
         data = payload()
@@ -569,6 +546,7 @@ def create_tools_blueprint(
         ))
 
     @blueprint.put("/api/images/<image_id>/editor-project")
+    @image_mutation("editing image project metadata")
     def save_editor_project(image_id):
         session = service.get(image_id)
         data = payload()
@@ -610,6 +588,7 @@ def create_tools_blueprint(
         )
 
     @blueprint.post("/api/images/<image_id>/editor-emulator")
+    @request_effect("external", "launching an editor document in an emulator")
     def editor_emulator_run(image_id):
         session = service.get(image_id)
         data = payload()
@@ -662,6 +641,7 @@ def create_tools_blueprint(
         return jsonify(result=result, project=project)
 
     @blueprint.delete("/api/images/<image_id>/editor-emulator")
+    @request_effect("external", "stopping the managed emulator")
     def editor_emulator_stop(image_id):
         service.get(image_id)
         INTERACTIVE_EMULATOR.stop()
@@ -682,6 +662,7 @@ def create_tools_blueprint(
         )
 
     @blueprint.post("/api/images/<image_id>/editor-assembler")
+    @request_effect("external", "assembling an editor document")
     def editor_assembler_run(image_id):
         session = service.get(image_id)
         data = payload()
@@ -761,6 +742,7 @@ def create_tools_blueprint(
         )
 
     @blueprint.post("/api/images/<image_id>/editor-debugger")
+    @request_effect("external", "running the managed debugger")
     def editor_debugger_run(image_id):
         session = service.get(image_id)
         data = payload()
@@ -821,6 +803,7 @@ def create_tools_blueprint(
         return jsonify(result=result, project=project)
 
     @blueprint.post("/api/images/<image_id>/inspect/basic/pack")
+    @request_effect("read-only", "previewing packed BASIC source")
     def pack_basic(image_id):
         service.get(image_id)
         data = payload()

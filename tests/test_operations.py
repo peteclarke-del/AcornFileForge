@@ -47,6 +47,30 @@ class OperationRegistryTests(unittest.TestCase):
         with self.assertRaises(OperationCancelled):
             registry.update(operation_id, "Starting first file")
 
+    def test_tracked_operation_finishes_and_exposes_progress_callback(self):
+        registry = OperationRegistry()
+        operation_id = str(uuid.uuid4())
+
+        with registry.tracked(operation_id, "Preparing", "Ready") as progress:
+            progress("Working", 2, 3)
+
+        item = registry.get(operation_id)
+        self.assertEqual(item["state"], "complete")
+        self.assertEqual(item["message"], "Ready")
+        self.assertEqual(item["current"], 2)
+
+    def test_tracked_operation_records_failures(self):
+        registry = OperationRegistry()
+        operation_id = str(uuid.uuid4())
+
+        with self.assertRaisesRegex(RuntimeError, "broken"):
+            with registry.tracked(operation_id, "Preparing"):
+                raise RuntimeError("broken")
+
+        item = registry.get(operation_id)
+        self.assertEqual(item["state"], "failed")
+        self.assertEqual(item["message"], "broken")
+
     def test_job_history_survives_restart_and_marks_running_job_interrupted(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "operations.json"
