@@ -7,6 +7,7 @@ from ..disk_service import DiskError, DiskService
 from ..hex_service import compare_data, compare_raw_image, raw_image_range, search_raw_image, write_raw_image
 from ..file_editor import data_range, file_range, search_data, search_file, write_file_range
 from .common import payload
+from .effects import image_mutation, request_effect
 
 
 def _integer(value: object, label: str, default: int = 0) -> int:
@@ -73,6 +74,7 @@ def create_hex_editor_blueprint(service: DiskService) -> Blueprint:
         ))
 
     @blueprint.post("/api/images/<image_id>/hex")
+    @image_mutation("editing raw image bytes")
     def write_hex(image_id):
         data = payload()
         session = service.get(image_id)
@@ -86,6 +88,7 @@ def create_hex_editor_blueprint(service: DiskService) -> Blueprint:
         ))
 
     @blueprint.post("/api/images/<image_id>/hex/compare")
+    @request_effect("read-only", "comparing image bytes")
     def compare_hex(image_id):
         upload, size = _comparison_upload()
         session = service.get(image_id)
@@ -120,6 +123,7 @@ def create_hex_editor_blueprint(service: DiskService) -> Blueprint:
         ))
 
     @blueprint.post("/api/images/<image_id>/file-hex")
+    @image_mutation("editing raw file bytes")
     def write_file_hex(image_id):
         data = payload()
         session = service.get(image_id)
@@ -133,6 +137,7 @@ def create_hex_editor_blueprint(service: DiskService) -> Blueprint:
         ))
 
     @blueprint.post("/api/images/<image_id>/file-hex/compare")
+    @request_effect("read-only", "comparing file bytes")
     def compare_file_hex(image_id):
         upload, size = _comparison_upload()
         session = service.get(image_id)
@@ -169,6 +174,7 @@ def create_hex_editor_blueprint(service: DiskService) -> Blueprint:
         ))
 
     @blueprint.post("/api/images/<image_id>/archive-hex/compare")
+    @request_effect("read-only", "comparing archive member bytes")
     def compare_archive_hex(image_id):
         upload, size = _comparison_upload()
         _member, content = archive_member(image_id)

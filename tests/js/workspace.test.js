@@ -21,6 +21,9 @@ const workspace = load("app/static/workspace.js", "AcornWorkspace");
 const visuals = load("app/static/file-visuals.js", "AcornFileVisuals");
 const imports = load("app/static/import-planning.js", "AcornImportPlanning");
 const help = load("app/static/help.js", "AcornHelp");
+const editorWorkspace = load("app/static/editor-workspace.js", "AcornEditorWorkspace");
+const operationUI = load("app/static/operation-ui.js", "AcornOperationUI");
+const workspacePersistence = load("app/static/workspace-persistence.js", "AcornWorkspacePersistence");
 
 test("workspace pane state has one canonical initial shape", () => {
   const pane = workspace.newPaneState({ kind: "mmb", doubleSided: false });
@@ -64,4 +67,45 @@ test("host metadata parsing preserves Acorn load and execution addresses", () =>
 test("help handbook is isolated behind an injected modal boundary", () => {
   const showHelp = help.create({ showModal() {}, modalContent: {} });
   assert.equal(typeof showHelp, "function");
+});
+
+test("editor workspace persistence validates, limits and restores documents", () => {
+  const values = new Map();
+  const storage = {
+    getItem: key => values.get(key) || null,
+    setItem: (key, value) => values.set(key, value),
+    removeItem: key => values.delete(key),
+  };
+  const manager = editorWorkspace.create({ storage, key: "editors", maxDocuments: 2, maxDraftBytes: 4, maxPanes: 3 });
+  manager.state.documents.set("one", { key: "one", imageId: "a".repeat(32), index: 0, path: "$.ONE", name: "ONE", draft: "123456" });
+  manager.state.documents.set("two", { key: "two", imageId: "b".repeat(32), index: 1, path: "$.TWO", name: "TWO" });
+  manager.state.active = "one";
+  manager.persist();
+
+  const restored = editorWorkspace.create({ storage, key: "editors", maxDocuments: 2, maxDraftBytes: 4, maxPanes: 3 });
+  restored.restore();
+  assert.equal(restored.state.documents.get("one").draft, "1234");
+  assert.equal(restored.state.restoreCandidate, "one");
+});
+
+test("operation lifecycle is isolated behind an injected pane controller", () => {
+  const controller = operationUI.create({
+    panes: [], api() {}, setLoading() {}, renderPane() {},
+    modal: { open: false }, setModalAbort() {}, setModalProgress() {},
+  });
+  assert.equal(typeof controller.guardedPaneAction, "function");
+  assert.equal(typeof controller.trackedPaneOperation, "function");
+});
+
+test("workspace recovery is isolated behind an injected persistence controller", () => {
+  const controller = workspacePersistence.create({
+    panes: [], storage: { getItem() { return null; }, setItem() {} },
+    storageKey: "workspace", maxPanes: 3, newPaneState() { return {}; },
+    restoredDfsPath() { return "$"; }, api() {}, rebuildPaneHosts() {},
+    renderPane() {}, acceptImage() {}, loadDirectory() {},
+    editorWorkspace: { state: {} }, activateEditorDocument() {}, toast() {},
+  });
+  assert.equal(typeof controller.remember, "function");
+  assert.equal(typeof controller.restore, "function");
+  assert.deepEqual(Array.from(controller.stored()), []);
 });

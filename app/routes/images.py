@@ -17,9 +17,10 @@ from ..formats import (
     TAPE_EXTENSIONS,
 )
 from ..hardware_profiles import hardware_catalogue, normalise_hardware_profile
-from ..menu_service import best_distribution_filename
-from ..operations import OperationCancelled, OperationRegistry
+from ..menu.analysis import best_distribution_filename
+from ..operations import OperationRegistry
 from .common import optional_int, payload
+from .effects import image_mutation, request_effect
 
 
 def create_images_blueprint(
@@ -42,6 +43,7 @@ def create_images_blueprint(
         return jsonify(hardware_catalogue())
 
     @blueprint.post("/api/images")
+    @request_effect("lifecycle", "opening an image session")
     def open_image():
         image = request.files.get("image")
         if not image or not image.filename:
@@ -92,6 +94,7 @@ def create_images_blueprint(
         return jsonify(image=service.summary(session))
 
     @blueprint.post("/api/images/create")
+    @request_effect("lifecycle", "creating an image session")
     def create_image():
         data = payload()
         session = service.create_blank(
@@ -108,6 +111,7 @@ def create_images_blueprint(
         return jsonify(image=service.summary(service.get(image_id)))
 
     @blueprint.patch("/api/images/<image_id>")
+    @image_mutation("renaming the image")
     def rename_image(image_id):
         data = payload()
         session = service.get(image_id)
@@ -115,6 +119,7 @@ def create_images_blueprint(
         return jsonify(image=service.summary(session))
 
     @blueprint.patch("/api/images/<image_id>/romfs")
+    @image_mutation("changing the ROMFS configuration")
     def configure_romfs(image_id):
         data = payload()
         session = service.get(image_id)
@@ -127,6 +132,7 @@ def create_images_blueprint(
         return jsonify(image=service.summary(session))
 
     @blueprint.patch("/api/images/<image_id>/rom-layout")
+    @image_mutation("changing the ROM layout")
     def configure_rom_layout(image_id):
         data = payload()
         session = service.get(image_id)
@@ -140,6 +146,7 @@ def create_images_blueprint(
         return jsonify(image=service.summary(session))
 
     @blueprint.patch("/api/images/<image_id>/hardware-profile")
+    @image_mutation("changing the hardware profile")
     def set_hardware_profile(image_id):
         data = payload()
         session = service.get(image_id)
@@ -175,6 +182,7 @@ def create_images_blueprint(
         )
 
     @blueprint.post("/api/images/<image_id>/checkpoints")
+    @request_effect("lifecycle", "creating a named checkpoint")
     def create_image_checkpoint(image_id):
         data = payload()
         session = service.get(image_id)
@@ -186,6 +194,7 @@ def create_images_blueprint(
         )
 
     @blueprint.post("/api/images/<image_id>/checkpoints/<checkpoint_id>/restore")
+    @request_effect("lifecycle", "restoring an explicitly managed checkpoint")
     def restore_image_checkpoint(image_id, checkpoint_id):
         session = service.get(image_id)
         service.begin_automatic_checkpoint(session, "restoring a named checkpoint")
@@ -197,6 +206,7 @@ def create_images_blueprint(
         )
 
     @blueprint.delete("/api/images/<image_id>/checkpoints/<checkpoint_id>")
+    @request_effect("lifecycle", "deleting checkpoint metadata")
     def delete_image_checkpoint(image_id, checkpoint_id):
         session = service.get(image_id)
         service.delete_checkpoint(session, checkpoint_id)
@@ -206,6 +216,7 @@ def create_images_blueprint(
         )
 
     @blueprint.post("/api/images/<image_id>/undo")
+    @request_effect("lifecycle", "restoring the automatic undo checkpoint")
     def undo_image_change(image_id):
         session = service.get(image_id)
         checkpoint = service.undo_last_change(session)
@@ -220,6 +231,7 @@ def create_images_blueprint(
         return jsonify(images=service.recoverable_sessions())
 
     @blueprint.delete("/api/images/recoverable")
+    @request_effect("lifecycle", "clearing owned recovery sessions")
     def clear_recoverable_images():
         data = request.get_json(silent=True) or {}
         image_ids = data.get("imageIds")
@@ -229,6 +241,7 @@ def create_images_blueprint(
         return jsonify(removed=removed)
 
     @blueprint.delete("/api/images/<image_id>")
+    @request_effect("lifecycle", "discarding an image session")
     def discard_image(image_id):
         service.discard_session(service.get(image_id))
         return ("", 204)
@@ -246,32 +259,23 @@ def create_images_blueprint(
         )
 
     @blueprint.post("/api/images/<image_id>/download/prepare")
+    @image_mutation("finalising the image for download")
     def prepare_image_download(image_id):
         data = payload()
         operation_id = data.get("operationId")
         session = service.get(image_id)
-        if operation_id:
-            operations.start(operation_id, "Preparing image download")
-        try:
+        with operations.tracked(
+            operation_id,
+            "Preparing image download",
+            "The complete ZIP is ready to download",
+        ) as progress:
             with session.lock:
-                build_download_archive(
-                    service,
-                    session,
-                    lambda message, current=None, total=None: operations.update(
-                        operation_id, message, current, total
-                    ),
-                )
+                build_download_archive(service, session, progress)
                 service.mark_saved(session)
-            operations.finish(operation_id, "The complete ZIP is ready to download")
             return jsonify(image=service.summary(session), ready=True)
-        except OperationCancelled as exc:
-            operations.cancelled(operation_id, str(exc))
-            raise
-        except Exception as exc:
-            operations.fail(operation_id, str(exc))
-            raise
 
     @blueprint.post("/api/images/<image_id>/convert")
+    @request_effect("lifecycle", "creating a converted image session")
     def convert_image(image_id):
         data = payload()
         converted, files = service.convert_uef(
@@ -281,6 +285,7 @@ def create_images_blueprint(
         return jsonify(image=service.summary(converted), files=files)
 
     @blueprint.post("/api/images/<image_id>/compact")
+    @image_mutation("compacting the filesystem")
     def compact(image_id):
         data = payload()
         session = service.get(image_id)

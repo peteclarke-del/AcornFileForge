@@ -30,7 +30,8 @@ from .beebscsi_geometry import (
     range_is_zero,
 )
 from .content_kind import LISTING_SNIFF_LIMIT, analyse_content, metadata_kind
-from .editor_project import editor_project_key, normalise_editor_project
+from .disk_tools import decode_disc_json, friendly_engine_error, run_disc, run_hxcfe
+from .editor_project import normalise_editor_project
 from .errors import DestinationExistsError, DiskError, EmptyDiskError
 from .image_session import (
     ImageSession as ImageSession,
@@ -47,6 +48,9 @@ from .mmb_layout import (
     image_size as mmb_image_size,
     slot_offset as mmb_slot_offset,
 )
+from .mmb_disk_service import MmbCatalogueMixin
+from .rom_disk_service import RomDiskMixin
+from .tape_disk_service import TapeDiskMixin
 from .session_state import normalise_warnings, session_metadata
 from .rom import (
     DEFAULT_BANK_SIZE,
@@ -54,11 +58,8 @@ from .rom import (
     RomError,
     bank_count,
     bank_number,
-    inspect_bank as inspect_rom_bank,
-    inspect_image as inspect_rom_image,
     make_sideways_template,
     parse_sideways_header,
-    read_bank as read_rom_bank,
     validate_bank_size,
     validate_layout,
     validate_platform,
@@ -79,7 +80,7 @@ from .uef import (
 
 COPY_BUFFER_SIZE = 8 * 1024 * 1024
 FICLONE = 0x40049409
-class DiskService:
+class DiskService(MmbCatalogueMixin, RomDiskMixin, TapeDiskMixin):
     _beebscsi_descriptor_size = staticmethod(descriptor_size)
     _adfs_old_map_size = staticmethod(old_map_size)
     _range_is_zero = staticmethod(range_is_zero)
@@ -1388,38 +1389,6 @@ class DiskService:
             },
         }
 
-    def list_slots(self, session: ImageSession) -> list[dict]:
-        size = session.path.stat().st_size
-        if size < mmb_image_size(1):
-            raise DiskError("The MMB image is too small to contain a disk.")
-        count = mmb_available_slots(size)
-        with session.path.open("rb") as image:
-            header = image.read(MMB_HEADER_SIZE)
-        slots = []
-        for number in range(count):
-            offset = mmb_entry_offset(number)
-            entry = header[offset : offset + MMB_ENTRY_SIZE]
-            if len(entry) < MMB_ENTRY_SIZE:
-                break
-            status = entry[15]
-            title = entry[:12].decode("latin-1", "replace").rstrip("\0 ")
-            formatted = status < 0x80
-            invalid = status == 0xFF
-            slots.append(
-                {
-                    "slot": number,
-                    "name": title if formatted and title else ("Untitled disk" if formatted else "Empty slot"),
-                    "legacyTitle": title if not formatted else "",
-                    "type": "disk",
-                    "formatted": formatted,
-                    "empty": not formatted,
-                    "writable": 0 < status < 0x80,
-                    "invalid": invalid,
-                    "status": status,
-                }
-            )
-        return slots
-
     def preview_image_contents(
         self,
         session: ImageSession,
@@ -1542,60 +1511,6 @@ class DiskService:
             "truncated": truncated or bool(pending),
             "summary": f"{len(entries)} visible object(s)" + (" or more" if truncated else ""),
         }
-
-    def find_mmb_slot_with_catalogue_files(
-        self,
-        session: ImageSession,
-        required_names: set[str],
-    ) -> int | None:
-        """Find a DFS menu slot directly, without mounting every MMB disk."""
-        return self.find_mmb_slots_with_catalogue_files(
-            session,
-            {"match": required_names},
-        ).get("match")
-
-    def find_mmb_slots_with_catalogue_files(
-        self,
-        session: ImageSession,
-        required_groups: dict[str, set[str]],
-    ) -> dict[str, int]:
-        """Find several DFS menu signatures in one sequential catalogue scan."""
-        if session.kind != "mmb":
-            return {}
-        pending = {
-            key: {str(name).upper() for name in names}
-            for key, names in required_groups.items()
-        }
-        matches = {}
-        slots = self.list_slots(session)
-        with session.lock, session.path.open("rb") as image:
-            for entry in slots:
-                if not pending:
-                    break
-                if not entry["formatted"]:
-                    continue
-                if str(entry.get("name") or "").upper().startswith("MBACKUP-"):
-                    continue
-                slot = int(entry["slot"])
-                image.seek(mmb_slot_offset(slot))
-                catalogue = image.read(512)
-                if len(catalogue) != 512:
-                    continue
-                file_count = (catalogue[256 + 5] & 0xF8) // 8
-                if file_count > 31:
-                    continue
-                names = {
-                    catalogue[8 + offset * 8 : 15 + offset * 8]
-                    .decode("latin-1", "replace")
-                    .rstrip("\0 ")
-                    .upper()
-                    for offset in range(file_count)
-                }
-                for key, required in tuple(pending.items()):
-                    if required.issubset(names):
-                        matches[key] = slot
-                        del pending[key]
-        return matches
 
     def create_blank(
         self,
@@ -2488,346 +2403,6 @@ class DiskService:
                 )
         listing["capacity"] = self.capacity(session, slot)
         return listing
-
-    def list_rom_banks(self, session: ImageSession) -> list[dict]:
-        if session.kind != "rom":
-            raise DiskError("This image is not a ROM.")
-        with session.lock:
-            return inspect_rom_image(
-                session.path,
-                session.rom_bank_size,
-                session.rom_erase_byte,
-            )
-
-    def inspect_rom_bank(self, session: ImageSession, bank: int) -> dict:
-        """Decode one bank deeply without bloating every directory listing."""
-        if session.kind != "rom":
-            raise DiskError("This image is not a ROM.")
-        rows = self.list_rom_banks(session)
-        summary = next((row for row in rows if int(row["bank"]) == int(bank)), None)
-        if summary is None:
-            raise DiskError(f"ROM bank {bank} does not exist.")
-        try:
-            data = read_rom_bank(session.path, int(bank), session.rom_bank_size)
-        except RomError as exc:
-            raise DiskError(str(exc)) from exc
-        decoded = inspect_rom_bank(
-            data,
-            int(bank),
-            session.rom_erase_byte,
-            include_contents=True,
-            include_risc_os_modules=(
-                session.rom_platform == "archimedes"
-                or bool(summary.get("extensionHeader"))
-            ),
-        )
-        decoded["matchingBanks"] = summary.get("matchingBanks", [])
-        if summary.get("extensionHeader"):
-            decoded["extensionHeader"] = summary["extensionHeader"]
-            decoded["filetype"] = summary["filetype"]
-            decoded["structures"] = summary["structures"]
-        return decoded
-
-    def configure_rom(
-        self,
-        session: ImageSession,
-        *,
-        bank_size: int,
-        erase_byte: int,
-        platform: str,
-        layout: str,
-    ) -> None:
-        if session.kind != "rom":
-            raise DiskError("This image is not a ROM.")
-        try:
-            session.rom_bank_size = validate_bank_size(bank_size)
-        except RomError as exc:
-            raise DiskError(str(exc)) from exc
-        session.warnings = [
-            warning
-            for warning in session.warnings
-            if not warning.startswith("The final ROM bank is partial")
-        ]
-        partial = session.path.stat().st_size % session.rom_bank_size
-        if partial:
-            session.warnings.append(
-                f"The final ROM bank is partial ({partial:,} bytes). It is preserved exactly."
-            )
-        session.rom_erase_byte = int(erase_byte) & 0xFF
-        try:
-            session.rom_platform = validate_platform(platform)
-            session.rom_layout = validate_layout(layout)
-        except RomError as exc:
-            raise DiskError(str(exc)) from exc
-        session.dirty = True
-        (session.path.parent / "download-ready.zip").unlink(missing_ok=True)
-        (session.path.parent / "download-ready.json").unlink(missing_ok=True)
-        self._persist_session(session)
-
-    def put_rom_bank(self, session: ImageSession, data: bytes, bank: int | None = None) -> int:
-        if session.kind != "rom":
-            raise DiskError("This image is not a ROM.")
-        if not data:
-            raise DiskError("The selected ROM bank is empty.")
-        if len(data) > session.rom_bank_size:
-            raise DiskError(
-                f"That file contains {len(data):,} bytes and does not fit one "
-                f"{session.rom_bank_size:,}-byte bank. Split it into banks or change the ROM layout first."
-            )
-        rows = self.list_rom_banks(session)
-        if bank is None:
-            bank = next((int(row["bank"]) for row in rows if row["empty"]), len(rows))
-        if bank < 0:
-            raise DiskError("Choose a ROM bank.")
-        offset = bank * session.rom_bank_size
-        padded = data.ljust(session.rom_bank_size, bytes((session.rom_erase_byte,)))
-        with session.lock, session.path.open("r+b") as image:
-            current_size = session.path.stat().st_size
-            if offset > current_size:
-                image.seek(current_size)
-                image.write(bytes((session.rom_erase_byte,)) * (offset - current_size))
-            image.seek(offset)
-            image.write(padded)
-        self._mark_mutated(session, None)
-        self._persist_session(session)
-        return bank
-
-    def clear_rom_banks(self, session: ImageSession, banks: list[int]) -> list[int]:
-        if session.kind != "rom":
-            raise DiskError("This image is not a ROM.")
-        count = bank_count(session.path.stat().st_size, session.rom_bank_size)
-        selected = sorted(set(int(bank) for bank in banks))
-        if not selected or any(bank < 0 or bank >= count for bank in selected):
-            raise DiskError("Choose one or more existing ROM banks.")
-        blank = bytes((session.rom_erase_byte,)) * session.rom_bank_size
-        with session.lock, session.path.open("r+b") as image:
-            for bank in selected:
-                offset = bank * session.rom_bank_size
-                image.seek(offset)
-                length = min(session.rom_bank_size, session.path.stat().st_size - offset)
-                image.write(blank[:length])
-        self._mark_mutated(session, None)
-        self._persist_session(session)
-        return selected
-
-    def move_rom_banks(self, session: ImageSession, sources: list[int], target_start: int) -> list[int]:
-        """Move banks atomically, including overlapping source/target ranges."""
-        if session.kind != "rom":
-            raise DiskError("This image is not a ROM.")
-        source_banks = [int(bank) for bank in sources]
-        if not source_banks or len(set(source_banks)) != len(source_banks):
-            raise DiskError("Choose distinct ROM banks to move.")
-        count = bank_count(session.path.stat().st_size, session.rom_bank_size)
-        if (
-            any(bank < 0 or bank >= count for bank in source_banks)
-            or target_start < 0
-            or target_start > count
-        ):
-            raise DiskError("Choose valid ROM bank positions.")
-        targets = list(range(int(target_start), int(target_start) + len(source_banks)))
-        data = [read_rom_bank(session.path, bank, session.rom_bank_size) for bank in source_banks]
-        blank = bytes((session.rom_erase_byte,)) * session.rom_bank_size
-        with session.lock, session.path.open("r+b") as image:
-            for bank in set(source_banks) - set(targets):
-                image.seek(bank * session.rom_bank_size)
-                image.write(blank)
-            for bank, content in zip(targets, data, strict=True):
-                image.seek(bank * session.rom_bank_size)
-                image.write(content.ljust(session.rom_bank_size, bytes((session.rom_erase_byte,))))
-        self._mark_mutated(session, None)
-        self._persist_session(session)
-        return targets
-
-    def rename_rom_bank(self, session: ImageSession, bank: int, title: str) -> None:
-        try:
-            data = bytearray(read_rom_bank(session.path, bank, session.rom_bank_size))
-        except RomError as exc:
-            raise DiskError(str(exc)) from exc
-        header = parse_sideways_header(data)
-        if header is None:
-            raise DiskError("That bank has no editable BBC-family ROM title header.")
-        try:
-            encoded = str(title).encode("ascii")
-        except UnicodeEncodeError as exc:
-            raise DiskError("ROM titles can use printable ASCII characters only.") from exc
-        marker = int(data[7])
-        copyright_end = data.find(0, marker + 1, min(len(data), marker + 192)) if marker < len(data) else -1
-        region_end = copyright_end + 1 if copyright_end >= 0 else marker + 1
-        version = header.version.encode("ascii", "replace")
-        copyright_text = header.copyright.encode("ascii", "replace")
-        required = len(encoded) + 1 + len(version) + 1 + len(copyright_text) + 1
-        available = region_end - 9
-        maximum_title = max(0, available - (required - len(encoded)))
-        if not encoded or required > available:
-            raise DiskError(
-                f"This header has room for a title of 1 to {maximum_title} characters. "
-                "Use the hex editor to reorganise the header before making it longer."
-            )
-        if any(byte < 32 or byte > 126 for byte in encoded):
-            raise DiskError("ROM titles can use printable ASCII characters only.")
-        data[9:region_end] = bytes((session.rom_erase_byte,)) * available
-        cursor = 9
-        for value in (encoded, version):
-            data[cursor : cursor + len(value)] = value
-            cursor += len(value)
-            data[cursor] = 0
-            cursor += 1
-        data[7] = cursor - 1
-        data[cursor : cursor + len(copyright_text)] = copyright_text
-        data[cursor + len(copyright_text)] = 0
-        self.put_rom_bank(session, bytes(data), bank)
-
-    def rom_bank_bytes(self, session: ImageSession, inner: str) -> bytes:
-        try:
-            return read_rom_bank(session.path, bank_number(inner), session.rom_bank_size)
-        except RomError as exc:
-            raise DiskError(str(exc)) from exc
-
-    def replace_rom_bytes(self, session: ImageSession, data: bytes) -> None:
-        if session.kind != "rom":
-            raise DiskError("This image is not a ROM.")
-        if not data or len(data) > MAX_ROM_SIZE:
-            raise DiskError("ROM images must contain between 1 byte and 64 MiB.")
-        temporary = session.path.with_name(f".{session.path.name}.rom-update")
-        with session.lock:
-            try:
-                temporary.write_bytes(data)
-                temporary.replace(session.path)
-            finally:
-                temporary.unlink(missing_ok=True)
-            self._mark_mutated(session, None)
-            self._persist_session(session)
-
-    def save_rom_project(self, session: ImageSession, document: dict) -> dict:
-        if session.kind != "rom":
-            raise DiskError("This image is not a ROM.")
-        session.rom_project = normalise_project(document)
-        session.dirty = True
-        self._persist_session(session)
-        return session.rom_project
-
-    def editor_project(self, session: ImageSession, path: str, slot: int | None, side: int | None) -> dict:
-        key = editor_project_key(path, slot, side)
-        return normalise_editor_project(session.editor_projects.get(key))
-
-    def save_editor_project(
-        self, session: ImageSession, path: str, slot: int | None, side: int | None, document: dict,
-    ) -> dict:
-        key = editor_project_key(path, slot, side)
-        project = normalise_editor_project(document)
-        with session.lock:
-            session.editor_projects[key] = project
-            self._persist_session(session)
-        return project
-
-    def move_editor_projects(
-        self,
-        session: ImageSession,
-        moves: list[dict],
-        slot: int | None,
-        side: int | None,
-    ) -> int:
-        """Follow file and directory moves without orphaning editor annotations."""
-        replacements = sorted(
-            (
-                (str(item.get("source") or "").rstrip("."), str(item.get("destination") or "").rstrip("."))
-                for item in moves
-                if item.get("source") and item.get("destination")
-            ),
-            key=lambda item: len(item[0]),
-            reverse=True,
-        )
-        if not replacements:
-            return 0
-        changed: dict[str, dict] = {}
-        removed: list[str] = []
-        slot_key = str(slot) if slot is not None else "-"
-        side_key = str(side) if side is not None else "-"
-        for key, project in list(session.editor_projects.items()):
-            key_slot, separator, remainder = key.partition("|")
-            key_side, separator2, path = remainder.partition("|")
-            if not separator or not separator2 or key_slot != slot_key or key_side != side_key:
-                continue
-            folded = path.casefold()
-            for source, destination in replacements:
-                source_folded = source.casefold()
-                if folded != source_folded and not folded.startswith(source_folded + "."):
-                    continue
-                suffix = path[len(source):]
-                changed[editor_project_key(destination + suffix, slot, side)] = project
-                removed.append(key)
-                break
-        if not removed:
-            return 0
-        with session.lock:
-            for key in removed:
-                session.editor_projects.pop(key, None)
-            session.editor_projects.update(changed)
-            self._persist_session(session)
-        return len(removed)
-
-    def delete_editor_projects(
-        self,
-        session: ImageSession,
-        paths: list[str],
-        slot: int | None,
-        side: int | None,
-    ) -> int:
-        """Remove annotations belonging to deleted files or directory trees."""
-        prefixes = [str(path or "").rstrip(".").casefold() for path in paths if path]
-        slot_key = str(slot) if slot is not None else "-"
-        side_key = str(side) if side is not None else "-"
-        removed = []
-        for key in session.editor_projects:
-            key_slot, separator, remainder = key.partition("|")
-            key_side, separator2, path = remainder.partition("|")
-            if not separator or not separator2 or key_slot != slot_key or key_side != side_key:
-                continue
-            folded = path.casefold()
-            if any(folded == prefix or folded.startswith(prefix + ".") for prefix in prefixes):
-                removed.append(key)
-        if not removed:
-            return 0
-        with session.lock:
-            for key in removed:
-                session.editor_projects.pop(key, None)
-            self._persist_session(session)
-        return len(removed)
-
-    def rom_component_exports(self, session: ImageSession) -> list[tuple[Path, str]]:
-        """Create byte-wide chip files for a documented interleaved ROM set."""
-        if session.kind != "rom" or not session.rom_layout.startswith("byte-interleaved-"):
-            return []
-        try:
-            component_count = int(session.rom_layout.rsplit("-", 1)[-1])
-        except ValueError as exc:
-            raise DiskError("The ROM component layout is invalid.") from exc
-        if component_count not in {2, 4}:
-            raise DiskError("Only two-chip and four-chip ROM layouts can be exported.")
-        names = list(session.rom_component_names[:component_count])
-        names.extend(
-            f"{Path(session.name).stem}-chip-{index + 1}.rom"
-            for index in range(len(names), component_count)
-        )
-        paths = [session.path.parent / f"rom-component-{index}.bin" for index in range(component_count)]
-        handles = [path.open("wb") for path in paths]
-        try:
-            with session.path.open("rb") as source:
-                remainder = b""
-                while chunk := source.read(COPY_BUFFER_SIZE):
-                    chunk = remainder + chunk
-                    complete = len(chunk) - (len(chunk) % component_count)
-                    body, remainder = chunk[:complete], chunk[complete:]
-                    for index, handle in enumerate(handles):
-                        handle.write(body[index::component_count])
-                if remainder:
-                    raise DiskError(
-                        f"The ROM size is not divisible by its {component_count}-chip byte layout."
-                    )
-        finally:
-            for handle in handles:
-                handle.close()
-        return list(zip(paths, [self.safe_filename(name) for name in names], strict=True))
 
     def list_directory(self, session: ImageSession, inner: str, slot: int | None, side: int | None = None) -> dict:
         if session.kind == "rom":
@@ -5369,209 +4944,17 @@ class DiskService:
             self._mark_mutated(session, slot)
 
     @staticmethod
-    def _tape(session: ImageSession) -> UEFContents:
-        if session.tape is None:
-            try:
-                session.tape = parse_uef(session.path.read_bytes())
-            except UEFError as exc:
-                raise DiskError(str(exc)) from exc
-        return session.tape
-
-    def _tape_file(self, session: ImageSession, inner: str) -> TapeFile:
-        name = inner.rsplit(".", 1)[-1]
-        for item in self._tape(session).files:
-            if item.name.casefold() == name.casefold():
-                return item
-        raise DiskError(f"Tape file “{name}” was not found.")
-
-    @staticmethod
-    def _dfs_conversion_name(name: str, used: set[str]) -> str:
-        return DiskService._unique_import_name(name, used, 7)
-
-    def convert_uef(self, session: ImageSession, disk_format: str) -> tuple[ImageSession, list[dict]]:
-        if session.kind != "tape":
-            raise DiskError("Only UEF tapes can be converted.")
-        if disk_format not in {"ssd", "dsd"}:
-            raise DiskError("A UEF can be converted to SSD or DSD.")
-        tape = self._tape(session)
-        if not tape.files:
-            raise DiskError("No standard Acorn tape files were found to place on a DFS disk.")
-        title = Path(session.name).stem[:12] or "UEF"
-        target = self.create_blank(disk_format, title)
-        new_name = self.safe_filename(f"{Path(session.name).stem}.{disk_format}")
-        new_path = target.path.with_name(new_name)
-        target.path.rename(new_path)
-        target.path = new_path
-        target.name = new_name
-        self._persist_session(target)
-        used: set[str] = set()
-        plans: list[tuple[TapeFile, str]] = [
-            (tape_file, self._dfs_conversion_name(tape_file.name, used))
-            for tape_file in tape.files
-        ]
-        name_map = {
-            source_name: dfs_name
-            for tape_file, dfs_name in plans
-            for source_name in (tape_file.name, tape_file.original_name)
-            if source_name and source_name.strip()
-        }
-        converted: list[dict] = []
-        generated_boot: dict | None = None
-        boot_name = next((name for tape_file, name in plans if tape_file.name.casefold() == "!boot"), None)
-        if boot_name is None:
-            launch_file, launch_name = next(
-                ((item, name) for item, name in plans if item.complete),
-                plans[0],
-            )
-            if basic_unopened_channel_io(launch_file.data):
-                self._append_warning(
-                    target,
-                    f"No !BOOT was generated because {launch_name} uses a cassette-inherited "
-                    "file channel without opening it. Direct disk launch would raise BASIC "
-                    "error 222 (Channel).",
-                )
-            else:
-                command = f'CHAIN "{launch_name}"\r' if is_tokenized_basic(launch_file.data) else f"*RUN {launch_name}\r"
-                temp_path = self.work_dir / f"uef-boot-{uuid.uuid4().hex}"
-                temp_path.write_bytes(command.encode("latin-1"))
-                try:
-                    # Reserve the boot file before the tape payload fills the disk.
-                    self.put(target, None, "$.!BOOT", temp_path, "0", "0", None, 0 if disk_format == "dsd" else None)
-                finally:
-                    temp_path.unlink(missing_ok=True)
-                generated_boot = {
-                    "source": "Generated disk boot",
-                    "destination": "!BOOT",
-                    "side": 0,
-                    "complete": True,
-                    "generated": True,
-                    "loaderChanges": [f"Created {command.strip()} as the disk boot command."],
-                }
-        current_side = 0
-        for position, (tape_file, dfs_name) in enumerate(plans):
-            next_name = plans[position + 1][1] if position + 1 < len(plans) else None
-            payload, loader_changes = rewrite_basic_loader(tape_file.data, next_name, name_map)
-            temp_path = self.work_dir / f"uef-convert-{uuid.uuid4().hex}"
-            temp_path.write_bytes(payload)
-            try:
-                try:
-                    self.put(
-                        target,
-                        None,
-                        f"$.{dfs_name}",
-                        temp_path,
-                        hex(tape_file.load),
-                        hex(tape_file.execute),
-                        None,
-                        current_side if disk_format == "dsd" else None,
-                    )
-                except DiskError:
-                    if disk_format != "dsd" or current_side == 2:
-                        raise
-                    current_side = 2
-                    self.put(
-                        target,
-                        None,
-                        f"$.{dfs_name}",
-                        temp_path,
-                        hex(tape_file.load),
-                        hex(tape_file.execute),
-                        None,
-                        current_side,
-                    )
-            finally:
-                temp_path.unlink(missing_ok=True)
-            converted.append(
-                {
-                    "source": tape_file.name,
-                    "destination": dfs_name,
-                    "side": current_side if disk_format == "dsd" else 0,
-                    "complete": tape_file.complete,
-                    "inferredName": tape_file.inferred_name,
-                    "loaderChanges": list(loader_changes),
-                }
-            )
-
-        if generated_boot:
-            converted.append(generated_boot)
-        try:
-            self._run(["opt", str(target.path), "3"])
-            self._mark_mutated(target, None)
-        except DiskError as exc:
-            self._append_warning(target, f"The files were converted, but DFS boot option 3 could not be set: {exc}")
-
-        if len(plans) > 1 and not is_tokenized_basic(plans[0][0].data):
-            self._append_warning(
-                target,
-                "The initial tape loader is not tokenised BASIC. Its internal cassette calls could not be "
-                "rewritten automatically; test the converted disk before relying on it.",
-            )
-        for tape_file, dfs_name in plans:
-            if not tape_file.complete:
-                self._append_warning(
-                    target,
-                    f"{dfs_name} was recovered from an incomplete tape file and may not run correctly.",
-                )
-        return target, converted
-
-    @staticmethod
     def _friendly_engine_error(message: str) -> str:
-        if "exceeds disc bounds" in message and "Sector range" in message:
-            return (
-                "The ADFS image geometry is incomplete or invalid. "
-                "For a BeebSCSI DAT image, reopen the original DAT with its matching DSC file."
-            )
-        if "Traceback (most recent call last)" in message:
-            lines = [line.strip() for line in message.splitlines() if line.strip()]
-            message = lines[-1] if lines else ""
-            message = re.sub(
-                r"^(?:[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception)):\s*",
-                "",
-                message,
-            )
-        return re.sub(r"^Error:\s*", "", message).strip() or "Disk operation failed."
+        return friendly_engine_error(message)
 
     @staticmethod
     def _run(args: list[str], binary: bool = False) -> bytes | str:
-        args = [argument for argument in args if argument != ""]
-        try:
-            result = subprocess.run(
-                ["disc", *args],
-                capture_output=True,
-                check=False,
-                timeout=240,
-            )
-        except FileNotFoundError as exc:
-            raise DiskError("The Oaknut disk engine is not installed.") from exc
-        except subprocess.TimeoutExpired as exc:
-            raise DiskError("The disk operation timed out.") from exc
-        if result.returncode:
-            message = result.stderr.decode("utf-8", "replace").strip()
-            raise DiskError(DiskService._friendly_engine_error(message))
-        return result.stdout if binary else result.stdout.decode("utf-8", "replace")
+        return run_disc(args, binary)
 
     @staticmethod
     def _run_hxcfe(args: list[str]) -> str:
-        try:
-            result = subprocess.run(
-                ["hxcfe", *args],
-                capture_output=True,
-                check=False,
-                timeout=240,
-            )
-        except FileNotFoundError as exc:
-            raise DiskError("The HFE conversion engine is not installed.") from exc
-        except subprocess.TimeoutExpired as exc:
-            raise DiskError("The HFE conversion timed out.") from exc
-        output = (result.stdout + result.stderr).decode("utf-8", "replace")
-        if result.returncode:
-            raise DiskError(DiskService._friendly_engine_error(output))
-        return output
+        return run_hxcfe(args)
 
     @classmethod
     def _run_json(cls, args: list[str]) -> dict:
-        output = cls._run(args)
-        try:
-            return json.loads(output)
-        except json.JSONDecodeError as exc:
-            raise DiskError("The disk engine returned an unreadable response.") from exc
+        return decode_disc_json(cls._run(args))

@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Python, JavaScript and browser regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install browser test dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build application image
+        run: docker build --tag acorn-file-forge:ci .
+
+      - name: Run Python tests in the application image
+        run: >-
+          docker run --rm
+          --volume "${{ github.workspace }}:/source"
+          --workdir /source
+          acorn-file-forge:ci
+          python -m unittest discover -s tests -v
+
+      - name: Run JavaScript unit tests
+        run: node tests/run_js_tests.js
+
+      - name: Start application for browser tests
+        run: >-
+          docker run --detach --name acorn-file-forge-ci
+          --publish 8666:8666
+          acorn-file-forge:ci
+
+      - name: Wait for the application
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:8666/api/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs acorn-file-forge-ci
+          exit 1
+
+      - name: Run browser regressions
+        run: npm run test:browser
+
+      - name: Show application log on failure
+        if: failure()
+        run: docker logs acorn-file-forge-ci
+
+      - name: Stop browser-test application
+        if: always()
+        run: docker rm --force acorn-file-forge-ci || true
+
+  multiarch:
+    name: Build ${{ matrix.platform }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - linux/amd64
+          - linux/arm64
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build without publishing
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          push: false
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}

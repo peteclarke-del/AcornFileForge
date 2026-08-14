@@ -13,15 +13,14 @@ from ..archive_utils import validated_zip_members
 from ..catalog_service import CatalogueService, archive_members
 from ..disk_service import DiskError, DiskService
 from ..formats import DFS_EXTENSIONS, HFE_EXTENSIONS, TAPE_EXTENSIONS
-from ..menu_service import (
-    analyse_adfs_directory,
-    analyse_disk,
-    enrich_if_ambiguous,
+from ..menu.analysis import analyse_adfs_directory, analyse_disk, enrich_if_ambiguous
+from ..menu.mmb import (
     find_menu_slot,
     installed_mmb_menus,
     parse_mmb_menu_data,
 )
 from .common import payload
+from .effects import image_mutation, request_effect
 
 
 DISK_EXTENSIONS = DFS_EXTENSIONS | HFE_EXTENSIONS | TAPE_EXTENSIONS
@@ -146,6 +145,7 @@ def create_catalog_blueprint(service: DiskService, work_dir: Path) -> Blueprint:
         return jsonify(sources=catalogue.sources())
 
     @blueprint.put("/api/catalog/sources")
+    @request_effect("external", "saving Online Library source configuration")
     def save_sources():
         return jsonify(sources=catalogue.save_sources(payload().get("sources", [])))
 
@@ -192,6 +192,7 @@ def create_catalog_blueprint(service: DiskService, work_dir: Path) -> Blueprint:
         return jsonify(items=rows, failures=failures)
 
     @blueprint.post("/api/images/<image_id>/catalog/install")
+    @image_mutation("installing software from the Online Library")
     def install(image_id):
         data = payload(); target = service.get(image_id)
         item_ids = [str(item) for item in data.get("itemIds", [])]
