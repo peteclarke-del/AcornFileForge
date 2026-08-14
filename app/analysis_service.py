@@ -619,10 +619,11 @@ def health_report(service, session, progress=None) -> dict:
     warnings = [*session.warnings, *(list(session.tape.warnings) if session.tape else [])]
     profile = session.hardware_profile or {}
     if profile:
+        additions = ", ".join(profile.get("addons") or []) or "stock machine"
         checks.append({
             "name": "Hardware profile",
             "status": "pass",
-            "detail": f"{profile.get('name', 'Custom')} · {profile.get('machine', 'Acorn')} · {profile.get('filingSystem', 'automatic')}",
+            "detail": f"{profile.get('name', 'Custom')} · {profile.get('machine', 'Acorn')} · {profile.get('filingSystem', 'automatic')} · {additions}",
         })
         if profile.get("tube") and session.kind == "mmb":
             checks.append({

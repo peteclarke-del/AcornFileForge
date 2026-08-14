@@ -455,7 +455,8 @@ dialog.failed .modal-error { display: grid; }
 .analysis-dialog > header, .workbench-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding-right: 34px; }
 .analysis-dialog h2, .workbench-dialog h2 { margin: 2px 0 0; }
 .analysis-dialog > small, .analysis-dialog header small, .workbench-dialog header small { color: var(--teal); font: 700 9px DM Mono, monospace; letter-spacing: .1em; }
-dialog:has(.wide-analysis), dialog:has(.workbench-dialog) { width: min(920px, calc(100vw - 30px)); }
+dialog:has(.wide-analysis) { width: min(920px, calc(100vw - 30px)); }
+dialog:has(.workbench-dialog) { width: min(1220px, calc(100vw - 24px)); }
 dialog:has(.source-editor) { width: min(760px, calc(100vw - 30px)); }
 dialog:has(.disassembly-editor) { width: min(1080px, calc(100vw - 30px)); }
 dialog:has(.source-editor) form, dialog:has(.disassembly-editor) form { padding: 18px; }
@@ -718,6 +719,7 @@ dialog.editor-window-maximised .editor-resize-handle { display: none; }
 .editor-status { display: flex; justify-content: space-between; gap: 14px; min-height: 20px; padding: 3px 7px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: var(--muted); font: 9px DM Mono, monospace; }
 .editor-document-state { color: var(--teal); font-weight: 700; }
 .editor-choice-shade { position: absolute; z-index: 10050; inset: 0; display: grid; place-items: center; padding: 20px; border-radius: inherit; background: var(--modal-backdrop); }
+.editor-choice-shade.editor-global-overlay { position: fixed; border-radius: 0; }
 .editor-choice-card { width: min(480px, 100%); padding: 20px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--paper); box-shadow: var(--shadow); }
 .editor-choice-card p { color: var(--muted); font-size: 12px; line-height: 1.55; }
 .disassembly-controls { display: flex; align-items: end; gap: 8px; flex-wrap: wrap; padding: 4px 0; }
@@ -769,7 +771,54 @@ dialog.editor-window-maximised .editor-resize-handle { display: none; }
 .duplicate-variants { margin: -5px 0 16px; }.duplicate-variants summary { color: var(--blue); cursor: pointer; font-size: 11px; font-weight: 700; }
 .duplicate-eject-review { display: grid; gap: 10px; }.duplicate-eject-review > p { margin: 0; color: var(--muted); font-size: 11px; }.duplicate-eject-choice { display: grid; gap: 7px; padding: 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--cream); }.duplicate-eject-choice legend { padding: 0 5px; font-weight: 800; }.duplicate-eject-choice > p { margin: 0; color: var(--muted); font-size: 10px; }.duplicate-eject-choice > label { display: flex; align-items: flex-start; gap: 9px; padding: 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); cursor: pointer; }.duplicate-eject-choice > label input { margin-top: 2px; accent-color: var(--teal); }.duplicate-eject-choice > label span { display: grid; gap: 2px; }.duplicate-eject-choice > label small { color: var(--muted); font: 9px/1.45 DM Mono, monospace; }.duplicate-eject-choice .help-warning { margin: 0; }.duplicate-eject-choice .help-warning span { display: block; margin-top: 3px; }.duplicate-eject-choice .help-warning ul { margin: 7px 0 0; padding-left: 18px; }
 .job > b { padding: 4px 6px; border-radius: 5px; background: var(--line); font: 700 8px DM Mono, monospace; text-transform: uppercase; }.job.running > b { background: var(--teal); color: var(--on-accent); }.job.failed > b, .job.interrupted > b { background: var(--danger); color: var(--on-accent); }.job button { border: 0; background: transparent; color: var(--danger); cursor: pointer; font-weight: 700; }
-.workbench-dialog { display: grid; gap: 14px; }.workbench-dialog > header select { width: min(190px, 45%); min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); color: var(--ink); }.workbench-grid { display: grid; grid-template-columns: minmax(190px,.75fr) minmax(320px,1.25fr); gap: 14px; min-height: 460px; }.workbench-grid aside { display: grid; align-content: start; gap: 5px; max-height: 58vh; overflow: auto; }.workbench-grid aside button { display: grid; gap: 3px; padding: 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); color: var(--ink); text-align: left; cursor: pointer; }.workbench-grid aside small { color: var(--muted); font: 9px DM Mono, monospace; }.workbench-grid section { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); align-content: start; gap: 0 10px; padding: 0 6px; overflow: auto; max-height: 60vh; }.workbench-grid section > .field { margin: 7px 0; }.workbench-grid section > .check-field, .workbench-grid section > .modal-actions { grid-column: 1 / -1; }.project-tools { min-height: 360px; display: grid; place-content: center; gap: 20px; text-align: center; }.project-tools p { max-width: 620px; color: var(--muted); line-height: 1.6; }
+.workbench-dialog { display: grid; gap: 14px; }
+dialog:has(.workbench-dialog) { max-height: calc(100dvh - 24px); }
+dialog:has(.workbench-dialog) form { box-sizing: border-box; max-height: calc(100dvh - 24px); overflow: auto; }
+.workbench-dialog > header select { width: min(190px, 45%); min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); color: var(--ink); }
+.workbench-profile-picker { display: grid; grid-template-columns: minmax(130px,.35fr) minmax(220px,1fr); align-items: center; gap: 4px 12px; }
+.workbench-profile-picker small { grid-column: 2; }
+.workbench-grid { display: grid; grid-template-columns: minmax(190px,.75fr) minmax(320px,1.25fr); gap: 14px; min-height: min(460px, 55dvh); }
+.workbench-profile-grid { grid-template-columns: 1fr; }
+.workbench-addon-builder { grid-column: 2; grid-row: 1 / span 30; min-width: 0; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
+.workbench-addon-builder > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.workbench-addon-builder h3 { margin: 2px 0 0; }
+.workbench-addon-builder header small, .workbench-addon-builder [data-addon-summary] { color: var(--muted); font: 700 8px/1.4 DM Mono, monospace; letter-spacing: .06em; }
+.hardware-addon-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 10px; max-height: min(64vh, 650px); overflow: auto; padding: 2px 4px 2px 0; }
+.hardware-addon-select { min-width: 0; margin: 0; padding: 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); }
+.hardware-addon-select label { display: block; margin-bottom: 5px; color: var(--muted); font: 700 8px DM Mono, monospace; text-transform: uppercase; letter-spacing: .05em; }
+.hardware-addon-select select { width: 100%; }
+.hardware-addon-select small { display: block; min-height: 2.7em; margin-top: 5px; color: var(--muted); font-size: 9px; line-height: 1.35; }
+.hardware-addon-group { grid-column: 1 / -1; min-width: 0; margin: 0; padding: 7px; border: 1px solid var(--line); border-radius: 7px; }
+.hardware-addon-group legend { padding: 0 5px; color: var(--muted); font: 700 8px DM Mono, monospace; text-transform: uppercase; letter-spacing: .05em; }
+.hardware-addon-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.hardware-addon { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 7px; align-items: start; padding: 6px; border-radius: 5px; cursor: pointer; }
+.hardware-addon:hover, .hardware-addon:has(input:focus-visible) { background: color-mix(in srgb, var(--teal) 10%, transparent); }
+.hardware-addon input { margin-top: 3px; }
+.hardware-addon span { display: grid; min-width: 0; gap: 1px; }
+.hardware-addon b { font-size: 11px; }
+.hardware-addon small { color: var(--muted); font-size: 9px; line-height: 1.35; }
+.hardware-addon em { color: var(--teal); font: normal 700 7px DM Mono, monospace; text-transform: uppercase; letter-spacing: .05em; }
+.workbench-grid aside { display: grid; align-content: start; gap: 5px; max-height: 58vh; overflow: auto; }
+.workbench-grid aside button { display: grid; gap: 3px; padding: 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); color: var(--ink); text-align: left; cursor: pointer; }
+.workbench-grid aside small { color: var(--muted); font: 9px DM Mono, monospace; }
+.workbench-grid > section { display: grid; grid-template-columns: minmax(280px,.72fr) minmax(520px,1.28fr); align-content: start; gap: 0 16px; padding: 0 6px; overflow: auto; max-height: 70vh; }
+.workbench-grid > section > .field { margin: 7px 0; }
+.workbench-grid > section > .field, .workbench-grid > section > .check-field, .workbench-grid > section > .modal-actions { grid-column: 1; }
+.workbench-emulator-settings { grid-column: 1; margin: 4px 0; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
+.workbench-emulator-settings[open] { display: block; }
+.workbench-emulator-settings > summary { cursor: pointer; color: var(--ink); font-weight: 700; }
+.workbench-emulator-settings[open] > summary { margin-bottom: 10px; }
+.workbench-emulator-settings[open] > .help-note { box-sizing: border-box; width: 100%; margin: 0 0 10px; }
+.workbench-emulator-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 10px; }
+.workbench-emulator-settings .field { margin: 9px 0 0; }
+.workbench-emulator-settings code { overflow-wrap: anywhere; }
+.project-tools { min-height: 360px; display: grid; place-content: center; gap: 20px; text-align: center; }
+.project-tools p { max-width: 620px; color: var(--muted); line-height: 1.6; }
+@media (max-width: 900px) {
+  .workbench-profile-picker, .workbench-grid > section, .hardware-addon-groups, .workbench-emulator-controls, .hardware-addon-options { grid-template-columns: 1fr; }
+  .workbench-profile-picker small { grid-column: 1; }
+  .workbench-addon-builder, .workbench-grid > section > .field, .workbench-grid > section > .check-field, .workbench-grid > section > .modal-actions, .workbench-emulator-settings { grid-column: 1; grid-row: auto; }
+}
 body:has(dialog[open].busy) .pane .loading { display: none; }
 body:has(dialog[open].failed) .pane .loading { display: none; }
 .modal-progress-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 50%; background: var(--blue); color: var(--on-accent); font-size: 26px; animation: modal-progress-spin 1.2s linear infinite; }
@@ -1033,6 +1082,8 @@ dialog:has(.bulk-copy-planner) form { padding: 22px; }
 .bulk-planner-actions .modal-actions { flex: 0 0 auto; margin: 0; }
 
 .toast-region { position: fixed; right: 20px; bottom: 20px; display: grid; gap: 9px; z-index: 20; }
+.modal-toast-region { position: absolute; right: 16px; bottom: 16px; z-index: 10100; max-width: min(420px, calc(100% - 32px)); pointer-events: none; }
+.modal-toast-region .toast { pointer-events: auto; }
 .toast { width: min(360px, calc(100vw - 40px)); padding: 12px 15px; border: 1px solid var(--ink); border-radius: 9px; background: var(--ink); color: var(--on-accent); box-shadow: 4px 4px 0 var(--yellow); font-size: 12px; animation: toast-in .18s ease-out; }
 .toast.error { background: var(--danger); box-shadow: 4px 4px 0 var(--danger-soft); }
 .page-warning-overlay { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 24px; background: var(--overlay-backdrop); backdrop-filter: blur(3px); }
@@ -1205,5 +1256,11 @@ dialog:has(.online-library-heading), dialog:has(.online-source-list) { width: mi
 .debugger-workspace { width: min(820px, calc(100vw - 32px)); }
 .debugger-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
 .debugger-transcript { min-height: 220px; max-height: 40vh; overflow: auto; padding: 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--hex-background); color: var(--hex-text); white-space: pre-wrap; font: 9px/1.45 DM Mono, monospace; }
+.emulator-viewer-shade { padding: 12px; }
+.emulator-viewer { width: min(1320px, calc(100vw - 24px)); height: min(920px, calc(100vh - 24px)); display: grid; grid-template-rows: auto auto minmax(0, 1fr); gap: 8px; }
+.emulator-viewer > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.emulator-viewer > header > div:last-child { display: flex; gap: 6px; }
+.emulator-viewer h2, .emulator-viewer p { margin: 0; }
+.emulator-viewer iframe { width: 100%; height: 100%; min-height: 360px; border: 1px solid var(--line); border-radius: 5px; background: var(--emulator-background); }
 .code-verification dl { display:grid; grid-template-columns:auto 1fr; gap:.25rem .7rem; }
 .code-verification dd { margin:0; }

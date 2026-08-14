@@ -16,6 +16,7 @@ from ..formats import (
     ROM_EXTENSIONS,
     TAPE_EXTENSIONS,
 )
+from ..hardware_profiles import hardware_catalogue, normalise_hardware_profile
 from ..menu_service import best_distribution_filename
 from ..operations import OperationCancelled, OperationRegistry
 from .common import optional_int, payload
@@ -35,6 +36,10 @@ def create_images_blueprint(
     @blueprint.get("/api/health")
     def health():
         return jsonify(status="ok", engine="oaknut")
+
+    @blueprint.get("/api/hardware-profiles")
+    def list_hardware_profiles():
+        return jsonify(hardware_catalogue())
 
     @blueprint.post("/api/images")
     def open_image():
@@ -141,13 +146,20 @@ def create_images_blueprint(
         allowed = {
             "name", "machine", "filingSystem", "mmfsBuild", "tube",
             "page", "menuType", "notes", "targetHardware", "catalogMachine",
+            "emulator", "debugger", "emulatorRam", "emulatorBoot", "addons",
         }
         profile = {
             key: value
             for key, value in data.items()
-            if key in allowed and isinstance(value, (str, bool, int, float))
+            if key in allowed and isinstance(value, (str, bool, int, float, list))
         }
-        profile["tube"] = bool(profile.get("tube", False))
+        try:
+            profile = normalise_hardware_profile(profile)
+        except ValueError as exc:
+            raise DiskError(str(exc)) from exc
+        for key in ("emulator", "debugger", "emulatorRam", "emulatorBoot"):
+            if key in profile:
+                profile[key] = str(profile[key]).strip()[:2048]
         session.hardware_profile = profile
         if session.kind == "adfs" and data.get("targetHardware"):
             session.target_hardware = service._target_hardware(str(data["targetHardware"]))

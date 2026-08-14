@@ -302,24 +302,14 @@ a repair or build to travel with the ROM.
 
 ### Emulator
 
-Set `ACORN_ROM_EMULATOR_COMMAND` in the local deployment and include a `{rom}`
-placeholder. The command is parsed into arguments and executed directly without
-a shell. It receives the current working ROM path, has a 30-second time limit,
-and retains the last 20,000 characters of standard output and standard error.
-Results are appended to project metadata, capped at 512 records.
-
-Example Compose fragment:
-
-```yaml
-services:
-  acorn-file-forge:
-    environment:
-      ACORN_ROM_EMULATOR_COMMAND: /tools/check-rom --image {rom}
-```
-
-The executable and any emulator ROMs must already exist inside the container.
-An exit code is evidence from that configured tool, not a universal hardware
-compatibility certificate.
+Open **Workbench → Hardware profiles → Emulator and debugger integration**,
+choose the target machine and managed emulator, then save and apply the profile
+to the ROM pane. The ROM Workbench reports that selection. Direct attachment is
+enabled only when Acorn File Forge can prove the selected machine's ROM slot,
+bank mapping and replacement policy. It otherwise remains disabled and explains
+that the programmer export or a machine-specific image is required. This is
+intentional: launching an arbitrary ROM in the wrong bank can produce a
+convincing but invalid result.
 
 ## Editing operations
 

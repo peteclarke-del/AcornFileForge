@@ -199,6 +199,14 @@ def build_download_readme(
         f"- Image size: {image_path.stat().st_size:,} bytes",
         f"- Image SHA-256: `{image_checksum or sha256_path(image_path)}`",
     ]
+    profile = session.hardware_profile or {}
+    if profile:
+        lines.extend((
+            f"- Workbench profile: {profile.get('name') or 'Custom'}",
+            f"- Base machine: {profile.get('machine') or 'not specified'}",
+            "- Hardware additions: " + (", ".join(profile.get("addons") or []) or "stock machine"),
+            f"- Managed emulator: {profile.get('emulator') or 'automatic'}",
+        ))
     if session.descriptor_path:
         lines.extend(
             (

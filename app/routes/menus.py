@@ -22,6 +22,7 @@ from ..menu_service import (
     find_menu_slot,
     has_adfs_menu,
     install_mmb_menu,
+    installed_adfs_menus,
     installed_mmb_menu,
     installed_mmb_menus,
     is_mmb_menu_backup_title,
@@ -136,9 +137,11 @@ def create_menus_blueprint(service: DiskService, template_dir: Path) -> Blueprin
             )
         if session.kind == "adfs":
             root = request.args.get("root", "$")
+            menus = installed_adfs_menus(service, session)
             return jsonify(
-                detected=has_adfs_menu(service, session, root),
+                detected=any(menu["root"].casefold() == root.casefold() for menu in menus),
                 root=root,
+                menus=menus,
             )
         return jsonify(detected=False)
 

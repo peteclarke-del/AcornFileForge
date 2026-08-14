@@ -147,10 +147,19 @@ strings or dynamic line expressions.
 The shared scanner carries explicit BASIC I through VI capability profiles.
 The live analyser reports missing, duplicated or out-of-order line numbers,
 unresolved direct destinations, missing local procedures, unmatched procedure
-boundaries, array use before DIM, FOR/NEXT mismatches, mixed typed-variable
-families, unused assignments, dialect-incompatible commands, unclosed strings
+boundaries, array use before DIM, FOR/NEXT mismatches,
+dialect-incompatible commands, unclosed strings
 and conservatively identified unreachable lines.
 It also builds a procedure and function outline with direct call sites.
+
+Array checks use token identities rather than raw name-and-parenthesis patterns,
+so compact forms such as `PRINTTAB(0,15)` remain `PRINT TAB(...)` and are not
+reported as arrays. The analyser deliberately does not claim that an assignment
+is unused. BBC BASIC pseudo-variables have immediate effects, assembler and
+machine-code calls consume conventional variables implicitly, and chained
+programs can share globals, so textual absence of a later read is not proof of
+a defect. `A`, `A%` and `A$` are separate, valid BBC BASIC variables and are
+not reported merely because they share a base name.
 
 Commands with reference data have dotted hover targets. Hovering displays the
 command's purpose, syntax, context and relevant cautions. Put the caret in a
@@ -271,11 +280,24 @@ comments for:
 
 - MOS jump-table calls such as `OSBYTE`, `OSWORD`, `OSFILE` and `OSCLI`;
 - known OSBYTE, OSWORD, OSFILE and OSFIND reason codes and proven parameters;
-- OSWRCH characters and VDU control values;
+- exact parameter effects for common `*FX` calls, including buffers, events,
+  keyboard repeat, Escape and BREAK behaviour;
+- OSWRCH characters and complete constant VDU sequences, with BBC BASIC comma
+  and semicolon byte emission decoded before cursor, colour, window, origin,
+  plot and character-definition parameters are interpreted;
 - BBC hardware I/O regions;
 - branch conditions and direct references;
 - conventional BBC BRK error blocks;
 - the file execution address.
+
+Context help uses the workbench profile applied to the containing pane. The
+decoded operation and its actual constant parameters are explained first, then
+the documented platform scope is compared with the configured BBC B, B+,
+Master, Electron or RISC OS target. An out-of-scope operation remains
+documented, but receives an explicit warning that it was not designed for the
+current target and can fail or cause unexpected behaviour. This applies to
+source help and proven MOS calls in inline assembly. Automatic targets are
+reported as unconfirmed rather than being treated as compatible.
 
 Local targets receive stable semantic labels where behaviour is proven, with
 their hexadecimal address retained to keep similar routines distinct. ARM and
@@ -330,32 +352,64 @@ disassembly. Compare with saved file shows the current and
 persisted source side by side. The selected-data inspector renders text,
 hexadecimal bytes, both 16-bit byte orders and a bounded one-bit bitmap preview.
 
-## Optional emulator hand-off
+## Managed emulator and debugger
 
-Set `ACORN_FILE_EMULATOR_COMMAND` in the container environment. It must contain
-`{file}` and may contain `{image}`, `{path}`, `{load}` and `{execute}`. The
-command is parsed into arguments and run without a shell. Acorn File Forge:
+Open **Workbench → Hardware profiles → Emulator and debugger integration**.
+Choose a profile and machine. The dependent filing system, MMFS build,
+emulator, debugger, RAM and startup controls are populated from that choice.
+Save the profile and apply it to the pane that will use it. Acorn File Forge
+uses the effective profile shown for that pane rather than a global fallback.
 
-1. exports the current saved file to a temporary path;
-2. substitutes the configured placeholders;
-3. runs the command with a 60-second timeout;
+The same managed launcher is available from each applicable pane's **Tools**
+menu. Use **Run image** or **Debug image** for standalone DFS, ADFS and tape
+media. At the MMB index, select exactly one formatted slot and use **Run selected
+disk** or **Debug selected disk**. Opening the slot keeps those actions available
+as **Run disk** and **Debug disk**. The slot is extracted to temporary SSD media;
+emulator writes do not flow back into the MMB working image.
+
+For a BASIC file it first asks which launch context is wanted:
+
+- **Inject and run BASIC buffer** tokenises the current editor source, including
+  unsaved changes, copies it to a temporary bootable DFS or ADFS floppy as
+  `PROGRAM`, supplies a matching `!BOOT`, and starts it.
+  This is suitable for self-contained programs but deliberately provides none
+  of the parent image's companion files.
+- **Mount and boot parent** attaches the complete image and follows its normal
+  boot sequence, retaining dependencies and filing-system context.
+- **Mount parent only** attaches compatible media without autoboot and leaves
+  the emulated machine at its normal prompt.
+
+The parent choices appear only when the selected emulator supports that exact
+container. An ADFS hard disk which Elkulator cannot attach therefore still
+allows an isolated 8-bit BASIC test. Capability and error messages name the
+actual selected emulator and machine. Acorn File Forge then:
+
+1. attaches the current bootable image to the selected managed machine;
+2. uses the profile's safe machine, RAM and startup options;
+3. runs an automated test with a bounded timeout;
 4. retains the return code and the final 20,000 characters of each output
    stream in project metadata and presents it in the editor's retained
    test-results view;
-5. removes the temporary file.
+5. keeps the image bytes in the recoverable working session.
 
-Example:
+The Docker build includes patched Elkulator for Electron, B-em for BBC B, BBC
+B+ and Master, and MAME for Archimedes profiles. The confirmation identifies the
+emulator, machine and resolved safe arguments. An exit code records what that
+configured tool observed. It does not prove compatibility with every expansion
+or physical machine.
 
-```yaml
-services:
-  acorn-file-forge:
-    environment:
-      ACORN_FILE_EMULATOR_COMMAND: /tools/test-file --file {file} --load {load}
-```
+Run and Debug start a live virtual display and embed it in the editor through a
+local noVNC viewer on port 8668. Click the display before typing, use Full screen
+when needed, and use Stop and close to terminate the emulator and release its
+temporary media. Starting another emulator replaces the current one. The
+container routes audio to a null ALSA device, so headless Docker audio errors do
+not obscure useful ROM, Tube and machine configuration information.
 
-The executable and its dependencies must already exist inside the container.
-An exit code records what that configured tool observed. It does not prove
-compatibility with every Acorn machine or filing-system configuration.
+The Docker image includes the audited `aa310` machine ROM set and its
+`archimedes_keyboard` device archive. The Workbench verifies the complete MAME
+driver before enabling Run or Debug. The keyboard archive from a MAME
+`bios-devices` collection cannot boot the machine by itself, so a damaged or
+incomplete installation is reported explicitly rather than launched.
 
 `ACORN_FILE_ASSEMBLER_COMMAND` enables the dangerous, explicit reassembly
 workflow. It must contain `{source}` and `{output}` and can use `{origin}` and
@@ -364,14 +418,16 @@ than guaranteed source syntax. Acorn File Forge checks the original binary
 hash, requires confirmation, runs the command without a shell and replaces the
 whole binary through an undo checkpoint only when a bounded output file exists.
 
-`ACORN_FILE_DEBUGGER_COMMAND` enables a local debugger hand-off and must contain
-`{file}`. It can also use `{image}`, `{path}`, `{load}`, `{execute}`,
-`{breakpoint}`, `{architecture}`, `{action}` and `{expression}`. The emulator
-debugger workspace invokes `launch`, `continue`, `step`, `next`, `registers`,
-`memory` and `stop`, appending each bounded result to its transcript. Each
-control runs the configured command as an adapter action rather than holding an
-unbounded server process open. The tool receives a temporary file, has a
-120-second bound, and its output is retained in project test history.
+The debugger choice follows the selected managed emulator and offers the same
+isolated BASIC, parent boot and parent mount contexts. Results are retained in
+project test history. Formats which cannot be mounted directly explain that
+specific emulator limitation without disabling a valid isolated BASIC run.
+
+Whole-MMB mounting is deliberately separate from selected-slot launching. The
+bundled Elkulator and B-em builds do not expose an MMFS-compatible virtual
+SD-card adapter, so **Mount whole MMB** is visible but disabled with that exact
+reason. Acorn File Forge does not pass an `.mmb` to a floppy-image switch or
+pretend that extracting a single slot makes the complete container available.
 
 ## Archive and UEF members
 
@@ -460,6 +516,8 @@ change. The stale check is intentional data-loss protection.
 
 ### Emulator testing is unavailable
 
-Confirm that `ACORN_FILE_EMULATOR_COMMAND` exists in the running container and
-contains `{file}`. Archive members must be extracted into an image before they
-can be handed to an emulator.
+Confirm that the Workbench profile applied to the pane selects an installed
+managed emulator. The error names the chosen emulator and distinguishes an
+unsupported parent container from a missing emulator. A self-contained 8-bit
+BBC BASIC file may still run from a generated test floppy. Archive members must
+be extracted into an image before they can be handed to an emulator.

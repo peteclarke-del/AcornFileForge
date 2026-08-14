@@ -1077,6 +1077,7 @@ function renderPane(index, preserveScroll = false) {
   const isTape = pane.image.kind === "tape";
   const isRom = pane.image.kind === "rom";
   const isRomfs = pane.image.kind === "romfs";
+  const isAdfsHdd = pane.image.kind === "adfs" && pane.image.hardDisk;
   const isArchive = Boolean(pane.archivePath);
   const isDfs = isDfsPane(pane);
   const isDfsRoot = isDfs && pane.path === "";
@@ -1283,11 +1284,32 @@ function renderPane(index, preserveScroll = false) {
       <button class="menu-command export-manifest"><b>⇩</b><span>Export collection manifest</span></button>
     </div>
   </details>`;
+  const emulatorSlot = pane.slot !== null
+    ? Number(pane.slot)
+    : isSlots && selected?.formatted ? Number(selected.slot) : null;
+  const emulatorMediaApplicable = !isArchive && !isRom && !isRomfs && (
+    !isSlots || Number.isInteger(emulatorSlot)
+  );
+  const emulatorTargetName = Number.isInteger(emulatorSlot)
+    ? `disk in slot ${emulatorSlot}`
+    : isTape ? "tape image" : "image";
+  const emulatorActions = isSlots
+    ? `<span class="menu-separator" role="separator"></span>
+      <button class="menu-command run-pane-emulator" ${emulatorMediaApplicable ? "" : 'disabled title="Select one formatted MMB slot first."'}><b>▶</b><span>Run selected disk…</span></button>
+      <button class="menu-command debug-pane-emulator" ${emulatorMediaApplicable ? "" : 'disabled title="Select one formatted MMB slot first."'}><b>⌁</b><span>Debug selected disk…</span></button>
+      <button class="menu-command" disabled title="The bundled emulators do not yet provide an MMFS SD-card adapter for direct MMB mounting."><b>▦</b><span>Mount whole MMB <small>adapter required</small></span></button>`
+    : emulatorMediaApplicable
+      ? `<span class="menu-separator" role="separator"></span>
+        <button class="menu-command run-pane-emulator"><b>▶</b><span>Run ${emulatorTargetName}…</span></button>
+        <button class="menu-command debug-pane-emulator"><b>⌁</b><span>Debug ${emulatorTargetName}…</span></button>`
+      : "";
   const utilityTools = `<details class="tool-menu">
     <summary class="tool"><b>⋯</b><span>Tools</span></summary>
     <div class="tool-menu-panel tool-menu-panel-right">
       <button class="menu-command open-hex-editor"><b>0x</b><span>Hex editor…</span></button>
+      ${emulatorActions}
       ${isSlots ? "" : `<button class="menu-command validate-image"><b>✓</b><span>${isRom ? "Check ROM structure" : "Check filesystem"}</span></button>`}
+      ${isAdfsHdd ? '<button class="menu-command audit-adfs-installations"><b>⌁</b><span>Check installed disk software…</span></button>' : ""}
       ${isArchive ? "" : isRom ? '<button class="menu-command rom-workbench"><b>⌬</b><span>ROM Workbench…</span></button><button class="menu-command configure-rom"><b>▥</b><span>ROM layout…</span></button>' : isRomfs ? `${pane.image.readOnly ? "" : '<button class="menu-command configure-romfs"><b>▥</b><span>ROMFS properties…</span></button>'}` : isSlots || isTape ? (isTape ? '<button class="menu-command convert-tape"><b>⇥</b><span>Convert tape to disk</span></button>' : "") : pane.image.readOnly ? "" : '<button class="menu-command compact-image"><b>≋</b><span>Compact filesystem</span></button>'}
     </div>
   </details>`;
@@ -1371,7 +1393,10 @@ function renderPane(index, preserveScroll = false) {
   host.querySelector(".menu-entry")?.addEventListener("click", () => guardedPaneAction(index, () => scanMenuEntry(index)));
   host.querySelector(".setup-menu")?.addEventListener("click", () => guardedPaneAction(index, () => setupMmbMenu(index)));
   host.querySelector(".validate-image")?.addEventListener("click", () => guardedPaneAction(index, () => validateImage(index)));
+  host.querySelector(".audit-adfs-installations")?.addEventListener("click", () => guardedPaneAction(index, () => showAdfsInstallationAudit(index)));
   host.querySelector(".open-hex-editor")?.addEventListener("click", () => guardedPaneAction(index, () => openHexEditor(index)));
+  host.querySelector(".run-pane-emulator")?.addEventListener("click", () => guardedPaneAction(index, () => launchPaneEmulator(index, false)));
+  host.querySelector(".debug-pane-emulator")?.addEventListener("click", () => guardedPaneAction(index, () => launchPaneEmulator(index, true)));
   host.querySelector(".convert-tape")?.addEventListener("click", () => guardedPaneAction(index, () => convertTape(index)));
   host.querySelector(".preview-menu")?.addEventListener("click", () => guardedPaneAction(index, () => showMenuPreview(index)));
   host.querySelector(".audit-menu-pages")?.addEventListener("click", () => guardedPaneAction(index, () => auditMmbMenuPages(index)));
@@ -1723,6 +1748,11 @@ function refreshSelectionDisplay(index) {
   disable(".insert-disk", !selected?.empty);
   disable(".insert-new-disc", !selected?.empty);
   disable(".menu-entry", !selected?.formatted);
+  if (isSlots) {
+    const oneFormattedDisk = selectedKeys.size === 1 && Boolean(selected?.formatted);
+    disable(".run-pane-emulator", !oneFormattedDisk);
+    disable(".debug-pane-emulator", !oneFormattedDisk);
+  }
   const clipboardSelection = clipboardItemsForPane(index);
   disable(".clipboard-cut-action", !clipboardSelection.length || pane.image.readOnly || pane.image.kind === "tape");
   disable(".clipboard-copy-action", !clipboardSelection.length);
@@ -1878,11 +1908,33 @@ function wireDropZone(host, index) {
   };
 }
 
-function copyMmbSlotToAdfs(index, source, afterCopy = null) {
+async function adfsInstalledMenuChoices(index) {
+  const pane = panes[index];
+  const status = await api(`/api/images/${pane.image.id}/menu/detected?root=${encodeURIComponent(pane.path)}`)
+    .catch(() => ({ menus: [] }));
+  return status.menus || [];
+}
+
+function adfsMenuChoiceMarkup(pane, menus, name = "menuChoice") {
+  return `<div class="field"><label>Global menu</label><select name="${name}">
+    <option value="off">Keep off all menus</option>
+    <option value="create:${esc(pane.path)}">Create or update Universal Menu in ${esc(pane.path)}</option>
+    ${(menus || []).filter(menu => menu.root !== pane.path).map(menu => `<option value="existing:${esc(menu.root)}">Add to Universal Menu in ${esc(menu.root)}</option>`).join("")}
+  </select><small>MMB menu programs based on *DIN cannot launch HDD directories. Universal Menu is offered because it explicitly supports ADFS directory records.</small></div>`;
+}
+
+function adfsMenuRoot(choice, fallback) {
+  return choice && choice !== "off"
+    ? String(choice).replace(/^(?:create|existing):/, "")
+    : fallback;
+}
+
+async function copyMmbSlotToAdfs(index, source, afterCopy = null) {
   const target = panes[index];
   if (target.image.name.toLowerCase().endsWith(".dat") && !target.image.hasDescriptor) {
     return toast("Reopen this BeebSCSI DAT with its matching DSC file before copying disks into it.", true);
   }
+  const menuChoices = await adfsInstalledMenuChoices(index);
   const rule = targetNameRule(target, source.name || `DISK${source.slot}`);
   return new Promise(resolve => {
     let submitted = false;
@@ -1891,15 +1943,17 @@ function copyMmbSlotToAdfs(index, source, afterCopy = null) {
     <p>${rule.valid ? "A child directory will be created and the complete DFS catalogue copied into it." : `“${esc(source.name)}” is not a legal ADFS directory name, so a safe replacement has been suggested.`}</p>
     <div class="field"><label>Directory name · max ${rule.limit} characters</label>
       <input name="directoryName" maxlength="${rule.limit}" value="${esc(rule.suggested)}" required></div>
-    <label class="check-field"><input type="checkbox" name="addMenu" value="yes"> Offer this directory as an ADFS menu entry</label>
+    ${adfsMenuChoiceMarkup(target, menuChoices)}
     <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="copy">Copy disk contents</button></div>`,
     async form => {
       submitted = true;
+      const menuChoice = form.get("menuChoice");
       await performMmbSlotToAdfsCopy(
         index,
         source,
         form.get("directoryName"),
-        form.get("addMenu") === "yes"
+        menuChoice !== "off",
+        adfsMenuRoot(menuChoice, target.path)
       );
       if (afterCopy) await afterCopy([source]);
       resolve(true);
@@ -1909,7 +1963,7 @@ function copyMmbSlotToAdfs(index, source, afterCopy = null) {
   });
 }
 
-function copyMmbSlotsToAdfs(index, sources, afterCopy = null) {
+async function copyMmbSlotsToAdfs(index, sources, afterCopy = null) {
   const target = panes[index];
   const savedRecipes = storedCollection(RECIPE_STORAGE_KEY, []);
   const initialRecipe = savedRecipes[0] || { naming: "source", groupPrefix: "DISCS", addMenu: false, online: true, compatibility: true };
@@ -1917,6 +1971,7 @@ function copyMmbSlotsToAdfs(index, sources, afterCopy = null) {
   if (target.image.name.toLowerCase().endsWith(".dat") && !target.image.hasDescriptor) {
     return toast("Reopen this BeebSCSI DAT with its matching DSC file before copying disks into it.", true);
   }
+  const menuChoices = await adfsInstalledMenuChoices(index);
   const adfsDirectoryLimit = 47;
   const availableEntries = Math.max(0, adfsDirectoryLimit - target.entries.length);
   const grouped = sources.length > availableEntries;
@@ -2033,10 +2088,8 @@ function copyMmbSlotsToAdfs(index, sources, afterCopy = null) {
           </section>` : ""}
           <section>
             <small>${grouped ? "3" : "2"} · MENU</small>
-            <label class="bulk-menu-choice">
-              <input type="checkbox" name="addMenu" value="yes" ${initialRecipe.addMenu ? "checked" : ""}>
-              <span><b>Add copied titles to the ADFS menu</b><em>Known MMB menu records are reused first.</em></span>
-            </label>
+            ${adfsMenuChoiceMarkup(target, menuChoices, "bulkMenuChoice")}
+            <p>Untick Menu on any row to keep that disc off-menu while retaining its copied directory.</p>
           </section>
         </aside>
         <section class="bulk-disk-plan">
@@ -2046,7 +2099,7 @@ function copyMmbSlotsToAdfs(index, sources, afterCopy = null) {
           </header>
           <div class="bulk-disk-table-wrap">
             <table class="bulk-disk-table" aria-label="MMB disks planned for ADFS import">
-              <thead><tr><th>Slot</th><th>MMB title</th>${grouped ? "<th>Group</th>" : ""}<th>ADFS directory</th></tr></thead>
+              <thead><tr><th>Slot</th><th>MMB title</th>${grouped ? "<th>Group</th>" : ""}<th>ADFS directory</th><th>Menu</th></tr></thead>
               <tbody>
                 ${items.map(item => `<tr data-collision="${collisionOffsets.has(item.offset) ? "1" : "0"}">
                   <td>${item.source.slot}</td>
@@ -2058,6 +2111,7 @@ function copyMmbSlotsToAdfs(index, sources, afterCopy = null) {
                     data-generic="${esc(genericNames.get(item.offset))}"
                     data-collision="${collisionOffsets.has(item.offset) ? "1" : "0"}"
                     value="${esc(initialNamingStrategy === "generic" ? genericNames.get(item.offset) : item.rule.suggested)}" required></td>
+                  <td><input type="checkbox" name="includeMenu${item.offset}" ${initialRecipe.addMenu ? "checked" : ""} aria-label="Include slot ${item.source.slot} in global menu"></td>
                 </tr>`).join("")}
               </tbody>
             </table>
@@ -2076,7 +2130,8 @@ function copyMmbSlotsToAdfs(index, sources, afterCopy = null) {
     const preparedItems = items.map(item => ({
       source: item.source,
       directoryName: form.get(`directoryName${item.offset}`),
-      groupName: item.group == null ? null : form.get(`groupName${item.group}`)
+      groupName: item.group == null ? null : form.get(`groupName${item.group}`),
+      includeMenu: form.get(`includeMenu${item.offset}`) === "on"
     }));
     const submittedNames = new Map();
     for (const [offset, item] of preparedItems.entries()) {
@@ -2110,15 +2165,16 @@ function copyMmbSlotsToAdfs(index, sources, afterCopy = null) {
       submittedNames.set(key, item);
       preparedItems[offset].directoryName = rule.suggested;
     }
+    const menuChoice = form.get("bulkMenuChoice");
     const result = await performMmbSlotsToAdfsCopy(
       index,
       preparedItems,
-      form.get("addMenu") === "yes",
+      menuChoice !== "off",
       completedItems,
       skippedItems,
       replaceItems,
       collectedMetadata,
-      { onlineMetadata: chosenRecipe.online !== false, compatibility: chosenRecipe.compatibility !== false }
+      { onlineMetadata: chosenRecipe.online !== false, compatibility: chosenRecipe.compatibility !== false, menuRoot: adfsMenuRoot(menuChoice, target.path) }
     );
     if (result && afterCopy) {
       const copied = sources.filter(source => result.completedSlots.includes(Number(source.slot)));
@@ -2154,11 +2210,26 @@ function copyMmbSlotsToAdfs(index, sources, afterCopy = null) {
     const radio = modalContent.querySelector(`[name="namingStrategy"][value="${strategy}"]`);
     if (radio) radio.checked = true;
     applyNamingStrategy(strategy);
-    modalContent.querySelector('[name="addMenu"]').checked = recipe.addMenu !== false;
+    modalContent.querySelectorAll('[name^="includeMenu"]').forEach(input => { input.checked = recipe.addMenu !== false; });
+    const menuSelect = modalContent.querySelector('[name="bulkMenuChoice"]');
+    if (menuSelect) menuSelect.value = recipe.addMenu === false ? "off" : `create:${target.path}`;
+    updateMenuRows();
     modalContent.querySelectorAll('[name^="groupName"]').forEach((input, offset) => {
       input.value = `${recipe.groupPrefix || "DISCS"}${offset + 1}`.slice(0, 10);
     });
   });
+  const updateMenuRows = () => {
+    const enabled = modalContent.querySelector('[name="bulkMenuChoice"]')?.value !== "off";
+    modalContent.querySelectorAll('[name^="includeMenu"]').forEach(input => {
+      input.disabled = !enabled;
+    });
+  };
+  const bulkMenuChoice = modalContent.querySelector('[name="bulkMenuChoice"]');
+  if (bulkMenuChoice) {
+    bulkMenuChoice.value = initialRecipe.addMenu === false ? "off" : `create:${target.path}`;
+    bulkMenuChoice.addEventListener("change", updateMenuRows);
+  }
+  updateMenuRows();
   applyNamingStrategy(initialNamingStrategy);
   return new Promise(resolve => {
     closed.then(() => resolve(submitted));
@@ -2176,7 +2247,10 @@ async function performMmbSlotsToAdfsCopy(
   options = { onlineMetadata: true, compatibility: true }
 ) {
   const target = panes[index];
-  const menuRoot = target.path;
+  const menuRoot = options.menuRoot || target.path;
+  const menuSlots = new Set(
+    items.filter(item => item.includeMenu !== false).map(item => Number(item.source.slot))
+  );
   const collectMetadata = metadataItems => {
     const known = new Set(collectedMetadata.map(item => JSON.stringify([
       item.skipMenu ? "continuation" : "entry",
@@ -2186,6 +2260,8 @@ async function performMmbSlotsToAdfsCopy(
       item.filename || "",
     ])));
     for (const item of metadataItems || []) {
+      const sourceSlot = Number(item.sourceSlot ?? item.slot);
+      if (Number.isFinite(sourceSlot) && !menuSlots.has(sourceSlot)) continue;
       const key = JSON.stringify([
         item.skipMenu ? "continuation" : "entry",
         item.sourceSlot ?? item.slot ?? "",
@@ -2220,8 +2296,8 @@ async function performMmbSlotsToAdfsCopy(
               sourceSlot: item.source.slot,
               sourceName: item.source.name,
               targetPath: item.groupName
-                ? fullPath(target.path, item.groupName)
-                : target.path,
+                ? fullPath(menuRoot, item.groupName)
+                : menuRoot,
               directoryName: item.directoryName,
               replaceExisting: replaceItems.has(
                 `${item.source.image}:${item.source.slot}`
@@ -2495,9 +2571,9 @@ async function queueAdfsMenuEntries(index, menuRoot, metadataItems) {
   if (obvious.length || ambiguous.length) await showMenuPreview(index, previewHighlight);
 }
 
-async function performMmbSlotToAdfsCopy(index, source, directoryName, addMenu = false) {
+async function performMmbSlotToAdfsCopy(index, source, directoryName, addMenu = false, menuRoot = null) {
   const target = panes[index];
-  const menuRoot = target.path;
+  menuRoot ||= target.path;
   const data = await trackedPaneOperation(index, `Preparing slot ${source.slot}…`, operationId =>
     api("/api/transfer-slot-to-directory", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -2505,7 +2581,7 @@ async function performMmbSlotToAdfsCopy(index, source, directoryName, addMenu = 
         sourceImage: source.image,
         sourceSlot: source.slot,
         targetImage: target.image.id,
-        targetPath: target.path,
+        targetPath: menuRoot,
         directoryName,
         addMenu,
         operationId
@@ -2532,10 +2608,12 @@ async function copyDiskImageToAdfs(index, source) {
     `Reading ${source.name} contents…`,
     () => api(`/api/images/${source.image}/preview`)
   );
+  const menuRoots = await adfsInstalledMenuChoices(index);
   return showImageExtractionPlan(index, {
     heading: `Copy ${source.name} into ADFS`,
     sourceName: source.name,
     preview,
+    menuRoots,
     suggestedName: rule.suggested,
     allowRaw: false,
     submitLabel: "Copy image contents",
@@ -2545,7 +2623,7 @@ async function copyDiskImageToAdfs(index, source) {
 
 async function performDiskImageToAdfsCopy(index, source, plan) {
   const target = panes[index];
-  const menuRoot = target.path;
+  const menuRoot = plan.menuRoot || target.path;
   const destinationLabel = plan.createDirectory ? plan.directoryName : plan.targetPath;
   const data = await trackedPaneOperation(index, `Copying ${source.name} into ${destinationLabel}…`, operationId =>
     api("/api/transfer-image-to-directory", {
@@ -3202,7 +3280,15 @@ async function acceptImage(index, image) {
   } else {
     await loadDirectory(index);
   }
-  if (image.warnings?.length) toast(image.warnings.join(" "), true);
+  if (image.warnings?.length) {
+    const latest = image.warnings.at(-1);
+    toast(
+      image.warnings.length === 1
+        ? latest
+        : `${image.warnings.length} image notices are recorded. Latest: ${latest}`,
+      true,
+    );
+  }
 }
 
 async function loadDirectory(index, preserveSelection = false) {
@@ -3410,7 +3496,7 @@ async function showRomStructure(index, bankNumber, restoreState = null, { replac
     ].filter(Boolean).join(", ") || "metadata only"}</td><td><button class="button compact rom-open-offset" type="button" data-offset="${bankOffset + Number(item.offset)}">Hex</button></td></tr>`).join("");
   const commandRows = starCommands.map((item, helpIndex) => {
     const detail = item.confidence === "declared"
-      ? `${item.module ? `Declared by ${item.module}. ` : ""}${item.configureKeyword ? "Configuration and status keyword" : item.filingSystemCommand ? "Filing-system command" : "Module command"}${item.minimumParameters == null ? "" : ` · ${item.minimumParameters}–${item.maximumParameters} parameter${item.maximumParameters === 1 ? "" : "s"}`}`
+      ? `${item.module ? `Declared by ${item.module}. ` : ""}${item.configureKeyword ? "Configuration and status keyword" : item.filingSystemCommand ? "Filing-system command" : "Module command"}${item.minimumParameters == null ? "" : ` · ${item.minimumParameters} to ${item.maximumParameters} parameter${item.maximumParameters === 1 ? "" : "s"}`}`
       : item.handlerAddress != null
         ? `MOS address-dispatch table · handler &${hex(item.handlerAddress)}`
         : `MOS token-dispatch table${item.token == null ? "" : ` · token &${hex(item.token, 2)}`}`;
@@ -3422,7 +3508,7 @@ async function showRomStructure(index, bankNumber, restoreState = null, { replac
   showModal(`
     <div class="modal-heading rom-decoder-heading" tabindex="-1" autofocus><span class="modal-kicker">DECODED ROM CONTENTS</span><h2>Bank ${entry.bank} · ${esc(entry.name)}</h2><p>This is a byte-addressed ROM bank, not a filing-system directory. Only proven structures are named; printable runs are evidence, not invented files.</p></div>
     <div class="rom-summary-grid">
-    <section class="rom-decode-section"><h3>Bank fingerprint and programming information</h3><dl class="rom-header-grid"><dt>Image byte range</dt><dd><code>&${hex(bankOffset, 6)}–&${hex(bankOffset + entry.length - 1, 6)}</code></dd><dt>SHA-256</dt><dd><code>${esc(diagnostics.sha256 || "Unavailable")}</code></dd><dt>CRC-32</dt><dd><code>&${esc(diagnostics.crc32 || "Unavailable")}</code></dd><dt>Information entropy</dt><dd>${Number(diagnostics.entropy || 0).toFixed(3)} bits per byte (0 to 8)</dd><dt>Distinct byte values</dt><dd>${Number(diagnostics.uniqueByteValues || 0)} of 256</dd><dt>Erased bytes</dt><dd>${Number(diagnostics.erasedBytes || 0).toLocaleString()} (${erasedPercent}%) using <code>&${hex(pane.image.rom?.eraseByte ?? 255, 2)}</code></dd><dt>Used range</dt><dd>${diagnostics.usedStart == null ? "Entire bank is erased" : `<code>+&${hex(diagnostics.usedStart)}–+&${hex(diagnostics.usedEnd)}</code>`}</dd><dt>Zero / &amp;FF bytes</dt><dd>${Number(diagnostics.zeroBytes || 0).toLocaleString()} / ${Number(diagnostics.ffBytes || 0).toLocaleString()}</dd><dt>Printable bytes</dt><dd>${Number(diagnostics.printableBytes || 0).toLocaleString()}</dd><dt>Identical banks</dt><dd>${entry.matchingBanks?.length ? entry.matchingBanks.map(bank => `Bank ${bank}`).join(", ") : "None"}</dd></dl></section>
+    <section class="rom-decode-section"><h3>Bank fingerprint and programming information</h3><dl class="rom-header-grid"><dt>Image byte range</dt><dd><code>&${hex(bankOffset, 6)} to &${hex(bankOffset + entry.length - 1, 6)}</code></dd><dt>SHA-256</dt><dd><code>${esc(diagnostics.sha256 || "Unavailable")}</code></dd><dt>CRC-32</dt><dd><code>&${esc(diagnostics.crc32 || "Unavailable")}</code></dd><dt>Information entropy</dt><dd>${Number(diagnostics.entropy || 0).toFixed(3)} bits per byte (0 to 8)</dd><dt>Distinct byte values</dt><dd>${Number(diagnostics.uniqueByteValues || 0)} of 256</dd><dt>Erased bytes</dt><dd>${Number(diagnostics.erasedBytes || 0).toLocaleString()} (${erasedPercent}%) using <code>&${hex(pane.image.rom?.eraseByte ?? 255, 2)}</code></dd><dt>Used range</dt><dd>${diagnostics.usedStart == null ? "Entire bank is erased" : `<code>+&${hex(diagnostics.usedStart)} to +&${hex(diagnostics.usedEnd)}</code>`}</dd><dt>Zero / &amp;FF bytes</dt><dd>${Number(diagnostics.zeroBytes || 0).toLocaleString()} / ${Number(diagnostics.ffBytes || 0).toLocaleString()}</dd><dt>Printable bytes</dt><dd>${Number(diagnostics.printableBytes || 0).toLocaleString()}</dd><dt>Identical banks</dt><dd>${entry.matchingBanks?.length ? entry.matchingBanks.map(bank => `Bank ${bank}`).join(", ") : "None"}</dd></dl></section>
     ${header ? `<section class="rom-decode-section"><h3>BBC-family header</h3><dl class="rom-header-grid">${headerRows.map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join("")}</dl></section>` : '<div class="help-note"><strong>No standard BBC-family header:</strong> the bank remains available as raw code and data.</div>'}
     ${extension ? `<section class="rom-decode-section rom-extension-section"><h3>RISC OS extension-ROM trailer</h3><dl class="rom-header-grid"><dt>Declared image size</dt><dd>${humanSize(extension.declaredSize)}</dd><dt>Stored checksum</dt><dd><code>&${hex(extension.checksum, 8)}</code></dd><dt>Calculated checksum</dt><dd><code>&${hex(extension.calculatedChecksum, 8)}</code></dd><dt>Result</dt><dd>${extension.checksumValid ? "Valid" : "INVALID"}</dd></dl></section>` : ""}
     </div>
@@ -4329,6 +4415,9 @@ async function promptImageExtraction(index, file, batch = null) {
     });
     prepared = opened.image;
     const preview = await api(`/api/images/${prepared.id}/preview`);
+    const menuStatus = pane.image.kind === "adfs"
+      ? await api(`/api/images/${pane.image.id}/menu/detected?root=${encodeURIComponent(pane.path)}`).catch(() => ({ menus: [] }))
+      : { menus: [] };
     const rule = targetNameRule(pane, formats.stem(file.name));
     let sourceConsumed = false;
     if (batch?.acceptAll) {
@@ -4339,10 +4428,12 @@ async function promptImageExtraction(index, file, batch = null) {
         return addHostFileWithPlan(index, file, { targetName: targetNameRule(pane, file.name).suggested });
       }
       const plan = {
-        targetPath: stored.targetPath || pane.path,
+        targetPath: stored.menuRoot || stored.targetPath || pane.path,
         createDirectory: Boolean(stored.createDirectory),
         directoryName: stored.createDirectory ? rule.suggested : null,
         addMenu: Boolean(stored.addMenu),
+        menuRoot: stored.menuRoot || stored.targetPath || pane.path,
+        menuType: stored.menuType || "adfs-universal",
       };
       const result = await extractPreparedHostImage(index, prepared, file.name, plan, batch);
       await api(`/api/images/${prepared.id}`, { method: "DELETE" });
@@ -4353,6 +4444,7 @@ async function promptImageExtraction(index, file, batch = null) {
       heading: `Import ${file.name}`,
       sourceName: file.name,
       preview,
+      menuRoots: menuStatus.menus || [],
       suggestedName: rule.suggested,
       allowRaw: true,
       batch,
@@ -4439,7 +4531,16 @@ function showImageExtractionPlan(index, options) {
       <div class="field" data-extracted-directory hidden><label>New directory name · max 10 characters</label>
         <input name="directoryName" maxlength="10" value="${esc(options.suggestedName)}" disabled></div>
       <div class="help-note">Existing names are never overwritten. A failed or aborted direct extraction restores the working image.</div>
-      <label class="check-field" data-menu-offer><input type="checkbox" name="addMenu" value="yes"> Offer the imported program as an ADFS menu entry</label>
+      <div class="field" data-menu-offer><label>Global menu</label><select name="menuChoice">
+        <option value="off">Keep this disc off all menus</option>
+        <option value="create:${esc(pane.path)}">Create or update a global menu in ${esc(pane.path)}</option>
+        ${(options.menuRoots || []).filter(menu => menu.root !== pane.path).map(menu => `<option value="existing:${esc(menu.root)}">Add to global menu in ${esc(menu.root)}</option>`).join("")}
+      </select><small>The software is installed as a child directory of the chosen menu root so the launcher can select it as ADFS's current directory.</small></div>
+      <div class="field" data-menu-type hidden><label>Menu program</label><select name="menuType">
+        <option value="adfs-universal">Universal Menu for ADFS directories</option>
+        <option disabled>SPI Game Menu · MMB disks only</option>
+        <option disabled>MMC Desktop · MMB disks only</option>
+      </select><small>Universal Menu is the bundled menu which understands ADFS directory records. MMB-specific menus use *DIN and cannot launch HDD directories.</small></div>
     </div>
     <input type="hidden" name="applyRemaining" value="no">
     <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button>${canApplyAll ? '<button class="button ghost apply-import-all" value="continue">Continue and apply to all remaining</button>' : ""}<button class="button primary" value="continue">${esc(options.submitLabel)}</button></div>`,
@@ -4450,7 +4551,11 @@ function showImageExtractionPlan(index, options) {
       targetPath: form.get("pickDestination") === "yes" ? form.get("targetPath") : pane.path,
       createDirectory: form.get("createDirectory") === "yes",
       directoryName: form.get("directoryName"),
-      addMenu: form.get("addMenu") === "yes",
+      addMenu: form.get("menuChoice") !== "off",
+      menuRoot: form.get("menuChoice") === "off"
+        ? pane.path
+        : adfsMenuRoot(String(form.get("menuChoice")), pane.path),
+      menuType: form.get("menuType") || "adfs-universal",
       applyAll,
     });
   });
@@ -4474,11 +4579,30 @@ function bindImageExtractionPlan(index, allowRaw) {
   const createDirectory = modalContent.querySelector('input[name="createDirectory"]');
   const directoryField = modalContent.querySelector("[data-extracted-directory]");
   const directoryName = modalContent.querySelector('input[name="directoryName"]');
+  const menuChoice = modalContent.querySelector('[name="menuChoice"]');
+  const menuType = modalContent.querySelector('[data-menu-type]');
 
   const showDirectory = () => {
     directoryField.hidden = !createDirectory.checked;
     directoryName.disabled = !createDirectory.checked;
     directoryName.required = createDirectory.checked;
+  };
+  const showMenu = () => {
+    const enabled = menuChoice && menuChoice.value !== "off";
+    if (menuType) menuType.hidden = !enabled;
+    pickDestination.disabled = enabled;
+    if (!enabled) {
+      targetPath.value = pane.path;
+      selectedDestination.textContent = pane.path;
+      return;
+    }
+    const root = menuChoice.value.replace(/^(?:create|existing):/, "");
+    targetPath.value = root;
+    selectedDestination.textContent = root;
+    pickDestination.checked = false;
+    picker.hidden = true;
+    createDirectory.checked = true;
+    showDirectory();
   };
   const parentOf = path => path === "$" ? "$" : path.slice(0, path.lastIndexOf(".")) || "$";
   const loadPicker = async path => {
@@ -4510,17 +4634,19 @@ function bindImageExtractionPlan(index, allowRaw) {
   };
   modalContent.querySelector(".picker-up").onclick = () => loadPicker(parentOf(targetPath.value));
   createDirectory.onchange = showDirectory;
+  if (menuChoice) menuChoice.onchange = showMenu;
   if (allowRaw && storageMethod) {
     storageMethod.onchange = () => {
       extractionOptions.hidden = storageMethod.value === "raw";
     };
   }
   showDirectory();
+  showMenu();
 }
 
 async function extractPreparedHostImage(index, sourceImage, sourceName, plan, batch = null) {
   const pane = panes[index];
-  const menuRoot = pane.path;
+  const menuRoot = plan.menuRoot || pane.path;
   const destinationLabel = plan.createDirectory ? plan.directoryName : plan.targetPath;
   const data = await trackedPaneOperation(index, `Extracting ${sourceName} into ${destinationLabel}…`, operationId =>
     api("/api/transfer-image-to-directory", {
@@ -5622,7 +5748,7 @@ function onlineMachineFromProfile(profile = {}) {
   return "";
 }
 
-function activeWorkbenchProfile(profiles = storedCollection(PROFILE_STORAGE_KEY, BUILTIN_PROFILES)) {
+function activeWorkbenchProfile(profiles = storedHardwareProfiles()) {
   const requested = Number.parseInt(localStorage.getItem(ACTIVE_PROFILE_STORAGE_KEY) || "0", 10);
   const index = Number.isInteger(requested) && requested >= 0 && requested < profiles.length
     ? requested
@@ -5695,6 +5821,7 @@ async function showOnlineLibrary(index) {
     : [];
   const firstEmpty = isMmbRoot ? pane.entries.find(entry => entry.empty)?.slot ?? 0 : 0;
   const machine = defaultOnlineMachine(pane);
+  const adfsMenus = pane.image.kind === "adfs" ? await adfsInstalledMenuChoices(index) : [];
   const machineOptions = ONLINE_MACHINES.map(([value, label]) => `<option value="${value}" ${value === machine ? "selected" : ""}>${label}</option>`).join("");
   showModal(`<div class="modal-heading online-library-heading"><span class="modal-kicker">ONLINE LIBRARY</span><h2>${isMmbRoot ? "Find disk images" : "Find software to install"}</h2><p>Search trusted Acorn archives, select several results, then install them through the same checked workflow as local files.</p></div>
     <div class="online-search-bar"><label>Machine<select name="machine">${machineOptions}</select></label><label class="online-query">Title, publisher or keyword<input name="query" type="search" placeholder="Leave blank to browse"></label><label>Show<select name="scope"><option value="missing">Not already present</option><option value="all">All results</option></select></label><button class="button online-search" type="button">Search</button><button class="button ghost online-sources" type="button">Sources…</button></div>
@@ -5702,13 +5829,16 @@ async function showOnlineLibrary(index) {
     <div class="online-results" aria-live="polite"></div>
     <div class="online-install-options">
       ${isMmbRoot ? `<label>Start at slot<input name="startSlot" type="number" min="0" max="510" value="${selectedEmpty[0] ?? firstEmpty}"></label><span class="field-note">${selectedEmpty.length ? `${selectedEmpty.length} selected empty slot${selectedEmpty.length === 1 ? "" : "s"} will be preferred.` : "The next suitable empty slots will be used."}</span><label class="check"><input type="checkbox" name="addToMenu" checked> Offer installed disks to the detected menu</label>` : ""}
-      ${pane.image.kind === "adfs" ? '<label class="check"><input type="checkbox" name="createDirectory"> Create a folder for each downloaded disk</label><span class="field-note">By default, files are extracted into the current directory.</span>' : ""}
+      ${pane.image.kind === "adfs" ? `${adfsMenuChoiceMarkup(pane, adfsMenus, "onlineMenuChoice")}<label class="check"><input type="checkbox" name="createDirectory"> Create a folder for each downloaded disk</label><span class="field-note">A menu selection creates one directory per disk beneath that menu. Untick Menu beside an individual result to install it off-menu.</span>` : ""}
     </div>
     <div class="modal-actions"><button class="button" value="cancel">Cancel</button><button class="button primary online-install" type="submit" disabled>${isMmbRoot ? "Insert selected disks" : "Install selected"}</button></div>`, async form => {
       const itemIds = form.getAll("catalogItem");
       if (!itemIds.length) { toast("Select one or more downloadable items first.", true); return false; }
       const titles = new Map([...modalContent.querySelectorAll('[name="catalogItem"]')].map(input => [input.value, input.closest("tr")?.querySelector("strong")?.textContent || input.value]));
       const results = [];
+      const menuChoice = String(form.get("onlineMenuChoice") || "off");
+      const menuRoot = adfsMenuRoot(menuChoice, pane.path);
+      const menuItems = new Set(form.getAll("catalogMenu").map(String));
       let abortRequested = false;
       setModalAbort(async () => { abortRequested = true; setModalProgress({ title: "Stopping Online Library install", message: "The current item will finish safely, then no further downloads will start." }, results.length, itemIds.length); });
       for (let offset = 0; offset < itemIds.length; offset += 1) {
@@ -5718,7 +5848,7 @@ async function showOnlineLibrary(index) {
         try {
           const result = await api(`/api/images/${pane.image.id}/catalog/install`, {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ itemIds: [itemId], slots: selectedEmpty.slice(offset), startSlot: selectedEmpty[offset] ?? (Number(form.get("startSlot") || firstEmpty) + offset), path: pane.path, slot: pane.slot, side: pane.side, addToMenu: form.has("addToMenu"), createDirectory: form.has("createDirectory") })
+            body: JSON.stringify({ itemIds: [itemId], slots: selectedEmpty.slice(offset), startSlot: selectedEmpty[offset] ?? (Number(form.get("startSlot") || firstEmpty) + offset), path: pane.image.kind === "adfs" && menuChoice !== "off" ? menuRoot : pane.path, slot: pane.slot, side: pane.side, addToMenu: isMmbRoot ? form.has("addToMenu") : menuChoice !== "off" && menuItems.has(itemId), createDirectory: pane.image.kind === "adfs" && menuChoice !== "off" ? true : form.has("createDirectory") })
           });
           pane.image = result.image;
           results.push(...result.items);
@@ -5732,7 +5862,11 @@ async function showOnlineLibrary(index) {
       toast(`${successes.length} online item${successes.length === 1 ? "" : "s"} installed${abortRequested ? " before the operation was stopped" : ""}`);
       failures.forEach(item => toast(`${item.title}: ${item.error}`, true));
       const reviews = successes.map(item => item.metadata).filter(Boolean);
-      if (reviews.length) setTimeout(() => queueMenuReviews(index, reviews), 80);
+      if (reviews.length) {
+        setTimeout(() => pane.image.kind === "adfs"
+          ? queueAdfsMenuEntries(index, menuRoot, reviews)
+          : queueMenuReviews(index, reviews), 80);
+      }
     });
 
   const searchButton = modalContent.querySelector(".online-search");
@@ -5755,7 +5889,7 @@ async function showOnlineLibrary(index) {
       const ariaSort = active ? (resultSort.direction === "asc" ? "ascending" : "descending") : "none";
       return `<th aria-sort="${ariaSort}"><button class="online-sort" type="button" data-sort="${key}">${label}<span aria-hidden="true">${arrow}</span></button></th>`;
     };
-    resultHost.innerHTML = items.length ? `<table class="online-result-table" aria-label="Downloadable Acorn software"><thead><tr><th></th>${heading("Title", "title")}${heading("Publisher", "publisher")}${heading("Year", "year")}${heading("Source", "sourceName")}<th></th></tr></thead><tbody>${items.map(item => `<tr class="${item.installed ? "already-installed" : ""}"><td><input type="checkbox" name="catalogItem" value="${esc(item.id)}" aria-label="Select ${esc(item.title)}" ${selected.has(item.id) ? "checked" : ""}></td><td><strong>${esc(item.title)}</strong>${item.version ? `<small>Version ${esc(item.version)}</small>` : ""}${item.description ? `<small>${esc(item.description)}</small>` : ""}</td><td>${esc(item.publisher || "Unknown")}</td><td>${esc(item.year || "-")}</td><td><span class="pill">${esc(item.sourceName)}</span>${item.installed ? '<small class="installed-label">Already present</small>' : ""}</td><td><a class="button tiny" href="${esc(item.pageUrl)}" target="_blank" rel="noopener">Details</a></td></tr>`).join("")}</tbody></table>` : '<div class="empty-list">No matching downloadable items were found. Try All results, another machine, or a broader search.</div>';
+    resultHost.innerHTML = items.length ? `<table class="online-result-table" aria-label="Downloadable Acorn software"><thead><tr><th></th>${heading("Title", "title")}${heading("Publisher", "publisher")}${heading("Year", "year")}${heading("Source", "sourceName")}${pane.image.kind === "adfs" ? "<th>Menu</th>" : ""}<th></th></tr></thead><tbody>${items.map(item => `<tr class="${item.installed ? "already-installed" : ""}"><td><input type="checkbox" name="catalogItem" value="${esc(item.id)}" aria-label="Select ${esc(item.title)}" ${selected.has(item.id) ? "checked" : ""}></td><td><strong>${esc(item.title)}</strong>${item.version ? `<small>Version ${esc(item.version)}</small>` : ""}${item.description ? `<small>${esc(item.description)}</small>` : ""}</td><td>${esc(item.publisher || "Unknown")}</td><td>${esc(item.year || "-")}</td><td><span class="pill">${esc(item.sourceName)}</span>${item.installed ? '<small class="installed-label">Already present</small>' : ""}</td>${pane.image.kind === "adfs" ? `<td><input type="checkbox" name="catalogMenu" value="${esc(item.id)}" checked aria-label="Add ${esc(item.title)} to the selected menu"></td>` : ""}<td><a class="button tiny" href="${esc(item.pageUrl)}" target="_blank" rel="noopener">Details</a></td></tr>`).join("")}</tbody></table>` : '<div class="empty-list">No matching downloadable items were found. Try All results, another machine, or a broader search.</div>';
     if (resultFailures.length) resultHost.insertAdjacentHTML("beforeend", `<details class="online-failures"><summary>Unavailable sources</summary>${resultFailures.map(item => `<p><b>${esc(item.source)}</b>: ${esc(item.error)}</p>`).join("")}</details>`);
     resultHost.querySelectorAll("[data-sort]").forEach(button => button.onclick = () => {
       const key = button.dataset.sort;
@@ -7696,12 +7830,12 @@ function showHelp() {
               <li><strong>Build:</strong> an inert BBC service-ROM scaffold or an <code>AFFROMFS1</code> data archive for companion code. Neither is a finished application by itself.</li>
               <li><strong>Programmer:</strong> device padding or mirroring, adjacent-byte swaps, 16-bit word swaps, address-line swaps and one, two or four physical byte lanes.</li>
               <li><strong>Project:</strong> hardware notes, research, address labels and known regions stored outside the ROM bytes.</li>
-              <li><strong>Emulator:</strong> a locally configured direct command with a 30-second limit; its output is retained in project metadata.</li>
+              <li><strong>Emulator:</strong> the managed emulator selected by the applied hardware profile. Direct ROM attachment is enabled only when the target machine's slot mapping is safe.</li>
             </ul></div>
             <div class="help-task"><h4>Run a configured emulator check</h4><ol>
-              <li>Configure <code>ACORN_ROM_EMULATOR_COMMAND</code> in the local deployment. It must contain a <code>{rom}</code> placeholder.</li>
-              <li>Open <strong>ROM Workbench → Emulator</strong> and run the test.</li>
-              <li>The app invokes the configured executable directly, never through a shell, stops it after 30 seconds and records its output and return code in the project metadata.</li>
+              <li>Choose a machine and emulator in <strong>Workbench → Hardware profiles</strong>, then apply it to the ROM pane.</li>
+              <li>Open <strong>ROM Workbench → Emulator</strong>. The panel identifies the managed tool and whether this machine has a proven sideways-ROM slot mapping.</li>
+              <li>If direct attachment is disabled, use Programmer export or place the ROM in a machine-specific image. The app does not guess a bank or replace a system ROM silently.</li>
             </ol></div>
             <div class="help-task"><h4>Troubleshoot a ROM</h4><ul>
               <li>If identity, processor or mapped addresses look wrong, confirm platform, layout and bank size before editing bytes.</li>
@@ -7848,8 +7982,22 @@ function showHelp() {
                 <li>Drag an open MMB slot, SSD/DSD/HFE image, UEF tape or another supported image from another pane; alternatively use <strong>File → Insert File</strong> and select an image from the host.</li>
                 <li>Review the source preview. The current directory is selected by default; optionally tick <strong>Choose a different existing directory</strong> and browse the destination tree.</li>
                 <li>Optionally tick <strong>Create a new child directory</strong> and enter its name. Leave it unticked to place the source contents directly in the selected destination.</li>
-                <li>Choose whether to offer the imported program as a menu entry. Keeping it off-menu does not require a launch file.</li>
+                <li>Choose <strong>Keep this disc off all menus</strong>, create or update a global Universal Menu in the current directory, or add the title to any detected Universal Menu elsewhere on the HDD. A menu-bound disc is installed as its own child directory below that menu root. Bulk MMB imports provide the same global choice plus a Menu checkbox on every disc row, so individual titles can remain hidden. Keeping software off-menu never requires a launch file.</li>
+                <li>An ADFS floppy is not necessarily relocatable. The importer follows direct and DATA-selected loader stages, makes proven local <code>$.name</code> references current-directory relative, and expands proven DFS abbreviations such as <code>R.</code> and <code>L.</code>. It warns when a reachable loader switches filing system or drive, or appears to use direct sector I/O. Those titles should remain mounted as floppy images unless a specific HDD installer exists.</li>
                 <li>Review progress and metadata. During a bulk copy, an empty DFS disk pauses for a Skip or Abort decision; no meaningless empty ADFS directory is created.</li>
+              </ol>
+            </div>
+            <div class="help-task">
+              <h4>Check software already installed on an HDD</h4>
+              <ol>
+                <li>Open the ADFS HDD pane and choose <strong>Tools → Check installed disk software</strong>. This command is intentionally unavailable on ADFS floppy images.</li>
+                <li>Choose the whole HDD or the current directory. The read-only pass recursively finds imports from retained source-image details and conventional launch files including <code>!BOOT</code>, <code>LOADER</code>, <code>MENU</code>, <code>GO</code> and <code>START</code>.</li>
+                <li>Review every directory. The result shows the source image when known, its file count, every exact proposed rewrite and warnings which require human testing.</li>
+                <li>ADFS directory paths are resolved against the installed tree before commands are classified. A real path such as <code>R.+AP2</code>, meaning file <code>+AP2</code> inside directory <code>R</code>, is preserved rather than mistaken for abbreviated <code>RUN</code>.</li>
+                <li>Commands inside tokenised BASIC <code>*KEY</code> macros are interpreted without disturbing control-key sequences such as <code>|M</code> and <code>|F</code>. Changed lines receive corrected BASIC length bytes, and the audit can repair malformed lengths left by older imports before continuing its loader analysis.</li>
+                <li>Select the deterministic repairs to apply and choose <strong>Repair selected</strong>, or choose <strong>Cancel</strong> to leave the image untouched. An automatic undo checkpoint is made before a repair.</li>
+                <li>Run the check again. Proven current-directory path and loader-command issues should be clear. Explicit filing-system changes and direct-sector I/O remain warnings because automatically changing those behaviours would be unsafe.</li>
+                <li>Older sessions may contain loader diagnoses made before the current path-aware audit. Those point-in-time messages are replaced by one review notice, repeated directory and Tube notices are consolidated, and actual byte-level compatibility changes remain in the saved history.</li>
               </ol>
             </div>
             <p>Where both formats support it, Acorn File Forge preserves load/execute addresses, RISC OS filetypes, datestamps and access flags. Old ADFS names are normally limited to ten characters.</p>
@@ -8159,7 +8307,7 @@ function showHelp() {
               <li>The tab strip keeps several files from the mounted image open together. It retains each source draft, selection and scroll position, marks dirty tabs and warns before discarding one. <strong>Open from image…</strong> searches filenames and bounded readable content, restores the result's directory, MMB slot and side, and opens it as another tab.</li>
               <li>BASIC and command scripts use themed syntax colours for keywords, strings, numbers, comments, symbols and line numbers. The normal textarea remains the editable document, preserving browser undo, clipboard and input-method behaviour. Hover a highlighted command for its purpose, syntax, requirements and important compatibility notes. One catalogue covers 8-bit BBC BASIC plus BASIC IV and BASIC V/VI extensions, with availability checked against the detected dialect. Compact source such as <code>COLOUR129</code> and <code>T%DIV256</code> follows the interpreter's token boundaries.</li>
               <li>Star commands retain their MOS context in highlighting and help. For example, <code>LOAD "PROGRAM"</code> shows BBC BASIC LOAD help, while <code>*LOAD CODE 3000</code> is labelled <code>*LOAD</code> and shows the filing-system command syntax. Compact <code>*FX200 0</code> resolves to <code>*FX</code> plus its arguments. RUN, SAVE and other overlapping names follow the same rule. Commands supplied by an optional sideways ROM receive clearly labelled ROM-dependent help when their exact syntax is not built in.</li>
-              <li>Help interprets useful constant operands in context. <code>*FX200 0</code> and <code>OSCLI"FX 200 0"</code> identify OSBYTE reason 200, common VDU reason bytes are named, and constant MODE and COLOUR values explain what the call selects. Dynamic expressions retain general command help because their run-time value cannot be proved safely.</li>
+              <li>Help interprets constant operands, not just command names. <code>*FX200,3</code> explains the Escape and BREAK control bits; an <code>OSCLI"FX ..."</code> string and inline-assembler OSBYTE call receive the same data-driven parameter decoding when their values can be proved. VDU help expands commas as bytes and semicolons as low-byte-first words. SOUND and ENVELOPE show every proven argument. The result is compared with the hardware profile applied to the pane. Calls documented for a different platform are still explained, then clearly marked as out of scope and liable to fail or behave unexpectedly on the configured target. Dynamic expressions remain unguessed.</li>
               <li>Inline assembler also decodes proven constant calls. Preceding same-line A, X and Y loads provide OSBYTE and OSWORD reason details, OSCLI's command pointer, and OSWRCH or VDUCHR character meaning. BASIC V/VI <code>SYS</code> calls name recognised RISC OS SWIs and their purpose.</li>
               <li>BBC BASIC inline assembler between <code>[</code> and <code>]</code> reuses the disassembly editor's processor and MOS help. Hover 6502 or ARM mnemonics, named MOS entry points such as <code>OSWRCH</code>, standard addresses such as <code>&amp;FFEE</code>, or directives such as <code>EQUB</code>. The processor catalogue distinguishes NMOS 6502, 65C02 and 65816 instruction sets rather than treating every extension as interchangeable. Matching names outside an assembler region remain ordinary BASIC variables. Refactor and Condense leave assembler lines physically intact.</li>
               <li>Press <strong>F1</strong> for help on the command at the caret. The editor's <strong>Help</strong> menu gives an overview of the detected language, a searchable command reference, live problems and document symbols. Problem and symbol entries jump back to their source location.</li>
@@ -8181,7 +8329,8 @@ function showHelp() {
               <li>The disassembly <strong>Project</strong> menu retains notes, bookmarks, symbols, offset-bound comments and code/data decisions outside the image bytes. Click one row or shift-click a range, then mark it as code, text, bytes, words, addresses or bitmap data. The listing is rebuilt using that decision. ARM word regions use little-endian values and 68000 word regions use big-endian values. Symbols apply to every supported processor and use a portable <code>&amp;address = label</code> text format for import and export. Find references and the outline show direct callers and labelled entry points.</li>
               <li><strong>Tools → Inspect selected data</strong> presents bounded text, bytes, little-endian and big-endian words, plus a one-bit bitmap preview. Project metadata has one manager for notes, symbols, comments, bookmarks and portable JSON. A saved line comment remains attached to its exact file offset and is rendered beside the instruction. <strong>Compare with saved file</strong> displays saved and current source side by side.</li>
               <li><strong>Edit and reassemble</strong> is enabled only when <code>ACORN_FILE_ASSEMBLER_COMMAND</code> contains <code>{source}</code> and <code>{output}</code>. It opens generated label-oriented assembly for review and requires confirmation before checksum-guarded replacement of the complete binary. <strong>Debug from selected address</strong> uses a configured <code>ACORN_FILE_DEBUGGER_COMMAND</code>; the return status and output are retained in project history.</li>
-              <li><strong>Project → Run in configured emulator</strong> appears in source and disassembly editors. It is available when the server has an <code>ACORN_FILE_EMULATOR_COMMAND</code> containing <code>{file}</code>. Optional placeholders include <code>{image}</code>, <code>{path}</code>, <code>{load}</code> and <code>{execute}</code>. The temporary export is removed afterwards. <strong>Emulator debugger workspace</strong> can pass launch, continue, step, next, register, memory and stop actions to a configured adapter. <strong>Emulator and debugger results</strong> retains return status, stdout, stderr and debugger breakpoint after the immediate result closes.</li>
+              <li><strong>Tools → Run… / Debug…</strong> appears in every pane whose media can be attached to the configured machine. Standalone DFS, ADFS and tape images mount directly. At an MMB index, select exactly one formatted slot; the app extracts a temporary SSD and leaves the working MMB unchanged. The commands remain available while browsing inside that slot. Whole-MMB mounting is shown separately but disabled until an MMFS-compatible SD-card emulator adapter is available.</li>
+              <li><strong>Project → Run in configured emulator</strong> appears in source and disassembly editors. Choose a hardware profile in the Workbench and apply it to the pane. Electron uses the bundled Elkulator build with the Pi1MHz and AP5 patches; BBC B, B+ and Master use bundled B-em; Archimedes uses bundled MAME when matching RISC OS firmware is available. BASIC offers Inject and run/debug BASIC buffer, Mount and boot parent, or Mount parent only. Injection tokenises the current editor text into a temporary bootable floppy as <code>PROGRAM</code>, so unsaved changes are included but companion files are not. Parent choices retain dependencies and appear only if that emulator supports the container. The running machine appears in a live browser display. Click the display before typing, use Full screen when useful, and choose Stop and close to end the emulator cleanly. Capability and error text always names the effective pane emulator. <strong>Emulator and debugger results</strong> retains return status and output. Errors and notices raised while an editor is open are displayed inside that editor window, above its content, so they cannot be hidden behind the modal backdrop.</li>
               <li>Editor tabs, unsaved drafts, selection and scroll position survive a refresh in bounded browser-session storage. <strong>Open from image…</strong> searches every formatted slot of an MMB and labels results with slot number and disk title.</li>
               <li>The Hex editor includes structured views for ROM, ROMFS, RISC OS modules, DFS, ADFS, MMB, BeebSCSI DSC and UEF data. A custom JSON template can describe bounded fields relative to the selected byte.</li>
               <li>Labelled disassembly regions also have left-gutter folding controls. The single state-aware <strong>View</strong> command collapses or expands all labelled regions as appropriate. Visible instruction rows retain double-click-to-Hex while other regions are folded.</li>
@@ -8204,8 +8353,10 @@ function showHelp() {
             </ol></div>
             <figure><img src="/help/duplicate-check.png" alt="MMB duplicate game review showing selectable menu records and equivalent disk content"><figcaption>The MMB All disks duplicate command lives only in Analyse. Tick the exact menu records to review; disks are kept unless the separate final review explicitly ejects them.</figcaption></figure>
             <div class="help-task"><h4>Profiles, recipes and projects</h4><ol>
-              <li>Choose <strong>Workbench → Hardware profiles</strong>. Start from Electron Plus 3, BBC MMFS, BeebSCSI, Master ADFS or RISC OS, choose its Online Library filter, then save or apply the profile to an open image.</li>
-              <li>A profile records the machine, Library filter, filing system, MMFS build, Tube state, expected PAGE and validation target. An applied profile controls that pane. The active Workbench profile is remembered and becomes the default for panes without their own profile. On first use this is Electron Plus 3. Selecting, saving or applying another profile also sets the initial machine for <strong>Find disks online</strong> and <strong>Find software online</strong>.</li>
+              <li>Choose <strong>Workbench → Hardware profiles</strong>. Start from a stock Electron, BBC B, BBC B+, Master or Archimedes profile, a common disk or mass-storage configuration, or the supplied RH Plus 1/2, Plus 3, AP5 and BeebSCSI custom system.</li>
+              <li>Select the base machine in the left column, then build its hardware in the wider right column. Chassis, floppy interface, memory and Tube choices use dropdowns because only one can be fitted. PiTubeDirect is offered for BBC B, BBC B+, Master and Electron systems; an Electron profile also needs an AP5 Tube interface. Cumulative firmware, mass storage and podule groups use bounded checkboxes. The list changes with the machine, required carrier or bus expansions are added automatically, and removing a dependency clears combinations that can no longer exist.</li>
+              <li>A profile also records the Library filter, filing system, MMFS build, expected PAGE, validation target, managed emulator, debugger, RAM and startup action. Emulator-driven additions select the closest B-em model, Elkulator configuration, Tube processor, controller or MAME podule. Hardware marked <strong>Validation only</strong> still affects analysis without pretending that the emulator implements it.</li>
+              <li>Save retains the profile in this browser. Apply attaches it to an image session. The active profile becomes the default for panes without their own profile and drives Online Library machine filtering.</li>
               <li>Choose <strong>Import recipes</strong> to save naming, group prefix, online metadata, compatibility and menu choices. Saved recipes appear in the MMB-to-ADFS planner.</li>
               <li>Choose <strong>Portable project</strong> to export the current pane order, session references, paths, profiles and recipes. Import it on the same retained installation to restore that working context. Theme remains a browser preference.</li>
             </ol></div>
@@ -8361,12 +8512,56 @@ const PROFILE_STORAGE_KEY = "acorn-file-forge-hardware-profiles";
 const RECIPE_STORAGE_KEY = "acorn-file-forge-import-recipes";
 
 const BUILTIN_PROFILES = [
-  { name: "Electron Plus 3", machine: "Electron", catalogMachine: "electron", filingSystem: "ADFS", targetHardware: "electron-plus3", mmfsBuild: "paged", tube: false, page: "E00", menuType: "universal" },
-  { name: "BBC Micro with MMFS", machine: "BBC Micro", catalogMachine: "bbc-b", filingSystem: "MMFS", targetHardware: "bbc-master", mmfsBuild: "paged", tube: false, page: "E00", menuType: "universal" },
-  { name: "BBC/Master BeebSCSI", machine: "BBC/Master", catalogMachine: "all", filingSystem: "ADFS + MMFS", targetHardware: "beebscsi", mmfsBuild: "paged", tube: false, page: "E00", menuType: "universal" },
-  { name: "Master 128 ADFS", machine: "Master 128", catalogMachine: "master", filingSystem: "ADFS", targetHardware: "bbc-master", mmfsBuild: "none", tube: false, page: "1900", menuType: "universal" },
-  { name: "Archimedes / RISC OS", machine: "Archimedes", catalogMachine: "archimedes", filingSystem: "FileCore", targetHardware: "risc-os", mmfsBuild: "none", tube: false, page: "", menuType: "none" },
+  { name: "Electron (cassette)", machine: "electron", addons: [], catalogMachine: "electron", filingSystem: "tape", targetHardware: "auto", mmfsBuild: "none", page: "E00", emulator: "elkulator-pi1mhz", debugger: "elkulator-debug" },
+  { name: "Electron + Plus 1", machine: "electron", addons: ["electron-plus1"], catalogMachine: "electron", filingSystem: "dfs", targetHardware: "auto", mmfsBuild: "none", page: "E00", emulator: "elkulator-pi1mhz", debugger: "elkulator-debug" },
+  { name: "Electron + Plus 3 ADFS", machine: "electron", addons: ["electron-plus3"], catalogMachine: "electron", filingSystem: "adfs", targetHardware: "electron-plus3", mmfsBuild: "none", page: "1D00", emulator: "elkulator-pi1mhz", debugger: "elkulator-debug" },
+  { name: "Electron + AP4 DFS", machine: "electron", addons: ["electron-ap1", "electron-ap4", "electron-swram-32"], catalogMachine: "electron", filingSystem: "dfs", targetHardware: "electron-plus3", mmfsBuild: "none", page: "1900", emulator: "elkulator-pi1mhz", debugger: "elkulator-debug" },
+  { name: "My Electron: RH Plus 1/2 + Plus 3 + AP5 + BeebSCSI", machine: "electron", addons: ["electron-rh-plus1", "electron-rh-plus2", "electron-plus3", "electron-ap5", "electron-mrb", "beebscsi"], catalogMachine: "electron", filingSystem: "adfs-mmfs", targetHardware: "beebscsi", mmfsBuild: "paged", page: "E00", emulator: "elkulator-pi1mhz", debugger: "elkulator-debug" },
+  { name: "BBC B (cassette)", machine: "bbc-b", addons: [], catalogMachine: "bbc-b", filingSystem: "tape", targetHardware: "auto", mmfsBuild: "none", page: "1900", emulator: "b-em", debugger: "b-em-debug" },
+  { name: "BBC B + 8271 DFS", machine: "bbc-b", addons: ["bbc-8271"], catalogMachine: "bbc-b", filingSystem: "dfs", targetHardware: "bbc-master", mmfsBuild: "none", page: "1900", emulator: "b-em", debugger: "b-em-debug" },
+  { name: "BBC B + Acorn 1770 DFS", machine: "bbc-b", addons: ["bbc-acorn1770", "bbc-swram"], catalogMachine: "bbc-b", filingSystem: "dfs", targetHardware: "bbc-master", mmfsBuild: "none", page: "1900", emulator: "b-em", debugger: "b-em-debug" },
+  { name: "BBC B + MMFS", machine: "bbc-b", addons: ["bbc-acorn1770", "bbc-swram", "mmfs"], catalogMachine: "bbc-b", filingSystem: "mmfs", targetHardware: "bbc-master", mmfsBuild: "paged", page: "E00", emulator: "b-em", debugger: "b-em-debug" },
+  { name: "BBC B+ 64K + 1770 DFS", machine: "bbc-b-plus", addons: ["bplus-1770"], catalogMachine: "bbc-b", filingSystem: "dfs", targetHardware: "bbc-master", mmfsBuild: "none", page: "1900", emulator: "b-em", debugger: "b-em-debug" },
+  { name: "BBC B+ 128K + 1770 DFS", machine: "bbc-b-plus", addons: ["bplus-1770", "bplus-128"], catalogMachine: "bbc-b", filingSystem: "dfs", targetHardware: "bbc-master", mmfsBuild: "none", page: "1900", emulator: "b-em", debugger: "b-em-debug" },
+  { name: "Master 128 ADFS", machine: "master", addons: [], catalogMachine: "master", filingSystem: "adfs", targetHardware: "bbc-master", mmfsBuild: "none", page: "1900", emulator: "b-em", debugger: "b-em-debug" },
+  { name: "Master Turbo", machine: "master", addons: ["master-turbo"], catalogMachine: "master", filingSystem: "adfs", targetHardware: "bbc-master", mmfsBuild: "none", page: "1900", emulator: "b-em", debugger: "b-em-debug" },
+  { name: "Master 128 + BeebSCSI", machine: "master", addons: ["beebscsi"], catalogMachine: "all", filingSystem: "adfs-mmfs", targetHardware: "beebscsi", mmfsBuild: "paged", page: "E00", emulator: "b-em", debugger: "b-em-debug" },
+  { name: "Archimedes A310", machine: "archimedes", addons: [], catalogMachine: "archimedes", filingSystem: "filecore", targetHardware: "risc-os", mmfsBuild: "none", page: "", emulator: "mame", debugger: "mame-debug" },
 ];
+
+const WORKBENCH_FILE_SYSTEMS = [["tape", "Cassette"], ["dfs", "DFS"], ["adfs", "ADFS"], ["mmfs", "MMFS"], ["adfs-mmfs", "ADFS + MMFS"], ["filecore", "FileCore / RISC OS"]];
+const WORKBENCH_EMULATORS = [["auto", "Automatic for machine"], ["elkulator-pi1mhz", "Elkulator with Pi1MHz/AP5 patches"], ["b-em", "B-em BBC Micro systems"], ["mame", "MAME Archimedes"]];
+const WORKBENCH_DEBUGGERS = [["auto", "Automatic for emulator"], ["elkulator-debug", "Elkulator diagnostic console"], ["b-em-debug", "B-em 6502 debugger"], ["mame-debug", "MAME debugger"]];
+let cachedHardwareCatalogue = null;
+
+async function hardwareProfileCatalogue() {
+  if (!cachedHardwareCatalogue) cachedHardwareCatalogue = await api("/api/hardware-profiles");
+  return cachedHardwareCatalogue;
+}
+
+function hardwareAddonMarkup(catalogue, machine, selected = []) {
+  const chosen = new Set(selected);
+  const relevant = catalogue.addons.filter(addon => addon.machines.includes(machine));
+  return Object.entries(catalogue.groups).map(([group, definition]) => {
+    const addons = relevant.filter(addon => addon.group === group);
+    if (!addons.length) return "";
+    if (Number(definition.max) === 1) {
+      const current = addons.find(addon => chosen.has(addon.id));
+      return `<div class="hardware-addon-select field" data-addon-group="${esc(group)}"><label for="profile-addon-${esc(group)}">${esc(definition.label)}</label><select id="profile-addon-${esc(group)}" name="profileAddonSelect"><option value="">None</option>${addons.map(addon => `<option value="${esc(addon.id)}" ${chosen.has(addon.id) ? "selected" : ""}>${esc(addon.label)}</option>`).join("")}</select><small data-addon-description>${current ? `${esc(current.description)} · ${current.emulator === "profile" ? "Validation only" : `Driven by ${esc(current.emulator)}`}` : "No additional hardware selected."}</small></div>`;
+    }
+    return `<fieldset class="hardware-addon-group" data-addon-group="${esc(group)}" data-addon-max="${Number(definition.max)}"><legend>${esc(definition.label)} · select up to ${Number(definition.max)}</legend><div class="hardware-addon-options">${addons.map(addon => `<label class="hardware-addon"><input type="checkbox" name="profileAddon" value="${esc(addon.id)}" data-addon-group="${esc(group)}" ${chosen.has(addon.id) ? "checked" : ""}><span><b>${esc(addon.label)}</b><small>${esc(addon.description)}</small><em>${addon.emulator === "profile" ? "Validation only" : `Driven by ${esc(addon.emulator)}`}</em></span></label>`).join("")}</div></fieldset>`;
+  }).join("");
+}
+
+function editorTargetProfile(pane) {
+  const active = activeWorkbenchProfile().profile || {};
+  const applied = pane?.image?.hardwareProfile || {};
+  return {
+    ...active,
+    ...applied,
+    targetHardware: pane?.image?.targetHardware || applied.targetHardware || active.targetHardware || "auto",
+  };
+}
 
 function storedCollection(key, fallback = []) {
   try {
@@ -8377,6 +8572,21 @@ function storedCollection(key, fallback = []) {
 
 function saveCollection(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
+}
+
+function storedHardwareProfiles() {
+  const saved = storedCollection(PROFILE_STORAGE_KEY, []);
+  const schemaKey = `${PROFILE_STORAGE_KEY}-schema`;
+  if (localStorage.getItem(schemaKey) === "5" && saved.length) return saved;
+  const superseded = new Set(["Electron Plus 3", "Electron (tape)", "My Electron: Plus 3 + AP5 + BeebSCSI", "BBC Micro with MMFS", "BBC/Master BeebSCSI", "BBC B+ 64K", "BBC B+ 128K", "Archimedes / RISC OS"]);
+  const builtInNames = new Set(BUILTIN_PROFILES.map(profile => profile.name));
+  const migrated = [
+    ...BUILTIN_PROFILES.map(profile => ({ ...profile, addons: [...(profile.addons || [])] })),
+    ...saved.filter(profile => !builtInNames.has(profile.name) && !superseded.has(profile.name)),
+  ];
+  saveCollection(PROFILE_STORAGE_KEY, migrated);
+  localStorage.setItem(schemaKey, "5");
+  return migrated;
 }
 
 function downloadDocument(name, content, type = "application/json") {
@@ -8485,6 +8695,104 @@ function showHealthDashboard(index) {
   </div>`, async () => {
     const report = await runHealthCheck(index);
     renderHealthDashboard(index, report);
+    return false;
+  });
+}
+
+async function runAdfsInstallationAudit(index, root = "$") {
+  const pane = panes[index];
+  setModalProgress({
+    title: "Checking installed ADFS software",
+    message: `Traversing ${root} and following installed launchers…`,
+    details: [
+      { label: "Safety", value: "Read-only until you explicitly choose Repair selected" },
+      { label: "Checks", value: "Loader paths, abbreviated commands, filing-system switches and direct-sector access" },
+    ],
+  });
+  return trackedPaneOperation(
+    index,
+    "Checking installed ADFS software",
+    operationId => api(
+      `/api/images/${pane.image.id}/adfs-installations/audit?${new URLSearchParams({ root, operationId })}`
+    ),
+  );
+}
+
+function renderAdfsInstallationAudit(index, report) {
+  const pane = panes[index];
+  const statusLabel = { repairable: "Repair available", warning: "Review required", clean: "No issue found" };
+  const rows = report.directories.map((item, offset) => `
+    <article class="health-check ${item.status === "clean" ? "pass" : "warn"}">
+      <b>${item.status === "clean" ? "✓" : "!"}</b>
+      <span>
+        <strong>${esc(item.path)}</strong>
+        <small>${esc(item.source || "Detected from its launcher")} · ${Number(item.fileCount)} file${Number(item.fileCount) === 1 ? "" : "s"} · ${statusLabel[item.status] || esc(item.status)}</small>
+        ${item.repairs.length ? `<details class="health-findings" open><summary>${item.repairs.length} deterministic repair${item.repairs.length === 1 ? "" : "s"}</summary><ol>${item.repairs.map(value => `<li><small>${esc(value)}</small></li>`).join("")}</ol></details>` : ""}
+        ${item.warnings.length ? `<details class="health-findings"><summary>${item.warnings.length} warning${item.warnings.length === 1 ? "" : "s"} requiring review</summary><ol>${item.warnings.map(value => `<li><em>${esc(value)}</em></li>`).join("")}</ol></details>` : ""}
+      </span>
+      ${item.repairs.length ? `<label class="check"><input type="checkbox" name="adfsRepair" value="${esc(item.path)}" checked><span>Fix</span></label>` : ""}
+    </article>`).join("");
+  const repairable = report.directories.filter(item => item.repairs.length).length;
+  showModal(`<div class="analysis-dialog wide-analysis adfs-installation-audit">
+      <header><div><small>ADFS HDD INSTALLATION AUDIT</small><h2>${esc(pane.image.name)}</h2></div><span class="health-score ${repairable ? "attention" : "healthy"}">${repairable ? `${repairable} repairable` : "checked"}</span></header>
+      <div class="operation-summary"><span><b>${Number(report.checked)}</b><small>Installations checked</small></span><span><b>${Number(report.repairable)}</b><small>With safe repairs</small></span><span><b>${Number(report.warnings)}</b><small>With warnings</small></span></div>
+      <div class="help-note"><strong>What this checks</strong> Imported disk directories are compared with ADFS current-directory rules. Proven local root paths and safe abbreviated loader commands can be repaired. Disk selection and direct-sector access are reported, but never guessed or rewritten.</div>
+      <div class="health-checks">${rows || '<div class="empty-list">No installed disk directories were detected below this location.</div>'}</div>
+      <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button" data-rerun-adfs-audit type="button">Check again</button>${repairable ? '<button class="button primary" type="submit">Repair selected</button>' : ""}</div>
+    </div>`, async () => {
+      const directories = [...modalContent.querySelectorAll('[name="adfsRepair"]:checked')].map(input => input.value);
+      if (!directories.length) throw new Error("Select at least one installation to repair, or choose Cancel.");
+      setModalProgress({
+        title: "Repairing installed ADFS software",
+        message: "Applying only the deterministic changes listed in the audit…",
+        details: [
+          { label: "Image safety", value: "An undo checkpoint protects the pre-repair image state" },
+          { label: "Uncertain behaviour", value: "Direct-sector and filing-system-switch warnings remain unchanged" },
+        ],
+      });
+      const result = await trackedPaneOperation(index, "Repairing installed ADFS software", operationId => api(
+        `/api/images/${pane.image.id}/adfs-installations/repair`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ directories, operationId }),
+        },
+      ));
+      pane.image = result.image;
+      await refreshCurrentView(index);
+      renderAdfsInstallationAudit(index, await runAdfsInstallationAudit(index, report.root));
+      return false;
+    }, { replace: modal.open });
+  modalContent.querySelector("[data-rerun-adfs-audit]")?.addEventListener("click", async event => {
+    event.currentTarget.disabled = true;
+    modal.classList.add("busy");
+    try {
+      renderAdfsInstallationAudit(index, await runAdfsInstallationAudit(index, report.root));
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      modal.classList.remove("busy");
+    }
+  });
+}
+
+function showAdfsInstallationAudit(index) {
+  const pane = panes[index];
+  if (pane.image.kind !== "adfs" || !pane.image.hardDisk) {
+    toast("Installed disk auditing is available only for ADFS HDD images.", true);
+    return;
+  }
+  const current = pane.path || "$";
+  showModal(`<div class="analysis-dialog health-introduction">
+    <small>ADFS HDD SOFTWARE CHECK</small>
+    <h2>Check installed disk software</h2>
+    <div class="help-warning"><strong>This can take several minutes on a large DAT image.</strong> Acorn File Forge recursively checks installed disk directories and the launchers they call. Progress remains visible and the scan can be aborted safely.</div>
+    <div class="field"><label>Scan</label><select name="root"><option value="$">Whole HDD ($)</option>${current !== "$" ? `<option value="${esc(current)}">Current directory (${esc(current)})</option>` : ""}</select></div>
+    <div class="help-note">The first pass is read-only. If repairable issues are found, each directory is listed with the exact proposed changes. Choose Repair selected to apply them, or Cancel to leave the image untouched.</div>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" type="submit">Run check</button></div>
+  </div>`, async formData => {
+    const root = String(formData.get("root") || "$");
+    renderAdfsInstallationAudit(index, await runAdfsInstallationAudit(index, root));
     return false;
   });
 }
@@ -9140,9 +9448,17 @@ function editorChoice(title, message, choices) {
       if (event.key === "Escape") finish("cancel");
       keepFocusInside(shade, event);
     });
-    modal.append(shade);
+    attachEditorOverlay(shade);
     shade.querySelector('[data-choice="cancel"]')?.focus();
   });
+}
+
+function attachEditorOverlay(shade) {
+  if (modal.open) modal.append(shade);
+  else {
+    shade.classList.add("editor-global-overlay");
+    document.body.append(shade);
+  }
 }
 
 function editorProperties(root, pane, path, report) {
@@ -9298,34 +9614,149 @@ async function saveEditorProject(pane, path, project) {
   })).project;
 }
 
-async function runFileInConfiguredEmulator(pane, entry, path, target = null) {
+function editorEmulatorQuery(pane, path, isBasic) {
+  return fileContextQuery(pane, path, {
+    basic: isBasic ? "true" : "false",
+    hardwareProfile: JSON.stringify(editorTargetProfile(pane)),
+  });
+}
+
+async function chooseEditorEmulatorLaunch(status, entry, isBasic, purpose = "run") {
+  const choices = [{ value: "cancel", label: "Cancel", className: "ghost" }];
+  if (status.parentMountable) {
+    choices.push({ value: "parent-mount", label: "Mount parent only" });
+    choices.push({ value: "parent-auto", label: "Mount and boot parent" });
+  }
+  if (isBasic && status.isolatedBasic) choices.push({ value: "isolated-basic", label: `${purpose === "debug" ? "Inject and debug" : "Inject and run"} BASIC buffer`, className: "primary" });
+  if (choices.length === 1) {
+    await editorChoice(`${purpose === "debug" ? "Debugger" : "Emulator"} unavailable`, status.parentMessage || status.message || "The selected emulator cannot launch this image or file.", choices);
+    return "cancel";
+  }
+  const parentNote = status.parentMountable
+    ? "The parent choices preserve access to the program's companion files. Mount only stops at the machine prompt; Mount and boot parent follows that image's normal boot sequence."
+    : `The parent image cannot be mounted: ${status.parentMessage || "unsupported media."}`;
+  const basicNote = isBasic && status.isolatedBasic
+    ? ` The current “${entry.name}” editor buffer, including unsaved changes, can instead be tokenised, injected into a temporary bootable disk as PROGRAM, and started automatically. That isolated run cannot provide companion files from the parent image.`
+    : "";
+  return editorChoice(
+    `${purpose === "debug" ? "Debug" : "Run"} with ${status.label}`,
+    `${parentNote}${basicNote}`,
+    choices,
+  );
+}
+
+function openBrowserEmulator(pane, result) {
+  const shade = document.createElement("div");
+  shade.className = "editor-choice-shade emulator-viewer-shade";
+  shade.setAttribute("role", "dialog");
+  shade.setAttribute("aria-modal", "true");
+  const port = Number(result.viewerPort || 8668);
+  const viewer = `${location.protocol}//${location.hostname}:${port}/vnc.html?autoconnect=true&resize=scale&path=websockify`;
+  shade.innerHTML = `<section class="editor-choice-card emulator-viewer"><header><div><small>LIVE MANAGED EMULATOR</small><h2>${esc(result.emulator || "Acorn emulator")}</h2></div><div><button type="button" class="button" data-emulator-fullscreen>Full screen</button><button type="button" class="button danger" data-emulator-stop>Stop and close</button></div></header><p>${esc(result.summary || "The configured emulator is running below. Click the display before typing.")}</p><iframe src="${esc(viewer)}" title="${esc(result.emulator || "Acorn emulator")} display" allow="clipboard-read; clipboard-write" referrerpolicy="no-referrer"></iframe></section>`;
+  const stop = async () => {
+    shade.querySelectorAll("button").forEach(button => { button.disabled = true; });
+    try { await api(`/api/images/${pane.image.id}/editor-emulator`, { method: "DELETE" }); }
+    catch (error) { toast(error.message, true); }
+    shade.remove();
+  };
+  shade.querySelector("[data-emulator-stop]").onclick = stop;
+  shade.querySelector("[data-emulator-fullscreen]").onclick = () => shade.querySelector("iframe").requestFullscreen?.();
+  shade.onkeydown = event => { if (event.key === "Escape") stop(); };
+  attachEditorOverlay(shade);
+}
+
+function paneEmulatorTarget(index) {
+  const pane = panes[index];
+  if (pane.image.kind !== "mmb") return { slot: pane.slot, label: pane.image.name, modePrefix: "parent" };
+  const selected = pane.slot === null ? selectedEntries(index).filter(entry => entry.formatted) : [];
+  const slot = pane.slot !== null ? Number(pane.slot) : selected.length === 1 ? Number(selected[0].slot) : null;
+  if (!Number.isInteger(slot)) throw new Error("Select one formatted MMB disk slot first.");
+  const name = pane.slot !== null ? pane.slotName : selected[0].name;
+  return { slot, label: `slot ${slot} · ${name}`, modePrefix: "slot" };
+}
+
+async function launchPaneEmulator(index, debug = false) {
+  const pane = panes[index];
+  const target = paneEmulatorTarget(index);
+  const endpoint = debug ? "editor-debugger" : "editor-emulator";
+  const query = new URLSearchParams({
+    hardwareProfile: JSON.stringify(editorTargetProfile(pane)),
+  });
+  if (target.slot != null) query.set("slot", target.slot);
+  const status = await api(`/api/images/${pane.image.id}/${endpoint}?${query}`);
+  if (!status.available) {
+    await editorChoice(
+      `${debug ? "Debugger" : "Emulator"} unavailable`,
+      status.parentMessage || status.message || `The configured emulator cannot mount ${target.label}.`,
+      [{ value: "cancel", label: "Close", className: "primary" }],
+    );
+    return false;
+  }
+  const action = await editorChoice(
+    `${debug ? "Debug" : "Run"} ${target.label}`,
+    `${status.label} can mount this media. Choose whether to leave the machine at its command prompt or follow the image's normal boot sequence.${target.modePrefix === "slot" ? " The selected MMB disk is mounted from a temporary SSD copy, so emulator writes do not alter its slot." : ""}`,
+    [
+      { value: "cancel", label: "Cancel", className: "ghost" },
+      { value: "mount", label: "Mount only" },
+      { value: "auto", label: debug ? "Mount and start debugger" : "Mount and boot", className: "primary" },
+    ],
+  );
+  if (action === "cancel") return false;
+  const body = {
+    path: "", slot: target.slot, side: pane.side,
+    mode: `${target.modePrefix}-${action}`,
+    interactive: true,
+    hardwareProfile: editorTargetProfile(pane),
+  };
+  if (debug) body.action = "launch";
+  const response = await api(`/api/images/${pane.image.id}/${endpoint}`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  openBrowserEmulator(pane, response.result);
+  return true;
+}
+
+async function runFileInConfiguredEmulator(pane, entry, path, target = null, isBasic = false, source = "") {
   if (target) {
     toast("Extract this archive member before handing it to an emulator.", true);
     return null;
   }
-  const status = await api(`/api/images/${pane.image.id}/editor-emulator`);
-  if (!status.available) {
-    toast(status.message, true);
+  try {
+    const status = await api(`/api/images/${pane.image.id}/editor-emulator?${editorEmulatorQuery(pane, path, isBasic)}`);
+    if (!status.available) {
+      await editorChoice("Emulator unavailable", status.message, [{ value: "cancel", label: "Close", className: "primary" }]);
+      return null;
+    }
+    const mode = await chooseEditorEmulatorLaunch(status, entry, isBasic, "run");
+    if (mode === "cancel") return null;
+    const result = await api(`/api/images/${pane.image.id}/editor-emulator`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path, slot: pane.slot, side: pane.side, mode, interactive: true, source: isBasic ? source : undefined, hardwareProfile: editorTargetProfile(pane) }),
+    });
+    if (result.result.interactive) openBrowserEmulator(pane, result.result);
+    else toast(result.result.bounded ? "The managed emulator completed its compatibility-check window." : `Emulator finished with return code ${result.result.returnCode}.`);
+    return result;
+  } catch (error) {
+    await editorChoice("The emulator could not run", error.message, [{ value: "cancel", label: "Close", className: "primary" }]);
     return null;
   }
-  const hardware = status.hardware ? ` for ${status.hardware}` : "";
-  if (!confirm(`Run ${entry.name} using the configured emulator${hardware}?`)) return null;
-  const result = await api(`/api/images/${pane.image.id}/editor-emulator`, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path, slot: pane.slot, side: pane.side }),
-  });
-  toast(`Emulator finished with return code ${result.result.returnCode}.`);
-  return result;
 }
 
 function editorTestResultsMarkup(project) {
   const tests = [...(project?.tests || [])].reverse();
-  return tests.length ? `<div class="editor-test-results">${tests.map(result => `<article class="${Number(result.returnCode) === 0 ? "pass" : "fail"}"><header><b>${esc(result.kind === "debugger" ? "Debugger" : "Emulator")}</b><time>${esc(result.time || "")}</time><strong>Return ${Number(result.returnCode)}</strong></header>${result.breakpoint ? `<small>Breakpoint ${esc(result.breakpoint)}</small>` : ""}${result.stdout ? `<details open><summary>Standard output</summary><pre>${esc(result.stdout)}</pre></details>` : ""}${result.stderr ? `<details open><summary>Standard error</summary><pre>${esc(result.stderr)}</pre></details>` : ""}</article>`).join("")}</div>` : '<p class="code-empty-message">No emulator or debugger runs have been retained for this file.</p>';
+  const launchLabels = { "isolated-basic": "isolated BASIC test disk", "parent-auto": "parent image with autoboot", "parent-mount": "parent image mounted only" };
+  return tests.length ? `<div class="editor-test-results">${tests.map(result => `<article class="${Number(result.returnCode) === 0 ? "pass" : "fail"}"><header><b>${esc(result.emulator || (result.kind === "debugger" ? "Debugger" : "Emulator"))}</b><time>${esc(result.time || "")}</time><strong>${result.bounded ? "Expected test window complete" : `Return ${Number(result.returnCode)}`}</strong></header>${result.summary ? `<p>${esc(result.summary)}</p>` : ""}${result.launchMode ? `<small>${esc(launchLabels[result.launchMode] || result.launchMode)}${result.machine ? ` · ${esc(result.machine)}` : ""}</small>` : ""}${result.breakpoint ? `<small>Breakpoint ${esc(result.breakpoint)}</small>` : ""}${result.stdout ? `<details open><summary>Program output</summary><pre>${esc(result.stdout)}</pre></details>` : ""}${result.stderr ? `<details open><summary>Diagnostic output</summary><pre>${esc(result.stderr)}</pre></details>` : ""}</article>`).join("")}</div>` : '<p class="code-empty-message">No emulator or debugger runs have been retained for this file.</p>';
 }
 
-async function openDebuggerWorkspace(pane, entry, path, architecture = "6502", initialBreakpoint = "") {
-  const status = await api(`/api/images/${pane.image.id}/editor-debugger`);
-  if (!status.available) return toast(status.message, true);
+async function openDebuggerWorkspace(pane, entry, path, architecture = "6502", initialBreakpoint = "", isBasic = false, source = "") {
+  const status = await api(`/api/images/${pane.image.id}/editor-debugger?${editorEmulatorQuery(pane, path, isBasic)}`);
+  if (!status.available) {
+    await editorChoice("Debugger unavailable", status.message, [{ value: "cancel", label: "Close", className: "primary" }]);
+    return;
+  }
+  const launchMode = await chooseEditorEmulatorLaunch(status, entry, isBasic, "debug");
+  if (launchMode === "cancel") return;
   const shade = document.createElement("div");
   shade.className = "editor-choice-shade";
   shade.setAttribute("role", "dialog");
@@ -9344,11 +9775,17 @@ async function openDebuggerWorkspace(pane, entry, path, architecture = "6502", i
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           path, slot: pane.slot, side: pane.side, action, architecture,
+          mode: launchMode, source: isBasic ? source : undefined,
+          interactive: true,
+          hardwareProfile: editorTargetProfile(pane),
           breakpoint: shade.querySelector("[name=debugBreakpoint]").value,
           expression: shade.querySelector("[name=debugExpression]").value,
         }),
       });
-      transcript.textContent += `${result.result.stdout || ""}${result.result.stderr ? `\n${result.result.stderr}` : ""}\n[return ${result.result.returnCode}]\n`;
+      if (result.result.interactive) {
+        transcript.textContent += `[interactive ${result.result.emulator} started]\n`;
+        openBrowserEmulator(pane, result.result);
+      } else transcript.textContent += `${result.result.stdout || ""}${result.result.stderr ? `\n${result.result.stderr}` : ""}\n[return ${result.result.returnCode}]\n`;
       transcript.scrollTop = transcript.scrollHeight;
     } catch (error) { transcript.textContent += `[error] ${error.message}\n`; }
     finally { buttons.forEach(control => { control.disabled = false; }); }
@@ -9570,12 +10007,12 @@ function installSourceEditorControls(index, pane, entry, path, report, canEdit, 
       if (edited) { project = await saveEditorProject(pane, path, edited); toast("Editor project metadata saved."); }
     }
     else if (action === "run-emulator") {
-      const result = await runFileInConfiguredEmulator(pane, entry, path, target);
+      const result = await runFileInConfiguredEmulator(pane, entry, path, target, isBasic, editor.value);
       if (result) { project = result.project; intelligence?.showCustom("Emulator result", editorTestResultsMarkup(project)); }
     }
     else if (action === "debugger-workspace") {
       if (target) return toast("Extract this archive member before starting a debugger.", true);
-      await openDebuggerWorkspace(pane, entry, path, pane.image?.targetHardware === "risc-os" ? "arm" : "6502", `0x${Number(report.metadata?.execute || report.metadata?.load || 0).toString(16).toUpperCase()}`);
+      await openDebuggerWorkspace(pane, entry, path, pane.image?.targetHardware === "risc-os" ? "arm" : "6502", `0x${Number(report.metadata?.execute || report.metadata?.load || 0).toString(16).toUpperCase()}`, isBasic, editor.value);
       project = await loadEditorProject(pane, path);
     }
     else if (action === "project-tests") intelligence?.showCustom("Emulator and debugger results", editorTestResultsMarkup(await ensureProject()));
@@ -9648,7 +10085,7 @@ async function renderDisassemblyEditor(index, entry, path, inspection, architect
   const source = root.querySelector(".disassembly-source");
   installEditorWindow(root);
   if (!target) installEditorDocumentTabs(root, pane);
-  const intelligence = window.AcornCodeEditor?.enhanceDisassembly({ root, report });
+  const intelligence = window.AcornCodeEditor?.enhanceDisassembly({ root, report, targetProfile: editorTargetProfile(pane) });
   modalContent.querySelector(".disassembly-refresh").onclick = async () => {
     const values = Object.fromEntries(new FormData(modalContent.closest("form")));
     analysisLoading("Disassembling file", path);
@@ -9980,6 +10417,7 @@ async function openFileEditor(index, name, target = null, pathOverride = null) {
       language: isBasic ? "basic" : isScript ? "script" : "text",
       dialect: report.basic?.dialect || "BBC BASIC II",
       inlineAssemblyLanguage: isBasic && (report.basic?.dialect === "BBC BASIC V" || pane.image?.targetHardware === "risc-os") ? "arm" : "6502",
+      targetProfile: editorTargetProfile(pane),
       initialHistory: report.project?.history || [],
       validateBasic: isBasic ? async (text, baseline = "") => api(`/api/images/${pane.image.id}/inspect/basic/verify`, {
         method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, baseline }),
@@ -10232,7 +10670,7 @@ function projectDocument() {
       slot: pane.slot, side: pane.side, path: pane.path,
       hardwareProfile: pane.image.hardwareProfile || {},
     } : null),
-    hardwareProfiles: storedCollection(PROFILE_STORAGE_KEY, BUILTIN_PROFILES),
+    hardwareProfiles: storedHardwareProfiles(),
     importRecipes: storedCollection(RECIPE_STORAGE_KEY, []),
   };
 }
@@ -10250,45 +10688,196 @@ async function importProjectFile(file) {
   toast("Project workspace restored");
 }
 
-function renderWorkbench(section = "profiles") {
-  const profiles = storedCollection(PROFILE_STORAGE_KEY, BUILTIN_PROFILES);
+let workbenchRenderSequence = 0;
+
+async function renderWorkbench(section = "profiles") {
+  const renderSequence = ++workbenchRenderSequence;
+  const hardware = await hardwareProfileCatalogue();
+  if (renderSequence !== workbenchRenderSequence) return;
+  const profiles = storedHardwareProfiles();
   const activeProfile = activeWorkbenchProfile(profiles);
   const recipes = storedCollection(RECIPE_STORAGE_KEY, []);
   const imageOptions = panes.map((pane, index) => pane.image ? `<option value="${index}">${esc(paneLabel(index))}</option>` : "").join("");
   showModal(`<div class="workbench-dialog"><header><div><small>ACORN FILE FORGE</small><h2>Workbench</h2></div><select name="workbenchSection"><option value="profiles" ${section === "profiles" ? "selected" : ""}>Hardware profiles</option><option value="recipes" ${section === "recipes" ? "selected" : ""}>Import recipes</option><option value="project" ${section === "project" ? "selected" : ""}>Portable project</option></select></header>
-    ${section === "profiles" ? `<div class="workbench-grid"><aside>${profiles.map((profile, index) => `<button type="button" data-profile-index="${index}"><b>${esc(profile.name)}</b><small>${esc(profile.machine)} · ${esc(profile.filingSystem)}</small></button>`).join("")}</aside><section><div class="field"><label>Profile name</label><input name="profileName" value="${esc(profiles[0]?.name || "My Acorn setup")}"></div><div class="field"><label>Machine</label><input name="profileMachine" value="${esc(profiles[0]?.machine || "BBC Micro")}"></div><div class="field"><label>Filing system</label><input name="profileFs" value="${esc(profiles[0]?.filingSystem || "MMFS")}"></div><div class="field"><label>Target validation</label><select name="profileTarget"><option value="auto">Automatic</option><option value="electron-plus3">Electron Plus 3</option><option value="bbc-master">BBC / Master ADFS</option><option value="beebscsi">BeebSCSI</option><option value="risc-os">Archimedes / RISC OS</option></select></div><div class="field"><label>MMFS build</label><input name="profileMmfs" value="${esc(profiles[0]?.mmfsBuild || "paged")}"></div><div class="field"><label>Expected PAGE</label><input name="profilePage" value="${esc(profiles[0]?.page || "E00")}"></div><label class="check-field"><input type="checkbox" name="profileTube" ${profiles[0]?.tube ? "checked" : ""}> Tube enabled</label><div class="field"><label>Apply to open pane</label><select name="profilePane">${imageOptions || '<option value="">No open images</option>'}</select></div><div class="modal-actions"><button type="button" class="button" data-save-profile>Save profile</button><button type="button" class="button primary" data-apply-profile ${imageOptions ? "" : "disabled"}>Apply profile</button></div></section></div>` : section === "recipes" ? `<div class="workbench-grid"><aside>${recipes.map((recipe, index) => `<button type="button" data-recipe-index="${index}"><b>${esc(recipe.name)}</b><small>${esc(recipe.naming)} · ${recipe.addMenu ? "menu" : "off-menu"}</small></button>`).join("") || "<p>No saved recipes yet.</p>"}</aside><section><div class="field"><label>Recipe name</label><input name="recipeName" value="Collection import"></div><div class="field"><label>Directory naming</label><select name="recipeNaming"><option value="source">Use source titles</option><option value="generic">DISC-0000 sequence</option></select></div><div class="field"><label>Group prefix</label><input name="recipeGroup" maxlength="10" value="DISCS"></div><label class="check-field"><input type="checkbox" name="recipeOnline" checked> Use online metadata for ambiguous titles</label><label class="check-field"><input type="checkbox" name="recipeCompat" checked> Apply safe DFS to ADFS compatibility rewrites</label><label class="check-field"><input type="checkbox" name="recipeMenu" checked> Offer imported titles to a menu</label><div class="modal-actions"><button type="button" class="button primary" data-save-recipe>Save recipe</button></div></section></div>` : `<div class="project-tools"><p>A project description preserves the pane layout, working session references, current paths, profiles and recipes. Image bytes remain in their private recoverable sessions and normal timestamped save ZIPs. Theme remains a browser preference.</p><div class="modal-actions"><button type="button" class="button" data-export-project>Export project JSON</button><label class="button primary">Import project JSON<input type="file" accept="application/json,.json" data-import-project hidden></label></div></div>`}
-    <div class="modal-actions"><button class="button ghost" value="cancel">Close workbench</button></div></div>`);
-  if (section === "profiles") {
-    modalContent.querySelector('[name="profileMachine"]')?.closest(".field")?.insertAdjacentHTML(
-      "afterend",
-      `<div class="field"><label>Online Library filter</label><select name="profileCatalogMachine">${ONLINE_MACHINES.map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></div>`
-    );
-  }
+    ${section === "profiles" ? `<div class="workbench-profile-picker field"><label>Hardware profile</label><select name="profileSelect">${profiles.map((profile, index) => `<option value="${index}">${esc(profile.name)}</option>`).join("")}</select><small>Start with a common system, then build the exact target from compatible additions.</small></div><div class="workbench-grid workbench-profile-grid"><section><div class="field"><label>Profile name</label><input name="profileName" value="${esc(profiles[0]?.name || "My Acorn setup")}"></div><div class="field"><label>Base machine</label><select name="profileMachine">${hardware.machines.map(machine => `<option value="${esc(machine.id)}">${esc(machine.label)} · ${esc(machine.baseRam)} · ${esc(machine.processor)}</option>`).join("")}</select></div><div class="field"><label>Online Library filter</label><select name="profileCatalogMachine">${ONLINE_MACHINES.map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></div><div class="field"><label>Filing system</label><select name="profileFs">${WORKBENCH_FILE_SYSTEMS.map(([value,label]) => `<option value="${value}">${label}</option>`).join("")}</select></div><div class="field"><label>Target validation</label><select name="profileTarget"><option value="auto">Automatic</option><option value="electron-plus3">Electron Plus 3</option><option value="bbc-master">BBC / Master ADFS</option><option value="beebscsi">BeebSCSI</option><option value="risc-os">Archimedes / RISC OS</option></select></div><div class="field"><label>MMFS build</label><select name="profileMmfs"><option value="none">Not used</option><option value="paged">Paged MMFS</option><option value="unpaged">Unpaged MMFS</option></select></div><div class="field"><label>Expected PAGE</label><input name="profilePage" value="${esc(profiles[0]?.page || "E00")}"></div><section class="workbench-addon-builder"><header><div><small>COMPATIBLE HARDWARE</small><h3>Add-ons</h3></div><span data-addon-summary></span></header><div class="hardware-addon-groups" data-hardware-addons></div></section><details class="workbench-emulator-settings" open><summary>Emulator and debugger integration</summary><div class="help-note"><strong>Managed tools:</strong> Acorn File Forge translates supported additions into emulator models, writable banks, Tube processors, controller settings and podules. Items marked Validation only still affect compatibility analysis but are not falsely claimed as emulated.</div><div class="workbench-emulator-controls"><div class="field"><label>Emulator</label><select name="profileEmulator">${WORKBENCH_EMULATORS.map(([value,label]) => `<option value="${value}">${label}</option>`).join("")}</select></div><div class="field"><label>Debugger</label><select name="profileDebugger">${WORKBENCH_DEBUGGERS.map(([value,label]) => `<option value="${value}">${label}</option>`).join("")}</select></div><div class="field"><label>Emulated RAM</label><select name="profileEmulatorRam"><option value="auto">From base machine and add-ons</option><option value="32K">32 KiB</option><option value="64K">64 KiB</option><option value="128K">128 KiB</option><option value="1M">1 MiB</option></select></div><div class="field"><label>Startup action</label><select name="profileEmulatorBoot"><option value="auto">Use image default</option><option value="boot">Shift-BREAK / boot image</option><option value="catalogue">Open catalogue only</option></select></div></div></details><div class="field"><label>Apply to open pane</label><select name="profilePane">${imageOptions || '<option value="">No open images</option>'}</select></div><div class="modal-actions"><button type="button" class="button" data-save-profile>Save profile</button><button type="button" class="button primary" data-apply-profile ${imageOptions ? "" : "disabled"}>Apply profile</button></div></section></div>` : section === "recipes" ? `<div class="workbench-grid"><aside>${recipes.map((recipe, index) => `<button type="button" data-recipe-index="${index}"><b>${esc(recipe.name)}</b><small>${esc(recipe.naming)} · ${recipe.addMenu ? "menu" : "off-menu"}</small></button>`).join("") || "<p>No saved recipes yet.</p>"}</aside><section><div class="field"><label>Recipe name</label><input name="recipeName" value="Collection import"></div><div class="field"><label>Directory naming</label><select name="recipeNaming"><option value="source">Use source titles</option><option value="generic">DISC-0000 sequence</option></select></div><div class="field"><label>Group prefix</label><input name="recipeGroup" maxlength="10" value="DISCS"></div><label class="check-field"><input type="checkbox" name="recipeOnline" checked> Use online metadata for ambiguous titles</label><label class="check-field"><input type="checkbox" name="recipeCompat" checked> Apply safe DFS to ADFS compatibility rewrites</label><label class="check-field"><input type="checkbox" name="recipeMenu" checked> Offer imported titles to a menu</label><div class="modal-actions"><button type="button" class="button primary" data-save-recipe>Save recipe</button></div></section></div>` : `<div class="project-tools"><p>A project description preserves the pane layout, working session references, current paths, profiles and recipes. Image bytes remain in their private recoverable sessions and normal timestamped save ZIPs. Theme remains a browser preference.</p><div class="modal-actions"><button type="button" class="button" data-export-project>Export project JSON</button><label class="button primary">Import project JSON<input type="file" accept="application/json,.json" data-import-project hidden></label></div></div>`}
+    <div class="modal-actions"><button class="button ghost" value="cancel">Close workbench</button></div></div>`, null, { replace: modal.open });
   modalContent.querySelector('[name="workbenchSection"]').onchange = event => renderWorkbench(event.target.value);
-  if (section === "profiles") wireProfileWorkbench(profiles, activeProfile.index);
+  if (section === "profiles") wireProfileWorkbench(profiles, activeProfile.index, hardware);
   if (section === "recipes") wireRecipeWorkbench(recipes);
   modalContent.querySelector("[data-export-project]")?.addEventListener("click", () => downloadDocument(`acorn-file-forge-${new Date().toISOString().replace(/[:.]/g, "-")}.aff-project.json`, JSON.stringify(projectDocument(), null, 2)));
   modalContent.querySelector("[data-import-project]")?.addEventListener("change", async event => { try { await importProjectFile(event.target.files[0]); modal.close(); } catch (error) { toast(error.message, true); } });
 }
 
-function wireProfileWorkbench(profiles, initialIndex = 0) {
+function wireProfileWorkbench(profiles, initialIndex = 0, catalogue) {
   let selectedIndex = initialIndex;
+  const machineDefaults = {
+    electron: { addons: [], catalogMachine: "electron", filingSystem: "tape", targetHardware: "auto", mmfsBuild: "none", page: "E00", emulator: "elkulator-pi1mhz", debugger: "elkulator-debug", ram: "32K" },
+    "bbc-b": { addons: [], catalogMachine: "bbc-b", filingSystem: "tape", targetHardware: "auto", mmfsBuild: "none", page: "1900", emulator: "b-em", debugger: "b-em-debug", ram: "32K" },
+    "bbc-b-plus": { addons: [], catalogMachine: "bbc-b", filingSystem: "dfs", targetHardware: "bbc-master", mmfsBuild: "none", page: "1900", emulator: "b-em", debugger: "b-em-debug", ram: "64K" },
+    master: { addons: [], catalogMachine: "master", filingSystem: "adfs", targetHardware: "bbc-master", mmfsBuild: "none", page: "1900", emulator: "b-em", debugger: "b-em-debug", ram: "128K" },
+    archimedes: { addons: [], catalogMachine: "archimedes", filingSystem: "filecore", targetHardware: "risc-os", mmfsBuild: "none", page: "", emulator: "mame", debugger: "mame-debug", ram: "1M" },
+  };
+  const selectedAddons = () => [
+    ...[...modalContent.querySelectorAll('[name="profileAddon"]:checked')].map(input => input.value),
+    ...[...modalContent.querySelectorAll('[name="profileAddonSelect"]')].map(select => select.value).filter(Boolean),
+  ];
+  const updateAddonSummary = () => {
+    const values = selectedAddons();
+    const emulated = values.filter(id => catalogue.addons.find(addon => addon.id === id)?.emulator !== "profile").length;
+    const summary = modalContent.querySelector("[data-addon-summary]");
+    if (summary) summary.textContent = `${values.length} selected · ${emulated} emulator-driven`;
+  };
+  const refreshAddonDescriptions = () => {
+    modalContent.querySelectorAll('[name="profileAddonSelect"]').forEach(select => {
+      const addon = catalogue.addons.find(item => item.id === select.value);
+      const detail = select.closest(".hardware-addon-select")?.querySelector("[data-addon-description]");
+      if (detail) detail.textContent = addon ? `${addon.description} · ${addon.emulator === "profile" ? "Validation only" : `Driven by ${addon.emulator}`}` : "No additional hardware selected.";
+    });
+  };
+  const addonControl = id => modalContent.querySelector(`[name="profileAddon"][value="${CSS.escape(id)}"]`)
+    || [...modalContent.querySelectorAll('[name="profileAddonSelect"]')].find(select => [...select.options].some(option => option.value === id));
+  const addonSelected = id => selectedAddons().includes(id);
+  const setAddonSelected = (id, selected) => {
+    const control = addonControl(id);
+    if (!control) return;
+    if (control.matches('[type="checkbox"]')) control.checked = selected;
+    else control.value = selected ? id : "";
+  };
+  const requirementChoices = requirement => {
+    const [scope, expression] = requirement.includes(":") ? requirement.split(":", 2) : [null, requirement];
+    const machine = modalContent.querySelector('[name="profileMachine"]').value;
+    return scope && scope !== machine ? [] : expression.split("|");
+  };
+  const selectRequirements = identifier => {
+    const addon = catalogue.addons.find(item => item.id === identifier);
+    (addon?.requires || []).forEach(requirement => {
+      const choices = requirementChoices(requirement);
+      if (!choices.length || choices.some(addonSelected)) return;
+      if (!addonControl(choices[0])) return;
+      setAddonSelected(choices[0], true);
+      selectRequirements(choices[0]);
+    });
+  };
+  const removeInvalidDependants = () => {
+    let changed = true;
+    while (changed) {
+      changed = false;
+      selectedAddons().forEach(identifier => {
+        const addon = catalogue.addons.find(item => item.id === identifier);
+        const valid = (addon?.requires || []).every(requirement => {
+          const choices = requirementChoices(requirement);
+          return !choices.length || choices.some(addonSelected);
+        });
+        if (!valid) { setAddonSelected(identifier, false); changed = true; }
+      });
+    }
+  };
+  const wireAddonInputs = () => {
+    modalContent.querySelectorAll('[name="profileAddon"], [name="profileAddonSelect"]').forEach(input => input.onchange = () => {
+      const identifier = input.matches("select") ? input.value : input.value;
+      const selected = input.matches("select") ? Boolean(input.value) : input.checked;
+      if (input.matches('[type="checkbox"]') && input.checked) {
+        const group = input.closest("[data-addon-group]");
+        const limit = Number(group?.dataset.addonMax || 0);
+        const checked = group ? group.querySelectorAll('[name="profileAddon"]:checked').length : 0;
+        if (limit && checked > limit) {
+          input.checked = false;
+          toast(`Choose no more than ${limit} option${limit === 1 ? "" : "s"} from this hardware group.`, true);
+          updateAddonSummary();
+          return;
+        }
+      }
+      if (selected) {
+        const addon = catalogue.addons.find(item => item.id === identifier);
+        (addon?.conflicts || []).forEach(conflict => setAddonSelected(conflict, false));
+        selectRequirements(identifier);
+      }
+      else removeInvalidDependants();
+      refreshAddonDescriptions();
+      const values = selectedAddons();
+      const machine = modalContent.querySelector('[name="profileMachine"]').value;
+      if (values.includes("beebscsi")) {
+        modalContent.querySelector('[name="profileFs"]').value = "adfs-mmfs";
+        modalContent.querySelector('[name="profileTarget"]').value = "beebscsi";
+      } else if (values.includes("mmfs")) modalContent.querySelector('[name="profileFs"]').value = "mmfs";
+      else if (machine === "electron" && values.some(id => ["electron-plus3", "electron-ap3"].includes(id))) {
+        modalContent.querySelector('[name="profileFs"]').value = "adfs";
+        modalContent.querySelector('[name="profileTarget"]').value = "electron-plus3";
+      } else if (machine === "electron" && values.includes("electron-ap4")) modalContent.querySelector('[name="profileFs"]').value = "dfs";
+      applyDependencies();
+      updateAddonSummary();
+    });
+    refreshAddonDescriptions();
+    updateAddonSummary();
+  };
+  const renderAddons = selected => {
+    const host = modalContent.querySelector("[data-hardware-addons]");
+    host.innerHTML = hardwareAddonMarkup(catalogue, modalContent.querySelector('[name="profileMachine"]').value, selected);
+    wireAddonInputs();
+  };
+  const applyDependencies = profile => {
+    const usesMmfs = ["mmfs", "adfs-mmfs"].includes(modalContent.querySelector('[name="profileFs"]').value);
+    modalContent.querySelector('[name="profileMmfs"]').disabled = !usesMmfs;
+    if (!usesMmfs) modalContent.querySelector('[name="profileMmfs"]').value = "none";
+    const machine = modalContent.querySelector('[name="profileMachine"]').value;
+    const electron = machine === "electron";
+    const archimedes = machine === "archimedes";
+    const emulator = modalContent.querySelector('[name="profileEmulator"]');
+    [...emulator.options].forEach(option => {
+      option.disabled = (option.value === "elkulator-pi1mhz" && !electron)
+        || (option.value === "b-em" && (electron || archimedes))
+        || (option.value === "mame" && !archimedes);
+    });
+    if (emulator.selectedOptions[0]?.disabled) emulator.value = electron ? "elkulator-pi1mhz" : archimedes ? "mame" : "b-em";
+    const debuggerSelect = modalContent.querySelector('[name="profileDebugger"]');
+    [...debuggerSelect.options].forEach(option => {
+      option.disabled = (option.value === "elkulator-debug" && !electron)
+        || (option.value === "b-em-debug" && (electron || archimedes))
+        || (option.value === "mame-debug" && !archimedes);
+    });
+    if (debuggerSelect.selectedOptions[0]?.disabled) debuggerSelect.value = electron ? "elkulator-debug" : archimedes ? "mame-debug" : "b-em-debug";
+  };
   const fill = profile => {
+    const legacyMachine = { "Electron": "electron", "BBC Micro": "bbc-b", "BBC/Master": "master", "Master 128": "master", "Archimedes": "archimedes" };
+    const legacyFs = { "DFS": "dfs", "ADFS": "adfs", "MMFS": "mmfs", "ADFS + MMFS": "adfs-mmfs", "FileCore": "filecore" };
     modalContent.querySelector('[name="profileName"]').value = profile.name || "";
-    modalContent.querySelector('[name="profileMachine"]').value = profile.machine || "";
+    modalContent.querySelector('[name="profileMachine"]').value = legacyMachine[profile.machine] || profile.machine || "bbc-b";
     modalContent.querySelector('[name="profileCatalogMachine"]').value = onlineMachineFromProfile(profile) || "all";
-    modalContent.querySelector('[name="profileFs"]').value = profile.filingSystem || "";
+    modalContent.querySelector('[name="profileFs"]').value = legacyFs[profile.filingSystem] || profile.filingSystem || "dfs";
     modalContent.querySelector('[name="profileTarget"]').value = profile.targetHardware || "auto";
     modalContent.querySelector('[name="profileMmfs"]').value = profile.mmfsBuild || "";
     modalContent.querySelector('[name="profilePage"]').value = profile.page || "";
-    modalContent.querySelector('[name="profileTube"]').checked = Boolean(profile.tube);
+    const legacyAddons = profile.addons || (profile.tube ? ["tube-6502"] : []);
+    renderAddons(legacyAddons);
+    modalContent.querySelector('[name="profileEmulator"]').value = profile.emulator || "auto";
+    modalContent.querySelector('[name="profileDebugger"]').value = profile.debugger || "auto";
+    const ram = modalContent.querySelector('[name="profileEmulatorRam"]');
+    ram.value = [...ram.options].some(option => option.value === profile.emulatorRam) ? profile.emulatorRam : "auto";
+    modalContent.querySelector('[name="profileEmulatorBoot"]').value = profile.emulatorBoot || "auto";
+    applyDependencies(profile);
   };
-  const read = () => ({ name: modalContent.querySelector('[name="profileName"]').value.trim() || "My Acorn setup", machine: modalContent.querySelector('[name="profileMachine"]').value.trim(), catalogMachine: modalContent.querySelector('[name="profileCatalogMachine"]').value, filingSystem: modalContent.querySelector('[name="profileFs"]').value.trim(), targetHardware: modalContent.querySelector('[name="profileTarget"]').value, mmfsBuild: modalContent.querySelector('[name="profileMmfs"]').value.trim(), page: modalContent.querySelector('[name="profilePage"]').value.trim(), tube: modalContent.querySelector('[name="profileTube"]').checked, menuType: "universal" });
-  modalContent.querySelectorAll("[data-profile-index]").forEach(button => button.onclick = () => {
-    selectedIndex = Number(button.dataset.profileIndex);
+  const read = () => { const addons = selectedAddons(); return ({ name: modalContent.querySelector('[name="profileName"]').value.trim() || "My Acorn setup", machine: modalContent.querySelector('[name="profileMachine"]').value, addons, catalogMachine: modalContent.querySelector('[name="profileCatalogMachine"]').value, filingSystem: modalContent.querySelector('[name="profileFs"]').value, targetHardware: modalContent.querySelector('[name="profileTarget"]').value, mmfsBuild: modalContent.querySelector('[name="profileMmfs"]').value, page: modalContent.querySelector('[name="profilePage"]').value.trim(), tube: addons.some(id => id.startsWith("tube-") || id.startsWith("master-")), menuType: "universal", emulator: modalContent.querySelector('[name="profileEmulator"]').value, debugger: modalContent.querySelector('[name="profileDebugger"]').value, emulatorRam: modalContent.querySelector('[name="profileEmulatorRam"]').value, emulatorBoot: modalContent.querySelector('[name="profileEmulatorBoot"]').value }); };
+  modalContent.querySelector('[name="profileSelect"]').onchange = event => {
+    selectedIndex = Number(event.target.value);
     fill(profiles[selectedIndex]);
     setActiveWorkbenchProfile(selectedIndex, profiles[selectedIndex]);
-  });
+  };
+  modalContent.querySelector('[name="profileMachine"]').onchange = event => {
+    const defaults = machineDefaults[event.target.value];
+    if (!defaults) return;
+    modalContent.querySelector('[name="profileCatalogMachine"]').value = defaults.catalogMachine;
+    modalContent.querySelector('[name="profileFs"]').value = defaults.filingSystem;
+    modalContent.querySelector('[name="profileTarget"]').value = defaults.targetHardware;
+    modalContent.querySelector('[name="profileMmfs"]').value = defaults.mmfsBuild;
+    modalContent.querySelector('[name="profilePage"]').value = defaults.page;
+    modalContent.querySelector('[name="profileEmulator"]').value = defaults.emulator;
+    modalContent.querySelector('[name="profileDebugger"]').value = defaults.debugger;
+    modalContent.querySelector('[name="profileEmulatorRam"]').value = defaults.ram;
+    renderAddons(defaults.addons);
+    applyDependencies();
+  };
+  modalContent.querySelector('[name="profileFs"]').onchange = () => applyDependencies();
+  modalContent.querySelector('[name="profileEmulator"]').onchange = () => applyDependencies();
   modalContent.querySelector('[name="profileCatalogMachine"]').onchange = event => rememberOnlineMachine(event.target.value);
   modalContent.querySelector("[data-save-profile]").onclick = () => {
     profiles[selectedIndex] = read();
@@ -10306,6 +10895,7 @@ function wireProfileWorkbench(profiles, initialIndex = 0) {
     toast(`${profile.name} applied to ${pane.image.name}${profile.tube ? " · Tube compatibility warnings enabled" : ""}`);
   };
   if (profiles[selectedIndex]) {
+    modalContent.querySelector('[name="profileSelect"]').value = String(selectedIndex);
     fill(profiles[selectedIndex]);
     setActiveWorkbenchProfile(selectedIndex, profiles[selectedIndex]);
   }
