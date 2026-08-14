@@ -4,37 +4,28 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from flask import Blueprint, jsonify, request
+from .effects import image_mutation, request_effect
 
 from ..dfs_compat import infer_dfs_launch_page
 from ..disk_service import DiskError, DiskService
 from ..menu_interpreter import interpret_menu_program
-from ..menu_service import (
-    analyse_disk,
+from ..menu.adfs import (
     audit_adfs_menu_pages,
-    audit_mmb_menu_pages,
-    backup_mmb_menu_slot,
     append_adfs_menu_entry,
     append_adfs_menu_entries,
     create_adfs_menu,
-    configure_mmb_universal_page,
-    edit_mmb_menu_entries,
-    enrich_if_ambiguous,
-    find_menu_slot,
     has_adfs_menu,
-    install_mmb_menu,
     installed_adfs_menus,
-    installed_mmb_menu,
-    installed_mmb_menus,
-    is_mmb_menu_backup_title,
-    mmb_menu_data_path,
-    mmb_universal_page,
-    parse_menu_data,
-    parse_mmb_menu_data,
     reorder_adfs_menu,
-    restore_mmb_menu_slot,
-    replace_mmb_menu,
-    refresh_mmc_desktop_catalogue,
     scan_adfs_menu_directories,
+)
+from ..menu.analysis import analyse_disk, enrich_if_ambiguous
+from ..menu.mmb import (
+    audit_mmb_menu_pages, backup_mmb_menu_slot, configure_mmb_universal_page,
+    edit_mmb_menu_entries, find_menu_slot, install_mmb_menu, installed_mmb_menu,
+    installed_mmb_menus, is_mmb_menu_backup_title, mmb_menu_data_path,
+    mmb_universal_page, parse_menu_data, parse_mmb_menu_data,
+    refresh_mmc_desktop_catalogue, replace_mmb_menu, restore_mmb_menu_slot,
     update_menu,
 )
 from .common import payload
@@ -78,6 +69,7 @@ def create_menus_blueprint(service: DiskService, template_dir: Path) -> Blueprin
     blueprint = Blueprint("menus", __name__)
 
     @blueprint.post("/api/images/<image_id>/metadata/scan")
+    @request_effect("read-only", "scanning disk metadata")
     def scan_slot_metadata(image_id):
         data = payload()
         metadata = analyse_disk(service, service.get(image_id), int(data["slot"]))
@@ -86,6 +78,7 @@ def create_menus_blueprint(service: DiskService, template_dir: Path) -> Blueprin
         return jsonify(metadata=metadata)
 
     @blueprint.post("/api/images/<image_id>/metadata/page")
+    @request_effect("read-only", "detecting a launch PAGE value")
     def scan_slot_page(image_id):
         data = payload()
         session = service.get(image_id)
@@ -202,6 +195,7 @@ def create_menus_blueprint(service: DiskService, template_dir: Path) -> Blueprin
         raise DiskError("Installed menu previews are available for MMB and ADFS images.")
 
     @blueprint.post("/api/images/<image_id>/menu/entry")
+    @image_mutation("adding a menu entry")
     def add_menu_entry(image_id):
         data = payload()
         session = service.get(image_id)
@@ -217,6 +211,7 @@ def create_menus_blueprint(service: DiskService, template_dir: Path) -> Blueprin
         return jsonify(image=service.summary(session), **result)
 
     @blueprint.post("/api/images/<image_id>/menu/install")
+    @image_mutation("installing a menu")
     def install_menu(image_id):
         data = payload()
         session = service.get(image_id)
@@ -276,6 +271,7 @@ def create_menus_blueprint(service: DiskService, template_dir: Path) -> Blueprin
         return jsonify(image=service.summary(session), **result)
 
     @blueprint.post("/api/images/<image_id>/menu/page")
+    @image_mutation("changing the menu PAGE")
     def configure_menu_page(image_id):
         data = payload()
         session = service.get(image_id)
@@ -288,6 +284,7 @@ def create_menus_blueprint(service: DiskService, template_dir: Path) -> Blueprin
         return jsonify(image=service.summary(session), **result)
 
     @blueprint.post("/api/images/<image_id>/menu/page-audit")
+    @image_mutation("auditing the menu")
     def audit_menu_pages(image_id):
         session = service.get(image_id)
         with session.lock:
@@ -295,6 +292,7 @@ def create_menus_blueprint(service: DiskService, template_dir: Path) -> Blueprin
         return jsonify(image=service.summary(session), **result)
 
     @blueprint.post("/api/images/<image_id>/menu/backup")
+    @image_mutation("backing up the menu slot")
     def backup_menu_slot(image_id):
         data = payload()
         session = service.get(image_id)
@@ -307,6 +305,7 @@ def create_menus_blueprint(service: DiskService, template_dir: Path) -> Blueprin
         return jsonify(image=service.summary(session), **result)
 
     @blueprint.post("/api/images/<image_id>/menu/restore")
+    @image_mutation("restoring the menu slot")
     def restore_menu_slot(image_id):
         data = payload()
         session = service.get(image_id)
@@ -319,6 +318,7 @@ def create_menus_blueprint(service: DiskService, template_dir: Path) -> Blueprin
         return jsonify(image=service.summary(session), **result)
 
     @blueprint.post("/api/images/<image_id>/menu/refresh")
+    @image_mutation("refreshing the menu catalogue")
     def refresh_menu(image_id):
         session = service.get(image_id)
         slot, menu_type = installed_mmb_menu(service, session)
@@ -333,6 +333,7 @@ def create_menus_blueprint(service: DiskService, template_dir: Path) -> Blueprin
         )
 
     @blueprint.post("/api/images/<image_id>/adfs-menu/scan")
+    @request_effect("read-only", "scanning ADFS menu candidates")
     def scan_adfs_menu(image_id):
         data = payload()
         session = service.get(image_id)
@@ -345,6 +346,7 @@ def create_menus_blueprint(service: DiskService, template_dir: Path) -> Blueprin
         return jsonify(root=root, entries=metadata, holders=holders)
 
     @blueprint.post("/api/images/<image_id>/adfs-menu/create")
+    @image_mutation("creating an ADFS menu")
     def build_adfs_menu(image_id):
         data = payload()
         session = service.get(image_id)
@@ -359,6 +361,7 @@ def create_menus_blueprint(service: DiskService, template_dir: Path) -> Blueprin
         return jsonify(image=service.summary(session), **result)
 
     @blueprint.post("/api/images/<image_id>/adfs-menu/entry")
+    @image_mutation("adding an ADFS menu entry")
     def add_adfs_menu_entry(image_id):
         data = payload()
         session = service.get(image_id)
@@ -373,6 +376,7 @@ def create_menus_blueprint(service: DiskService, template_dir: Path) -> Blueprin
         return jsonify(image=service.summary(session), **result)
 
     @blueprint.post("/api/images/<image_id>/adfs-menu/entries")
+    @image_mutation("adding ADFS menu entries")
     def add_adfs_menu_entries(image_id):
         data = payload()
         session = service.get(image_id)
@@ -387,6 +391,7 @@ def create_menus_blueprint(service: DiskService, template_dir: Path) -> Blueprin
         return jsonify(image=service.summary(session), **result)
 
     @blueprint.post("/api/images/<image_id>/adfs-menu/reorder")
+    @image_mutation("reordering the ADFS menu")
     def reorder_adfs_menu_entries(image_id):
         data = payload()
         session = service.get(image_id)
@@ -400,6 +405,7 @@ def create_menus_blueprint(service: DiskService, template_dir: Path) -> Blueprin
         return jsonify(image=service.summary(session), **result)
 
     @blueprint.post("/api/images/<image_id>/adfs-menu/page-audit")
+    @image_mutation("auditing the ADFS menu")
     def audit_adfs_pages(image_id):
         data = payload()
         session = service.get(image_id)
@@ -412,6 +418,7 @@ def create_menus_blueprint(service: DiskService, template_dir: Path) -> Blueprin
         return jsonify(image=service.summary(session), **result)
 
     @blueprint.post("/api/images/<image_id>/mmb-menu/scan")
+    @request_effect("read-only", "scanning MMB menu records")
     def scan_mmb_menu(image_id):
         data = payload()
         session = service.get(image_id)
@@ -452,6 +459,7 @@ def create_menus_blueprint(service: DiskService, template_dir: Path) -> Blueprin
         )
 
     @blueprint.post("/api/images/<image_id>/mmb-menu/rebuild")
+    @image_mutation("rebuilding the MMB menu")
     def rebuild_mmb_menu(image_id):
         data = payload()
         session = service.get(image_id)
@@ -464,6 +472,7 @@ def create_menus_blueprint(service: DiskService, template_dir: Path) -> Blueprin
         return jsonify(image=service.summary(session), **result)
 
     @blueprint.put("/api/images/<image_id>/mmb-menu/entries")
+    @image_mutation("editing the MMB menu")
     def edit_mmb_menu(image_id):
         data = payload()
         session = service.get(image_id)
@@ -477,6 +486,7 @@ def create_menus_blueprint(service: DiskService, template_dir: Path) -> Blueprin
         return jsonify(image=service.summary(session), **result)
 
     @blueprint.post("/api/images/<image_id>/mmb-menu/duplicate-cleanup")
+    @image_mutation("cleaning duplicate MMB menu records")
     def cleanup_mmb_duplicates(image_id):
         data = payload()
         session = service.get(image_id)

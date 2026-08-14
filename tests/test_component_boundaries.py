@@ -5,6 +5,10 @@ from tempfile import TemporaryDirectory
 from app.beebscsi_geometry import descriptor_size, old_map_checksum, old_map_size
 from app.menu_records import normalise_page, parse_menu_data, serialise_menu
 from app.mmb_layout import ENTRY_SIZE, HEADER_SIZE, INDEX_START, SLOT_SIZE, entry_offset, image_size, slot_offset
+from app.menu import adfs, analysis, mmb
+from app.disk_service import DiskService
+from app.rom_disk_service import RomDiskMixin
+from app.tape_disk_service import TapeDiskMixin
 
 
 class ComponentBoundaryTests(unittest.TestCase):
@@ -46,6 +50,27 @@ class ComponentBoundaryTests(unittest.TestCase):
         self.assertEqual(result[0]["action"], "E")
         self.assertTrue(index)
         self.assertEqual(normalise_page("E"), "E00")
+
+    def test_routes_use_domain_menu_apis_instead_of_the_compatibility_module(self):
+        routes = Path(__file__).parents[1] / "app" / "routes"
+        offenders = [
+            path.name for path in routes.glob("*.py")
+            if "menu_service import" in path.read_text(encoding="utf-8")
+        ]
+        self.assertEqual(offenders, [])
+        self.assertTrue(callable(analysis.analyse_disk))
+        self.assertTrue(callable(adfs.create_adfs_menu))
+        self.assertTrue(callable(mmb.install_mmb_menu))
+
+    def test_tape_operations_are_owned_by_the_tape_component(self):
+        self.assertTrue(issubclass(DiskService, TapeDiskMixin))
+        self.assertNotIn("convert_uef", DiskService.__dict__)
+        self.assertIs(DiskService.convert_uef, TapeDiskMixin.convert_uef)
+
+    def test_rom_operations_are_owned_by_the_rom_component(self):
+        self.assertTrue(issubclass(DiskService, RomDiskMixin))
+        self.assertNotIn("put_rom_bank", DiskService.__dict__)
+        self.assertIs(DiskService.put_rom_bank, RomDiskMixin.put_rom_bank)
 
 
 if __name__ == "__main__":

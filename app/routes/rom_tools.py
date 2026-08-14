@@ -15,6 +15,7 @@ from ..rom_workbench import (
     repair_header_role_flags,
 )
 from .common import payload
+from .effects import image_mutation, request_effect
 
 
 def create_rom_tools_blueprint(service: DiskService, root: Path) -> Blueprint:
@@ -68,6 +69,7 @@ def create_rom_tools_blueprint(service: DiskService, root: Path) -> Blueprint:
         return jsonify(identify_rom(data, combined_catalogue(session)))
 
     @blueprint.put("/api/images/<image_id>/rom/identity")
+    @request_effect("external", "saving a user ROM identity record")
     def rom_save_identity(image_id):
         session, data = session_bytes(image_id)
         document = payload()
@@ -142,6 +144,7 @@ def create_rom_tools_blueprint(service: DiskService, root: Path) -> Blueprint:
         return jsonify(report)
 
     @blueprint.post("/api/images/<image_id>/rom/compare")
+    @request_effect("read-only", "comparing ROM images")
     def rom_compare(image_id):
         session, left = session_bytes(image_id)
         document = payload()
@@ -163,11 +166,13 @@ def create_rom_tools_blueprint(service: DiskService, root: Path) -> Blueprint:
         return jsonify(report)
 
     @blueprint.put("/api/images/<image_id>/rom/project")
+    @image_mutation("editing ROM project notes")
     def rom_project(image_id):
         session = rom_session(image_id)
         return jsonify(project=service.save_rom_project(session, payload()), image=service.summary(session))
 
     @blueprint.post("/api/images/<image_id>/rom/patch")
+    @image_mutation("applying a ROM patch")
     def rom_patch(image_id):
         session, data = session_bytes(image_id)
         try:
@@ -178,6 +183,7 @@ def create_rom_tools_blueprint(service: DiskService, root: Path) -> Blueprint:
         return jsonify(image=service.summary(session))
 
     @blueprint.post("/api/images/<image_id>/rom/repair")
+    @image_mutation("repairing ROM metadata")
     def rom_repair(image_id):
         session, data = session_bytes(image_id)
         action = payload().get("action")
@@ -195,6 +201,7 @@ def create_rom_tools_blueprint(service: DiskService, root: Path) -> Blueprint:
         return jsonify(image=service.summary(session), report=audit_rom(result, session.rom_bank_size, session.rom_erase_byte))
 
     @blueprint.post("/api/images/<image_id>/rom/build")
+    @image_mutation("building a ROM image")
     def rom_build(image_id):
         session = rom_session(image_id)
         document = payload()
@@ -213,6 +220,7 @@ def create_rom_tools_blueprint(service: DiskService, root: Path) -> Blueprint:
         return jsonify(image=service.summary(session))
 
     @blueprint.post("/api/images/<image_id>/rom/hardware-export")
+    @request_effect("read-only", "preparing ROM programmer files")
     def rom_hardware_export(image_id):
         session, data = session_bytes(image_id)
         document = payload()
@@ -242,6 +250,7 @@ def create_rom_tools_blueprint(service: DiskService, root: Path) -> Blueprint:
                        message=f"{status['label']} is managed for this target. Direct sideways-ROM attachment is not exposed until the selected machine's ROM-slot mapping can be proved safely.")
 
     @blueprint.post("/api/images/<image_id>/rom/emulator")
+    @request_effect("external", "launching a ROM in an emulator")
     def rom_emulator_run(image_id):
         rom_session(image_id)
         raise DiskError("Direct ROM attachment is not enabled for this managed machine. Use the ROM programmer export or place the ROM in a machine-specific image first.")
