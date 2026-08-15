@@ -7,12 +7,12 @@ from unittest.mock import Mock, patch
 
 from flask import Flask
 
+from app.acorn_metadata import spark_metadata
 from app.catalog_service import CatalogueService, DEFAULT_SOURCES, archive_members
 from app.disk_service import DiskError
 from app.routes.catalog import (
     _catalogue_identities,
     _preferred_disk_members,
-    _spark_metadata,
     create_catalog_blueprint,
 )
 
@@ -272,10 +272,10 @@ class CatalogueServiceTests(unittest.TestCase):
         import struct
         payload = b"ARC0" + struct.pack("<III", 0xFFFABC00, 0x12345678, 3)
         extra = struct.pack("<HH", 0x4341, len(payload)) + payload
-        load, execute, filetype = _spark_metadata(extra)
-        self.assertEqual(load, hex(0xFFFABC00))
-        self.assertEqual(execute, hex(0x12345678))
-        self.assertEqual(filetype, "ABC")
+        metadata = spark_metadata(extra)
+        self.assertEqual(metadata["load"], 0xFFFABC00)
+        self.assertEqual(metadata["execute"], 0x12345678)
+        self.assertEqual(metadata["filetype"], 0xABC)
 
 
 if __name__ == "__main__":
