@@ -974,7 +974,14 @@ function showHelp() {
           </section>
           <section id="help-project">
             <h3>Project and support</h3>
-            <p class="help-lead">Acorn File Forge is an open-source project. The README in the repository tracks the current formats, workflows, limits and technical notes.</p>
+            <p class="help-lead">Acorn File Forge is an open-source project. Its documentation covers installation, every supported media family, the file editors, ROM maintenance, firmware and release validation.</p>
+            <div class="help-task"><h4>Choose the detailed reference</h4><ul>
+              <li><a href="https://github.com/peteclarke-del/AcornFileForge/blob/main/docs/README.md" target="_blank" rel="noopener noreferrer">Documentation index</a>: a task and capability map for the complete handbook.</li>
+              <li><a href="https://github.com/peteclarke-del/AcornFileForge/blob/main/README.md" target="_blank" rel="noopener noreferrer">Product and media handbook</a>: formats, restrictions, workflows, architecture, configuration and tests.</li>
+              <li><a href="https://github.com/peteclarke-del/AcornFileForge/blob/main/docs/INSTALLATION.md" target="_blank" rel="noopener noreferrer">Installation and operations</a>: desktop and Raspberry Pi builds, ports, sessions, updates, backups and diagnostics.</li>
+              <li><a href="https://github.com/peteclarke-del/AcornFileForge/blob/main/docs/FILE-EDITOR-GUIDE.md" target="_blank" rel="noopener noreferrer">File editor and code analysis</a>: BASIC, scripts, disassembly, archives, binary synchronisation and emulator hand-off.</li>
+              <li><a href="https://github.com/peteclarke-del/AcornFileForge/blob/main/docs/ROM-GUIDE.md" target="_blank" rel="noopener noreferrer">ROM image handbook</a>: banks, commands, decoded regions, ROMFS, Workbench, programmers and projects.</li>
+            </ul></div>
             <div class="help-task"><h4>Get the code or report a problem</h4><ol>
               <li>Visit <a href="https://github.com/peteclarke-del/AcornFileForge" target="_blank" rel="noopener noreferrer">github.com/peteclarke-del/AcornFileForge</a>.</li>
               <li>When reporting a problem, include the image format, target hardware profile, operation, visible error and whether the original image still opens correctly.</li>

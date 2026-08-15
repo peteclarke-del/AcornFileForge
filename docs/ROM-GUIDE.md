@@ -6,6 +6,9 @@ programmer. The main [README](../README.md) remains the complete application
 guide. This document goes deeper into ROM interpretation, maintenance and
 hardware preparation.
 
+Return to the [documentation index](README.md) for installation, media-format,
+file-editor, firmware and release references.
+
 ## Safety first
 
 A ROM image is executable machine data. It does not contain a normal DFS or

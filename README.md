@@ -100,7 +100,9 @@ Bug reports and proposed improvements can be raised in the
 
 ## Documentation map
 
-- This README is the complete installation, workflow and format guide.
+- The [documentation index](docs/README.md) is the quickest route to the right
+  operational, media, editor, ROM, firmware or release reference.
+- This README is the complete product, workflow and format guide.
 - The [ROM image handbook](docs/ROM-GUIDE.md) is the deeper technical reference
   for bank layouts, decoded structures, ROM Workbench, patches and programmers.
 - The [file editor and code analysis handbook](docs/FILE-EDITOR-GUIDE.md) covers
@@ -114,8 +116,10 @@ Bug reports and proposed improvements can be raised in the
   exact image, target profile, checksums, catalogue, warnings and recovery
   notes. ROM archives also contain `ROM-project.json`.
 
-Documentation screenshots are taken from the current Docker build with real
-sample media. They show actual decoded data and controls rather than mockups.
+Documentation screenshots are taken from the current Docker build. Screens
+that contain media use real test images and decoded data rather than mockups.
+Empty-state and configuration screens are captured from a clean isolated
+workspace so they do not expose retained sessions or personal media.
 
 ## The basic workflow
 
