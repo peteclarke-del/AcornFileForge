@@ -69,6 +69,26 @@ def is_zip_name(filename: str) -> bool:
     return Path(filename or "").suffix.lower() == ".zip"
 
 
+@contextlib.contextmanager
+def _open_archive_image(
+    archive: zipfile.ZipFile,
+    member: zipfile.ZipInfo,
+    upload_name: str,
+) -> Iterator[ArchiveImage]:
+    """Open one validated archive member with a consistent user-facing error."""
+    try:
+        with archive.open(member) as stream:
+            yield ArchiveImage(
+                Path(member.filename).name,
+                stream,
+                [member.filename, upload_name],
+            )
+    except (OSError, RuntimeError, zipfile.BadZipFile) as exc:
+        raise DiskError(
+            f"{member.filename} could not be read from {upload_name}."
+        ) from exc
+
+
 def iter_upload_images(
     uploads,
     extensions: set[str],
@@ -92,17 +112,8 @@ def iter_upload_images(
                     f"{upload.filename} contains no supported image ({supported})."
                 )
             for member in members:
-                try:
-                    with archive.open(member) as stream:
-                        yield ArchiveImage(
-                            Path(member.filename).name,
-                            stream,
-                            [member.filename, upload.filename],
-                        )
-                except (OSError, RuntimeError, zipfile.BadZipFile) as exc:
-                    raise DiskError(
-                        f"{member.filename} could not be read from {upload.filename}."
-                    ) from exc
+                with _open_archive_image(archive, member, upload.filename) as image:
+                    yield image
 
 
 @contextlib.contextmanager
@@ -130,17 +141,8 @@ def open_single_upload_image(
                 "members, or use a ZIP containing one image here."
             )
         member = members[0]
-        try:
-            with archive.open(member) as stream:
-                yield ArchiveImage(
-                    Path(member.filename).name,
-                    stream,
-                    [member.filename, upload.filename],
-                )
-        except (OSError, RuntimeError, zipfile.BadZipFile) as exc:
-            raise DiskError(
-                f"{member.filename} could not be read from {upload.filename}."
-            ) from exc
+        with _open_archive_image(archive, member, upload.filename) as image:
+            yield image
 
 
 @contextlib.contextmanager

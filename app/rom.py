@@ -6,12 +6,13 @@ fixed-size banks as its objects and keeps layout choices in session metadata.
 
 from __future__ import annotations
 
-import hashlib
 import math
 import zlib
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
+
+from .checksum import sha256_bytes
 
 
 DEFAULT_BANK_SIZE = 16 * 1024
@@ -203,7 +204,7 @@ def printable_strings(data: bytes, minimum: int = 4, limit: int = 513) -> list[d
 
 def byte_diagnostics(data: bytes, erase_byte: int, deep: bool = True) -> dict:
     fingerprints = {
-        "sha256": hashlib.sha256(data).hexdigest(),
+        "sha256": sha256_bytes(data),
         "crc32": f"{zlib.crc32(data) & 0xFFFFFFFF:08X}",
     }
     if not deep:

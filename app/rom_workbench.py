@@ -8,7 +8,6 @@ patch can alter an image.
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import io
 import zipfile
@@ -16,6 +15,7 @@ import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
+from .checksum import sha256_bytes
 from .rom import inspect_bank, parse_risc_os_extension_header, parse_sideways_header
 
 try:
@@ -200,10 +200,6 @@ VDU_CONTROLS = {
     28: "define text window", 29: "set graphics origin", 30: "home text cursor",
     31: "position text cursor",
 }
-
-
-def sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 def _operand(data: bytes, offset: int, opcode: Opcode, address: int) -> tuple[str, int | None]:
@@ -731,8 +727,8 @@ def compare_roms(left: bytes, right: bytes, *, max_ranges: int = 10000) -> dict:
                 captured_hex += len(left_hex) + len(right_hex)
                 omitted_bytes = omitted_bytes or not keep_bytes
             start = None
-    return {"leftSize": len(left), "rightSize": len(right), "leftSha256": sha256(left),
-            "rightSha256": sha256(right), "changedBytes": changed_bytes,
+    return {"leftSize": len(left), "rightSize": len(right), "leftSha256": sha256_bytes(left),
+            "rightSha256": sha256_bytes(right), "changedBytes": changed_bytes,
             "ranges": ranges, "rangesTruncated": changed_bytes > sum(row["length"] for row in ranges),
             "bytesOmitted": omitted_bytes}
 
@@ -768,7 +764,7 @@ def make_selective_patch(left: bytes, right: bytes, indexes: list[int]) -> dict:
 
 
 def apply_patch(source: bytes, document: dict) -> bytes:
-    if document.get("format") != PATCH_FORMAT or sha256(source) != document.get("sourceSha256"):
+    if document.get("format") != PATCH_FORMAT or sha256_bytes(source) != document.get("sourceSha256"):
         raise RomWorkbenchError("This patch does not match the selected source ROM checksum.")
     result = bytearray(source)
     adjustment = 0
@@ -779,7 +775,7 @@ def apply_patch(source: bytes, document: dict) -> bytes:
             raise RomWorkbenchError("The patch contains an invalid byte range.")
         result[offset:offset + remove] = replacement
         adjustment += len(replacement) - remove
-    if len(result) != int(document.get("targetSize", -1)) or sha256(result) != document.get("targetSha256"):
+    if len(result) != int(document.get("targetSize", -1)) or sha256_bytes(result) != document.get("targetSha256"):
         raise RomWorkbenchError("The patched bytes did not produce the expected target ROM.")
     return bytes(result)
 
@@ -806,7 +802,7 @@ def audit_rom(data: bytes, bank_size: int, erase_byte: int = 0xFF) -> dict:
                          "The RISC OS extension-ROM checksum is invalid."})
         repairable.append("extension-checksum")
     return {"healthy": not any(row["level"] == "error" for row in findings),
-            "sha256": sha256(data), "crc32": f"{zlib.crc32(data) & 0xFFFFFFFF:08X}",
+            "sha256": sha256_bytes(data), "crc32": f"{zlib.crc32(data) & 0xFFFFFFFF:08X}",
             "findings": findings, "repairable": repairable, "map": mapping}
 
 
@@ -859,7 +855,7 @@ def project_json(document: dict) -> bytes:
 
 def identify_rom(data: bytes, catalogue_path: Path | None = None) -> dict:
     """Identify exact and common transformed dumps without guessing a title."""
-    digest, crc = sha256(data), f"{zlib.crc32(data) & 0xFFFFFFFF:08X}"
+    digest, crc = sha256_bytes(data), f"{zlib.crc32(data) & 0xFFFFFFFF:08X}"
     records = []
     if catalogue_path and catalogue_path.is_file():
         try:
@@ -977,7 +973,7 @@ def hardware_export(data: bytes, *, device_size: int, erase_byte: int = 0xFF,
     components = [prepared[index::lanes] for index in range(lanes)]
     return {"deviceSize": device_size, "lanes": lanes, "eraseByte": erase_byte & 0xFF,
             "mirrored": mirror, "byteSwapped": byte_swap, "wordSwapped": word_swap,
-            "addressSwaps": [list(pair) for pair in swaps], "sha256": sha256(prepared),
+            "addressSwaps": [list(pair) for pair in swaps], "sha256": sha256_bytes(prepared),
             "components": components}
 
 

@@ -69,10 +69,6 @@ CONVENTIONAL_LAUNCHERS = (
 )
 
 
-def is_mmb_menu_backup_title(value: object) -> bool:
-    return str(value or "").upper().startswith("MBACKUP-")
-
-
 def _number(value) -> int:
     if isinstance(value, int):
         return value
@@ -1164,6 +1160,16 @@ def delete_adfs_items(
     return result
 
 
+def _append_replacing_identity(entries: list[dict], record: dict) -> list[dict]:
+    """Append a menu record after replacing the same disk-title/title pair."""
+    identity = (record["diskTitle"].casefold(), record["title"].casefold())
+    return [
+        item
+        for item in entries
+        if (item["diskTitle"].casefold(), item["title"].casefold()) != identity
+    ] + [record]
+
+
 def append_adfs_menu_entry(
     service: DiskService,
     session: ImageSession,
@@ -1175,19 +1181,7 @@ def append_adfs_menu_entry(
     if not has_adfs_menu(service, session, root):
         return create_adfs_menu(service, session, root, [record], template_dir)
     entries = parse_menu_data(service.read_file(session, None, f"{root}.GAMDATA"))
-    identity = (
-        record["diskTitle"].casefold(),
-        record["title"].casefold(),
-    )
-    entries = [
-        item
-        for item in entries
-        if (
-            item["diskTitle"].casefold(),
-            item["title"].casefold(),
-        ) != identity
-    ]
-    entries.append(record)
+    entries = _append_replacing_identity(entries, record)
     _write_databases(
         service,
         session,
@@ -1905,19 +1899,7 @@ def update_menu(
                 "The existing MMB menu database could not be read, so it was left unchanged."
             ) from exc
     record = _normalise_mmb_record(metadata, session.menu_type)
-    identity = (
-        record["diskTitle"].casefold(),
-        record["title"].casefold(),
-    )
-    entries = [
-        item
-        for item in entries
-        if (
-            item["diskTitle"].casefold(),
-            item["title"].casefold(),
-        ) != identity
-    ]
-    entries.append(record)
+    entries = _append_replacing_identity(entries, record)
     _write_mmb_databases(service, session, actual, entries)
     return {"menuSlot": actual, "entries": len(entries), "record": record}
 
