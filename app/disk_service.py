@@ -12,8 +12,8 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import BinaryIO, Callable
 
-from .checkpoints import CheckpointStore
 from .adfs_install_service import ADFSInstallMixin
+from .adfs_format import probe_new_map_adfs
 from .beebscsi_geometry import (
     MAX_SIZE as BEEBSCSI_MAX_SIZE,
     OLD_DIRECTORY_ENTRY_OFFSET as ADFS_OLD_DIRECTORY_ENTRY_OFFSET,
@@ -29,6 +29,7 @@ from .beebscsi_geometry import (
     old_map_size,
     range_is_zero,
 )
+from .checkpoints import CheckpointStore
 from .content_kind import LISTING_SNIFF_LIMIT, analyse_content, metadata_kind
 from .disk_tools import decode_disc_json, friendly_engine_error, run_disc, run_hxcfe
 from .errors import DestinationExistsError, DiskError, EmptyDiskError
@@ -137,7 +138,25 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
         result = self._run_json(["identify", "--as", "json", str(path)])
         rows = result.get("reports", {}).get("candidates", {}).get("rows", [])
         if not rows:
-            raise DiskError("The file does not contain a recognised Acorn filesystem.")
+            # Preserve a precise diagnostic when Acorn File Forge is run
+            # outside its Docker image with an unpatched Oaknut release.
+            new_map = probe_new_map_adfs(path)
+            if new_map is not None:
+                title = f' titled “{new_map.disc_name}”' if new_map.disc_name else ""
+                raise DiskError(
+                    f"This is a valid {new_map.description}{title}. "
+                    "This installation is using an Oaknut build without writable "
+                    "FileCore E/F support. Install the bundled Oaknut patch or use "
+                    "the Docker image. The source image has not been changed."
+                )
+            raise DiskError(
+                "No supported Acorn filesystem was found in the uploaded bytes. "
+                "The filename extension is only a hint. Supply the raw, uncompressed "
+                "image rather than an emulator wrapper, archive member or interleaved "
+                "track dump. This build recognises DFS, supported old-map ADFS, classic "
+                "FileCore E/F and Acorn ROMFS; F+, E+, big-directory and later FileCore "
+                "variants are not yet supported. The source image has not been changed."
+            )
         filesystem = str(rows[0].get("filesystem", "")).lower()
         if filesystem in {"acorn-dfs", "watford-dfs"}:
             return "dfs"
@@ -1019,6 +1038,14 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
             "adfs-s": ("blank.ads", []),
             "adfs-m": ("blank.adm", []),
             "adfs-l": ("blank.adl", []),
+            "adfs-e": (
+                "blank.adf",
+                ["--filesystem", "adfs", "--geometry", "e"],
+            ),
+            "adfs-f": (
+                "blank.adf",
+                ["--filesystem", "adfs", "--geometry", "f"],
+            ),
             "beebscsi": (
                 "scsi0.dat",
                 ["--geometry", f"capacity={capacity or '20MB'}"],
@@ -1220,6 +1247,8 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
         """Apply only target profiles that are meaningful for a new format."""
         forced = {
             "beebscsi": "beebscsi",
+            "adfs-e": "risc-os",
+            "adfs-f": "risc-os",
             "adfs-hard": "risc-os",
             "adfs-physical": "risc-os",
         }
@@ -1229,6 +1258,8 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
             "adfs-s",
             "adfs-m",
             "adfs-l",
+            "adfs-e",
+            "adfs-f",
             "hfe-adfs-s",
             "hfe-adfs-m",
             "hfe-adfs-l",

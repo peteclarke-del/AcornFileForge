@@ -1,8 +1,8 @@
 window.AcornOperationUI = (() => {
-  function create({ panes, api, setLoading, renderPane, modal, setModalAbort, setModalProgress }) {
+  function create({ panes, api, setLoading, renderPane, modal, setModalAbort, setModalProgress, newUuid }) {
     async function trackedPaneOperation(index, message, operation) {
       const pane = panes[index];
-      const operationId = crypto.randomUUID();
+      const operationId = newUuid();
       let polling = true;
       let abortRequested = false;
       setLoading(index, true, message);
