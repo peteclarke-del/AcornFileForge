@@ -6,6 +6,9 @@ hardware profile, and where it deliberately stops. The editor is intended for
 maintenance, inspection and controlled changes inside a working image. It is
 not a source-level debugger or a substitute for testing on the target machine.
 
+Return to the [documentation index](README.md) for installation, media-format,
+ROM, firmware and release references.
+
 ## Safety model
 
 Opening a file does not modify it. Editable source remains local to the editor
