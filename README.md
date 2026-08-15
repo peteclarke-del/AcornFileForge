@@ -1255,6 +1255,8 @@ DAT saves continue to include the required matching DSC geometry file.
 
 ### Files and directories
 
+![A DFS catalogue showing explicit load and execution address columns](docs/images/catalogue-addresses.png)
+
 - Use **File → New → New file** in a writable SSD, DSD, MMB disk, ADFS floppy or
   ADFS hard-drive directory. The filename is constrained to that filing
   system's limit, the initial file is zero bytes, and its load and execution
@@ -1268,6 +1270,11 @@ DAT saves continue to include the required matching DSC geometry file.
   RISC OS-style FileCore entry it also explains that the words can encode the
   filetype and timestamp. The edit changes catalogue metadata in place and
   does not rewrite the file payload.
+- Read the [catalogue metadata guide](docs/FILE-METADATA-GUIDE.md) for the
+  format-specific representation, `.inf` syntax, metadata priority and a
+  practical verification checklist.
+
+![The guarded catalogue address editor](docs/images/catalogue-address-edit-warning.png)
 - Choose **File → Insert Folder & Contents** or drop a host folder to import a complete batch.
   ADFS defaults to preserving its hierarchy and also offers a flat import. DFS
   imports the regular files into the open catalogue group because its directory

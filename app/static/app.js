@@ -692,7 +692,7 @@ function renderPane(index, preserveScroll = false) {
       <button class="row-action row-read-write" type="button" draggable="false" title="${isRomfs ? "Make loadable" : "Mark read / write"} · ${esc(actionName)}" aria-label="${isRomfs ? "Make loadable" : "Mark read / write"} ${esc(actionName)}">◇</button>
       <button class="row-action row-read-only" type="button" draggable="false" title="${isRomfs ? "Mark *RUN-only" : "Mark read-only"} · ${esc(actionName)}" aria-label="${isRomfs ? "Mark run-only" : "Mark read-only"} ${esc(actionName)}">◆</button>
     </span>` : ""}</td>`;
-    const addressTitle = isRiscOsEncoded(entry)
+    const addressTitle = isRiscOsEncoded(entry, pane.image.kind === "adfs")
       ? "This FileCore catalogue word also encodes the RISC OS filetype and datestamp"
       : "Acorn catalogue address";
     const editableAddresses = addresses.available && !isDir && !isVirtual && !isArchive && !pane.image.readOnly && !isTape;
@@ -3387,7 +3387,7 @@ async function editFileAddresses(index, entry) {
   const addresses = entryAddresses(entry);
   if (!addresses.available) throw new Error("This entry does not carry Acorn catalogue addresses.");
   const path = entry.path || fullPath(pane.path, entry.leafName || entry.name);
-  const riscos = isRiscOsEncoded(entry);
+  const riscos = isRiscOsEncoded(entry, pane.image.kind === "adfs");
   return showModal(`
     <h2>Change catalogue addresses</h2>
     <p>Editing <code>${esc(path)}</code>. These values control where Acorn software is loaded and where execution begins.</p>

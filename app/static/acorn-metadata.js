@@ -37,10 +37,10 @@
     };
   }
 
-  function isRiscOsEncoded(entry) {
+  function isRiscOsEncoded(entry, fileCore = false) {
     const load = entryAddresses(entry).load;
-    return entry?.filetype !== undefined && entry.filetype !== null && entry.filetype !== ""
-      || load !== null && ((load & 0xFFF00000) >>> 0) === 0xFFF00000;
+    if (entry?.filetype !== undefined && entry.filetype !== null && entry.filetype !== "") return true;
+    return fileCore && load !== null && ((load & 0xFFF00000) >>> 0) === 0xFFF00000;
   }
 
   window.AcornMetadata = Object.freeze({

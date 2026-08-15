@@ -166,6 +166,7 @@ function showHelp() {
             </div>
             <div class="help-task">
               <h4>Inspect or change load and execution addresses</h4>
+              <figure><img src="/help/catalogue-addresses.png" alt="DFS file catalogue with separate Load and Execute columns"><figcaption>Every file-level catalogue presents the stored words explicitly. The values are metadata from the image, not guesses made from the file bytes.</figcaption></figure>
               <ol>
                 <li>At file level, read the separate <strong>Load</strong> and <strong>Execute</strong> columns. Each value is the complete eight-digit catalogue word. DFS sign extension is shown conventionally, for example <code>&amp;FFFF1900</code>.</li>
                 <li>On writable DFS, MMB disk, ADFS or ROMFS media, select either address value. Both words are reviewed together so they cannot be changed accidentally in separate operations.</li>
@@ -173,6 +174,8 @@ function showHelp() {
                 <li>Select <strong>I understand, change addresses</strong> only when the values came from the original catalogue, a trusted <code>.inf</code> sidecar or reliable documentation. The app changes the catalogue record without rewriting the file bytes.</li>
               </ol>
               <div class="help-warning"><strong>Incorrect addresses can stop software loading or corrupt memory.</strong> On RISC OS-style FileCore entries, the same words can encode filetype and timestamp data. The dialog identifies that case before accepting the change.</div>
+              <figure><img src="/help/catalogue-address-edit-warning.png" alt="Guarded dialog for changing the load and execution words"><figcaption>The address editor changes both words together and requires explicit acceptance of the risk.</figcaption></figure>
+              <p>A value of <code>&amp;00000000</code> is not automatically an error. Data, command files and BASIC programs loaded by filing-system-aware commands can legitimately carry zero words. Acorn File Forge preserves what the source catalogue or sidecar says and does not invent a machine-code entry address from file content.</p>
             </div>
             <div class="help-task">
               <h4>Import one or more host folders</h4>
