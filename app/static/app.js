@@ -6490,11 +6490,16 @@ async function scanMmbMenu(index, mode) {
     toast(`MMB menu now contains ${result.entries} entries`);
     previewMenuAfterCurrentDialog(index, entries.at(-1)?.diskTitle || "");
   });
+  wireBatchMatchSelectors(data.entries);
+}
+
+function wireBatchMatchSelectors(entries) {
   modalContent.querySelectorAll(".batch-match").forEach(select => {
     select.onchange = () => {
       if (select.value === "") return;
       const offset = Number(select.dataset.offset);
-      const match = data.entries[offset].matches[Number(select.value)];
+      const match = entries[offset]?.matches?.[Number(select.value)];
+      if (!match) return;
       modalContent.querySelector(`[name="title-${offset}"]`).value = match.title;
       modalContent.querySelector(`[name="publisher-${offset}"]`).value = match.publisher;
     };
@@ -6728,15 +6733,7 @@ async function buildAdfsMenu(index) {
     toast(`ADFS menu created for ${result.entries} directories`);
     previewMenuAfterCurrentDialog(index, entries.at(-1)?.path || "");
   });
-  modalContent.querySelectorAll(".batch-match").forEach(select => {
-    select.onchange = () => {
-      if (select.value === "") return;
-      const offset = Number(select.dataset.offset);
-      const match = data.entries[offset].matches[Number(select.value)];
-      modalContent.querySelector(`[name="title-${offset}"]`).value = match.title;
-      modalContent.querySelector(`[name="publisher-${offset}"]`).value = match.publisher;
-    };
-  });
+  wireBatchMatchSelectors(data.entries);
 }
 
 function compactImage(index) {

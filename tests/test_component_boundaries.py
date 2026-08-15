@@ -91,6 +91,16 @@ class ComponentBoundaryTests(unittest.TestCase):
         self.assertNotIn("audit_adfs_installations", DiskService.__dict__)
         self.assertIs(DiskService.audit_adfs_installations, ADFSInstallMixin.audit_adfs_installations)
 
+    def test_byte_checksums_have_one_canonical_implementation(self):
+        app = Path(__file__).parents[1] / "app"
+        offenders = [
+            path.relative_to(app).as_posix()
+            for path in app.rglob("*.py")
+            if path.name != "checksum.py"
+            and "hashlib.sha256" in path.read_text(encoding="utf-8")
+        ]
+        self.assertEqual(offenders, [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2379,7 +2379,7 @@ Backend routes are split by responsibility:
   comments, regions, bookmarks, history and emulator results.
 - `app/rom_workbench.py` owns raw ROM decoding, 6502/ARM/68000 disassembly,
   guarded patches, builds, programmer transforms and ROM project metadata.
-- `app/checksum.py` provides the shared sparse-aware image checksum implementation.
+- `app/checksum.py` provides the shared byte-payload and sparse-aware image checksum implementations.
 - `app/uef.py` parses cassette blocks.
 - `app/hfe.py` validates HFE headers and classifies HFE versions safely.
 

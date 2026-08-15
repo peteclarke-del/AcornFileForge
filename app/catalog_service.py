@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import html
 import io
 import json
@@ -16,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .archive_utils import validated_zip_members
+from .checksum import sha256_bytes
 from .errors import DiskError
 
 
@@ -180,7 +180,9 @@ class CatalogueService:
                     ]
             for row in candidates:
                 row.update(sourceId=source["id"], sourceName=source["name"], machines=row.get("machines") or source["machines"])
-                token = hashlib.sha256(f"{source['id']}\0{row.get('downloadUrl')}\0{row.get('pageUrl')}\0{row.get('title')}".encode()).hexdigest()[:32]
+                token = sha256_bytes(
+                    f"{source['id']}\0{row.get('downloadUrl')}\0{row.get('pageUrl')}\0{row.get('title')}".encode()
+                )[:32]
                 row["id"] = token
                 self._remember_item(token, row)
                 row.pop("downloadUrl", None)

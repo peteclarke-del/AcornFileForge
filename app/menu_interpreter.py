@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import hashlib
 import re
 from dataclasses import dataclass
+
+from .checksum import sha256_bytes
 
 
 BBC_COLOURS = (
@@ -133,7 +134,7 @@ def interpret_menu_program(
     program outside the recognised Universal Menu family is returned as
     unsupported rather than rendered using invented styling.
     """
-    digest = hashlib.sha256(program).hexdigest()
+    digest = sha256_bytes(program)
     lines = decode_basic(program)
     if not lines:
         return {

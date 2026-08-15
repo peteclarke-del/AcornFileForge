@@ -5,10 +5,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app.checksum import sha256_path
+from app.checksum import sha256_bytes, sha256_path
 
 
 class SparseChecksumTests(unittest.TestCase):
+    def test_in_memory_hash_matches_hashlib(self) -> None:
+        data = b"Acorn File Forge"
+        self.assertEqual(sha256_bytes(data), hashlib.sha256(data).hexdigest())
+
     def test_sparse_file_hash_matches_ordinary_sha256(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "sparse.dat"

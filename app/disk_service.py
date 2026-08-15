@@ -2799,36 +2799,19 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
         target_path = self.resolve(target, target_slot)
         if target.kind == "adfs" and target_slot is None:
             try:
-                from oaknut.disc.cli import (
-                    _collect_copy_items,
-                    _ensure_dir_chain,
-                    _in_global_storage_order,
-                    _write_copy_item,
-                )
                 from oaknut.disc.mount import resolve_mount
             except ImportError as exc:
                 raise DiskError("The Oaknut direct-copy API is unavailable.") from exc
 
             def copy_between_mounts(source_mount, target_mount) -> None:
-                items = _collect_copy_items(
+                self._copy_between_adfs_mounts(
                     source_mount,
+                    target_mount,
                     source_inner,
-                    dst_mount=target_mount,
-                    dst_bare=target_inner,
-                    dst_slash=False,
+                    target_inner,
                     recursive=recursive,
-                    wildcards=False,
+                    destination_slash=False,
                 )
-                for item in _in_global_storage_order(source_mount, items):
-                    if item["kind"] == "mkdir":
-                        _ensure_dir_chain(target_mount, item["dst"])
-                    else:
-                        self._write_adfs_copy_item(
-                            target_mount,
-                            str(item["dst"]),
-                            item,
-                            _write_copy_item,
-                        )
 
             with self._locked_sessions(source, target):
                 if source.kind == "adfs" and source_slot is None:
@@ -3786,6 +3769,47 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
         except (AttributeError, OSError, RuntimeError, ValueError):
             return False
 
+    def _copy_between_adfs_mounts(
+        self,
+        source_mount,
+        target_mount,
+        source_inner: str,
+        target_inner: str,
+        *,
+        recursive: bool,
+        destination_slash: bool,
+    ) -> None:
+        """Copy between mounted ADFS images while preserving Acorn metadata."""
+        try:
+            from oaknut.disc.cli import (
+                _collect_copy_items,
+                _ensure_dir_chain,
+                _in_global_storage_order,
+                _write_copy_item,
+            )
+        except ImportError as exc:
+            raise DiskError("The Oaknut direct-copy API is unavailable.") from exc
+
+        items = _collect_copy_items(
+            source_mount,
+            source_inner,
+            dst_mount=target_mount,
+            dst_bare=target_inner,
+            dst_slash=destination_slash,
+            recursive=recursive,
+            wildcards=False,
+        )
+        for item in _in_global_storage_order(source_mount, items):
+            if item["kind"] == "mkdir":
+                _ensure_dir_chain(target_mount, item["dst"])
+            else:
+                self._write_adfs_copy_item(
+                    target_mount,
+                    str(item["dst"]),
+                    item,
+                    _write_copy_item,
+                )
+
     @staticmethod
     def _write_adfs_copy_item(
         target_mount,
@@ -4174,37 +4198,15 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
             report("Copied the complete disk catalogue", len(rows), len(rows))
             return
         if target.kind == "adfs" and source.kind == "adfs":
-            try:
-                from oaknut.disc.cli import (
-                    _collect_copy_items,
-                    _ensure_dir_chain,
-                    _in_global_storage_order,
-                    _write_copy_item,
-                )
-            except ImportError as exc:
-                raise DiskError("The Oaknut direct-copy API is unavailable.") from exc
-
             def copy_between_mounts(source_mount, target_mount) -> None:
-                copy_items = _collect_copy_items(
+                self._copy_between_adfs_mounts(
                     source_mount,
+                    target_mount,
                     "$",
-                    dst_mount=target_mount,
-                    dst_bare=target_directory,
-                    dst_slash=True,
+                    target_directory,
                     recursive=True,
-                    wildcards=False,
+                    destination_slash=True,
                 )
-                copy_items = _in_global_storage_order(source_mount, copy_items)
-                for item in copy_items:
-                    if item["kind"] == "mkdir":
-                        _ensure_dir_chain(target_mount, item["dst"])
-                    else:
-                        self._write_adfs_copy_item(
-                            target_mount,
-                            str(item["dst"]),
-                            item,
-                            _write_copy_item,
-                        )
 
             with self._locked_sessions(source, target):
                 if source.id == target.id:
