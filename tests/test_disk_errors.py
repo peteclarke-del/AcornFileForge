@@ -116,6 +116,27 @@ class DiskErrorTests(unittest.TestCase):
             self.assertFalse(listing["entries"][2]["catalogueBreak"])
             self.assertTrue(all(row["contentKind"] == "script" for row in listing["entries"]))
 
+    def test_catalogue_address_edits_survive_reopening_dfs_and_adfs_images(self) -> None:
+        for image_format in ("ssd", "adfs-l"):
+            with self.subTest(image_format=image_format), tempfile.TemporaryDirectory() as folder:
+                service = DiskService(folder)
+                session = service.create_blank(image_format, "ADDRESSES")
+                host = Path(folder) / "payload"
+                host.write_bytes(b"machine code")
+                service.put(session, None, "$.PROGRAM", host, "0x1900", "0x1900", None)
+
+                service.set_file_addresses(
+                    session, None, "$.PROGRAM", "&FFFF3000", "&FFFF8023",
+                )
+                reopened = service.create_from_stream(
+                    session.name, io.BytesIO(session.path.read_bytes()),
+                )
+                row = service.browse_directory(reopened, "$", None)["entries"][0]
+
+                self.assertEqual(int(row["load"]), 0xFFFF3000)
+                self.assertEqual(int(row["exec"]), 0xFFFF8023)
+                self.assertEqual(service.read_file(reopened, None, "$.PROGRAM"), b"machine code")
+
     def test_dfs_prefix_validation_rejects_hierarchical_paths(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             service = DiskService(folder)

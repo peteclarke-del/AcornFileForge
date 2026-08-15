@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import io
 import re
-import struct
 import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 
 from flask import Blueprint, jsonify, request
 
+from ..acorn_metadata import spark_metadata
 from ..archive_utils import validated_zip_members
 from ..catalog_service import CatalogueService, archive_members
 from ..disk_service import DiskError, DiskService
@@ -85,18 +85,6 @@ def _copy_disk_files(service: DiskService, source, target, target_slot, target_p
     return copied
 
 
-def _spark_metadata(extra: bytes) -> tuple[str | None, str | None, str | None]:
-    cursor = 0
-    while cursor + 4 <= len(extra):
-        field_id, length = struct.unpack_from("<HH", extra, cursor); cursor += 4
-        field = extra[cursor:cursor + length]; cursor += length
-        if field_id == 0x4341 and len(field) >= 16 and field[:4] == b"ARC0":
-            load, execute = struct.unpack_from("<II", field, 4)
-            filetype = f"{(load >> 8) & 0xFFF:03X}" if load & 0xFFF00000 == 0xFFF00000 else None
-            return hex(load), hex(execute), filetype
-    return None, None, None
-
-
 def _install_riscos_package(service: DiskService, target, target_path: str, content: bytes) -> int:
     if target.kind != "adfs":
         raise DiskError("RISC OS packages can only be installed into an ADFS or RISC OS image.")
@@ -121,7 +109,10 @@ def _install_riscos_package(service: DiskService, target, target_path: str, cont
                     service.mutate(target, None, ["mkdir", "-p", "{image}:" + parent])
                     made.add(parent.casefold())
             destination = f"{parent}.{parts[-1]}" if parent != "$" else f"$.{parts[-1]}"
-            load, execute, filetype = _spark_metadata(info.extra)
+            metadata = spark_metadata(info.extra) or {}
+            load = hex(metadata["load"]) if "load" in metadata else None
+            execute = hex(metadata["execute"]) if "execute" in metadata else None
+            filetype = f"{metadata['filetype']:03X}" if metadata.get("filetype") is not None else None
             with tempfile.NamedTemporaryFile(dir=service.work_dir, delete=False) as temporary:
                 temporary.write(archive.read(info)); host_path = Path(temporary.name)
             try:

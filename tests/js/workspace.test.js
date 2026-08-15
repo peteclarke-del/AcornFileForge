@@ -20,6 +20,7 @@ function test(name, callback) {
 const workspace = load("app/static/workspace.js", "AcornWorkspace");
 const visuals = load("app/static/file-visuals.js", "AcornFileVisuals");
 const imports = load("app/static/import-planning.js", "AcornImportPlanning");
+const metadata = load("app/static/acorn-metadata.js", "AcornMetadata");
 const help = load("app/static/help.js", "AcornHelp");
 const editorWorkspace = load("app/static/editor-workspace.js", "AcornEditorWorkspace");
 const identifiers = load("app/static/identifiers.js", "AcornIdentifiers");
@@ -65,6 +66,21 @@ test("host metadata parsing preserves Acorn load and execution addresses", () =>
     { ...imports.metadataFromHostFilename("PROGRAM,1900-8023") },
     { targetName: "PROGRAM", load: "0x1900", execute: "0x8023" },
   );
+});
+
+test("catalogue metadata presents every address as a full Acorn word", () => {
+  assert.deepEqual(
+    { ...metadata.entryAddresses({ load: "FFFF1900", exec: 0x8023 }) },
+    {
+      available: true,
+      load: 0xFFFF1900,
+      execute: 0x8023,
+      loadDisplay: "&FFFF1900",
+      executeDisplay: "&00008023",
+    },
+  );
+  assert.equal(metadata.entryAddresses({ name: "README" }).available, false);
+  assert.equal(metadata.isRiscOsEncoded({ load: 0xFFF12300, exec: 0 }), true);
 });
 
 test("help handbook is isolated behind an injected modal boundary", () => {

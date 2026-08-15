@@ -1,19 +1,19 @@
-# Oaknut classic FileCore E/F implementation patch
+# Oaknut classic FileCore E/F implementation history
 
-Acorn File Forge bundles a patch for Oaknut 12.13.1 which adds complete,
-writable support for the classic ADFS E and F floppy formats. These are the
+Oaknut ADFS 12.14.0 includes complete, writable support for the classic ADFS E
+and F floppy formats. Acorn File Forge pins that component and verifies its
+new-map classes while building the Docker image. These are the
 800 KiB and 1.6 MiB FileCore new-map formats normally encountered as
 Archimedes ADF images. They are not old-map ADFS images with larger geometry.
 
-The implementation is supplied in
+The original proposal is retained in
 [`patches/oaknut/0001-add-writable-filecore-e-f-support.patch`](patches/oaknut/0001-add-writable-filecore-e-f-support.patch).
-The Docker build applies the source-only form to the staged Oaknut installation
-and fails the build if its E/F modules cannot be imported. This keeps the
-application and the proposed upstream change on the same code path.
+It is useful for reviewing the implementation history or for maintainers of an
+older Oaknut 12.13.1 source tree. The Docker build no longer applies either
+patch because doing so would overwrite the released implementation.
 
-The adjacent `0001-add-writable-filecore-e-f-runtime.patch` contains the same
-library changes without Oaknut's source-tree tests. Docker applies that derived
-artifact because an installed wheel does not contain the upstream test path.
+The adjacent `0001-add-writable-filecore-e-f-runtime.patch` is the historical
+wheel-layout version of the same proposal. It is not part of the current build.
 
 ## Implemented behaviour
 
@@ -59,15 +59,15 @@ git apply /path/to/AcornFileForge/docs/patches/oaknut/0001-add-writable-filecore
 uv run pytest packages/oaknut-adfs/tests
 ```
 
-Acorn File Forge's Dockerfile applies the patch automatically. A source
-installation which uses an unpatched system Oaknut deliberately reports a
-specific E/F compatibility error instead of the misleading generic
-unrecognised-filesystem message.
+Acorn File Forge's Dockerfile installs `oaknut-adfs==12.14.0` and checks for the
+native E/F implementation. A source installation which uses an older system
+Oaknut deliberately reports a specific E/F compatibility error instead of the
+misleading generic unrecognised-filesystem message.
 
 ## Verification completed
 
-The Oaknut ADFS test suite passes all 508 tests with the patch applied. The
-additional tests cover generated and reopened E/F media, files, nested
+During the original proposal, the Oaknut ADFS test suite passed all 508 tests
+with the patch applied. The additional tests covered generated and reopened E/F media, files, nested
 directories, metadata, boot options and map validation. Manual checks also
 covered:
 
@@ -78,8 +78,8 @@ covered:
 
 The implementation follows the FileCore chapter of the RISC OS Programmer's
 Reference Manual. Linux's independently implemented ADFS boot-block checksum
-was used as a cross-check. Final acceptance should also catalogue and mutate
-test images in Arculator and RPCEmu before proposing the patch upstream.
+was used as a cross-check. Release validation should also catalogue and mutate
+test images in Arculator and RPCEmu.
 
 ## Maintainer review points
 

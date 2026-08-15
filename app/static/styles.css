@@ -350,6 +350,12 @@ dialog:has(.rom-workbench) { width: min(1160px, calc(100vw - 24px)); max-height:
 .file-list th:nth-child(2), .file-list td:nth-child(2) { width: 18%; }
 .file-list th:nth-child(3), .file-list td:nth-child(3) { width: 21%; }
 .file-list th:last-child, .file-list td:last-child { width: 13%; }
+.file-list.catalogue-file-list th:first-child, .file-list.catalogue-file-list td:first-child { width: 35%; }
+.file-list.catalogue-file-list th:nth-child(2), .file-list.catalogue-file-list td:nth-child(2) { width: 11%; }
+.file-list.catalogue-file-list th:nth-child(3), .file-list.catalogue-file-list td:nth-child(3) { width: 12%; }
+.file-list.catalogue-file-list th:nth-child(4), .file-list.catalogue-file-list td:nth-child(4),
+.file-list.catalogue-file-list th:nth-child(5), .file-list.catalogue-file-list td:nth-child(5) { width: 15%; }
+.file-list.catalogue-file-list th:last-child, .file-list.catalogue-file-list td:last-child { width: 12%; }
 .file-list.mmb-slot-list th:first-child, .file-list.mmb-slot-list td:first-child { width: 12%; padding-left: 17px; }
 .file-list.mmb-slot-list th:nth-child(2), .file-list.mmb-slot-list td:nth-child(2) { width: 48%; }
 .file-list.mmb-slot-list th:nth-child(3), .file-list.mmb-slot-list td:nth-child(3) { width: 24%; }
@@ -373,6 +379,9 @@ dialog:has(.rom-workbench) { width: min(1160px, calc(100vw - 24px)); max-height:
 .row-actions { display: flex; flex: 0 0 auto; gap: 3px; opacity: 0; transition: opacity .12s ease; }
 .file-row:hover .row-actions, .file-row:focus-within .row-actions, .file-row.selected .row-actions { opacity: 1; }
 .access-cell { white-space: nowrap; }
+.address-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.address-edit { max-width: 100%; border: 0; border-bottom: 1px dotted var(--muted); padding: 2px 0; overflow: hidden; background: transparent; color: inherit; cursor: pointer; font: inherit; text-overflow: ellipsis; white-space: nowrap; }
+.address-edit:hover, .address-edit:focus-visible { border-bottom-color: var(--blue); color: var(--blue); outline: none; }
 .access-actions { display: none; align-items: center; gap: 3px; }
 .file-row:hover .access-actions, .file-row:focus-within .access-actions, .file-row.selected .access-actions { display: inline-flex; }
 .file-row:hover .access-cell:has(.access-actions) .pill,
@@ -1160,6 +1169,12 @@ dialog:has(.bulk-copy-planner) form { padding: 22px; }
   .file-list.mmb-slot-list th:nth-child(2), .file-list.mmb-slot-list td:nth-child(2) { display: table-cell; width: 62%; }
   .file-list.mmb-slot-list th:nth-child(3), .file-list.mmb-slot-list td:nth-child(3) { display: none; }
   .file-list.mmb-slot-list th:last-child, .file-list.mmb-slot-list td:last-child { width: 20%; }
+  .file-list.catalogue-file-list th:nth-child(2), .file-list.catalogue-file-list td:nth-child(2),
+  .file-list.catalogue-file-list th:nth-child(3), .file-list.catalogue-file-list td:nth-child(3) { display: none; }
+  .file-list.catalogue-file-list th:first-child, .file-list.catalogue-file-list td:first-child { width: 40%; }
+  .file-list.catalogue-file-list th:nth-child(4), .file-list.catalogue-file-list td:nth-child(4),
+  .file-list.catalogue-file-list th:nth-child(5), .file-list.catalogue-file-list td:nth-child(5) { width: 23%; padding-inline: 5px; }
+  .file-list.catalogue-file-list th:last-child, .file-list.catalogue-file-list td:last-child { width: 14%; padding-inline: 4px; }
   .toolbar-hint { display: none; }
   .help-heading { display: block; }
   .help-heading p { margin-top: 8px; }
