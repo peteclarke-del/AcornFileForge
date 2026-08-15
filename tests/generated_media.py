@@ -22,6 +22,8 @@ def generated_media_matrix(service: DiskService) -> list[GeneratedMedium]:
         GeneratedMedium("adfs-s", service.create_blank("adfs-s", "TESTS")),
         GeneratedMedium("adfs-m", service.create_blank("adfs-m", "TESTM")),
         GeneratedMedium("adfs-l", service.create_blank("adfs-l", "TESTL")),
+        GeneratedMedium("adfs-e", service.create_blank("adfs-e", "TESTE")),
+        GeneratedMedium("adfs-f", service.create_blank("adfs-f", "TESTF")),
         GeneratedMedium("mmb", service.create_blank("mmb", "TESTMMB")),
         GeneratedMedium(
             "beebscsi",

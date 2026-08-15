@@ -17,6 +17,7 @@ that match the running frontend.
 | Inspect, compare, build, patch or program ROM and ROMFS images | [ROM image handbook](ROM-GUIDE.md) |
 | Build and validate a release | [Release checklist](RELEASE-CHECKLIST.md) |
 | Audit the emulator firmware shipped in the image | [Firmware notes](../firmware/README.md) |
+| Review or propose Oaknut FileCore new-map work | [Oaknut classic E/F implementation patch](OAKNUT-NEW-MAP-PROPOSAL.md) |
 | Complete a task while the application is open | Select **Help** in the application header |
 
 ## Capability map
@@ -25,7 +26,7 @@ that match the running frontend.
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | DFS SSD and DSD | Yes | Yes | Yes | Files and complete images | Catalogue, access and capacity checks | Image, metadata and README |
 | MMB banks | Yes, including empty slots | Yes | Yes | Slots, batches and open image panes | Duplicates, menus, PAGE, access and slot health | MMB and README |
-| ADFS S, M and L floppy images | Yes, including directories | Yes | Yes | Files, directories and images | Filesystem, launcher and compatibility checks | Image, metadata and README |
+| ADFS S, M, L, E and F floppy images | Yes, including directories | Yes | Yes | Files, directories and images | Filesystem, map, launcher and compatibility checks | Image, metadata and README |
 | BeebSCSI DAT and DSC | Yes, including deep trees | Yes | Yes | Files, trees and extracted disks | Geometry, map, directory and installed-software checks | DAT, DSC and README |
 | HDF, HDD, IMG, RAW and BIN FileCore media | Yes | Where the detected layout is writable | Selected layouts | Files and directories | Geometry, map and target-profile checks | Image and README |
 | UEF tapes | Yes, as a decoded hierarchy | Read-only source | No | Extracted files into writable media | Tape blocks, names and launch hints | Source export or converted media |
