@@ -38,7 +38,12 @@ const target = process.env.ACORN_FILE_FORGE_URL || "http://127.0.0.1:8666";
       const undone = await json(`/api/images/${id}/slots`);
       if (undone.slots[0].formatted) throw new Error("Undo did not restore the empty MMB slot");
 
-      const operationId = crypto.randomUUID();
+      // Exercise the same Web Crypto path used when the app is opened from a
+      // Pi's plain-HTTP LAN address, where randomUUID is not exposed but
+      // getRandomValues remains available.
+      const operationId = AcornIdentifiers.newUuid({
+        getRandomValues: crypto.getRandomValues.bind(crypto),
+      });
       await json(`/api/images/${id}/download/prepare`, body({ operationId }));
       const operation = await json(`/api/operations/${operationId}`);
       if (operation.operation.state !== "complete") throw new Error("Save preparation did not complete");

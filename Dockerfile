@@ -8,13 +8,17 @@ FROM python:3.12-slim-trixie AS python-deps
 # already built successfully. The final image remains free of compilers and
 # headers.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
+    build-essential patch \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 COPY requirements.txt .
+COPY docs/patches/oaknut/0001-add-writable-filecore-e-f-runtime.patch /tmp/oaknut-filecore.patch
 RUN python -m pip install --no-cache-dir --root=/python-install -r requirements.txt \
+    && patch --batch --forward --strip=4 \
+       --directory=/python-install/usr/local/lib/python3.12/site-packages \
+       < /tmp/oaknut-filecore.patch \
     && PYTHONPATH=/python-install/usr/local/lib/python3.12/site-packages \
-       python -c "from capstone import CS_ARCH_ARM, CS_ARCH_M68K, CS_ARCH_MOS65XX, Cs; Cs(CS_ARCH_MOS65XX, 0); print('Staged Capstone ARM, M68K and MOS65XX support is available')"
+       python -c "from capstone import CS_ARCH_ARM, CS_ARCH_M68K, CS_ARCH_MOS65XX, Cs; from oaknut.adfs.new_map import SingleZoneNewMap, MultiZoneNewMap; Cs(CS_ARCH_MOS65XX, 0); print('Staged Capstone and writable FileCore E/F support are available')"
 
 FROM debian:bookworm-slim AS hxc-builder
 

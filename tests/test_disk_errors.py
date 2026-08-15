@@ -319,6 +319,14 @@ class DiskErrorTests(unittest.TestCase):
             "risc-os",
         )
         self.assertEqual(
+            DiskService._blank_target_hardware("adfs-e", "bbc-master"),
+            "risc-os",
+        )
+        self.assertEqual(
+            DiskService._blank_target_hardware("adfs-f", "electron-plus3"),
+            "risc-os",
+        )
+        self.assertEqual(
             DiskService._blank_target_hardware("adfs-m", "electron-plus3"),
             "electron-plus3",
         )

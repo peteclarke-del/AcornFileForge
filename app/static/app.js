@@ -11,6 +11,7 @@ const {
   setSelection,
 } = window.AcornWorkspace;
 const { entryIcon, fileKindKey, FILE_ICONS, PANE_ICONS } = window.AcornFileVisuals;
+const { newUuid } = window.AcornIdentifiers;
 const {
   allocateFilesToDfsDisks,
   ignoredFolderFile,
@@ -434,6 +435,7 @@ const { guardedPaneAction, trackedPaneOperation } = window.AcornOperationUI.crea
   modal,
   setModalAbort,
   setModalProgress,
+  newUuid,
 });
 
 async function openHexEditor(index, initialOffset = 0, { host: requestedHost = null, onClose = null, afterSave = null, pageSize = 256 } = {}) {
@@ -5859,7 +5861,7 @@ async function showMmbBulkMenuEditor(index, menu, installedEntries) {
         row.querySelector("[data-clone]").onclick = () => {
           const offset = entries.findIndex(item => item._key === row.dataset.entryKey);
           const source = entries[offset];
-          entries.splice(offset + 1, 0, { ...source, title: `${source.title} 2`, _key: crypto.randomUUID() });
+          entries.splice(offset + 1, 0, { ...source, title: `${source.title} 2`, _key: newUuid() });
           render();
         };
         row.querySelector("[data-delete]").onclick = () => {
@@ -5909,7 +5911,7 @@ async function showMmbBulkMenuEditor(index, menu, installedEntries) {
         title: "New title", publisher: "", diskTitle: firstSlot.name,
         filename: spiMenu ? "!BOOT" : "", action: spiMenu ? "E" : "", page: spiMenu ? "1900" : "",
         _defaultPage: spiMenu ? "1900" : null,
-        _key: crypto.randomUUID()
+        _key: newUuid()
       });
       filter = "";
       modalContent.querySelector('[name="bulkMenuSearch"]').value = "";
@@ -6765,6 +6767,8 @@ function showCreateImageModal(preferredIndex = null, options = {}) {
       <option value="adfs-s">ADFS S floppy · 160 KiB</option>
       <option value="adfs-m">ADFS M floppy · 320 KiB</option>
       <option value="adfs-l">ADFS L floppy · 640 KiB</option>
+      <option value="adfs-e">FileCore ADFS E floppy · 800 KiB</option>
+      <option value="adfs-f">FileCore ADFS F floppy · 1.6 MiB</option>
       <option value="beebscsi">BeebSCSI ADFS HDD · DAT + DSC</option>
       <option value="adfs-hard">Archimedes / RISC OS virtual HDD · HDF</option>
       <option value="adfs-physical">Raw physical HDD image · RAW</option>
@@ -6870,6 +6874,8 @@ function showCreateImageModal(preferredIndex = null, options = {}) {
     "adfs-s": { size: "160 KiB", hardware: "auto", chooseHardware: true },
     "adfs-m": { size: "320 KiB", hardware: "auto", chooseHardware: true },
     "adfs-l": { size: "640 KiB", hardware: "auto", chooseHardware: true },
+    "adfs-e": { size: "800 KiB", hardware: "risc-os", chooseHardware: false },
+    "adfs-f": { size: "1.6 MiB", hardware: "risc-os", chooseHardware: false },
     "hfe-adfs-s": { size: "160 KiB", hardware: "auto", chooseHardware: true },
     "hfe-adfs-m": { size: "320 KiB", hardware: "auto", chooseHardware: true },
     "hfe-adfs-l": { size: "640 KiB", hardware: "auto", chooseHardware: true },
@@ -6902,7 +6908,7 @@ function showCreateImageModal(preferredIndex = null, options = {}) {
       ? "ROM filename and title"
       : format.value === "mmb"
         ? "Image title"
-        : ["adfs-s", "adfs-m", "adfs-l", "hfe-adfs-s", "hfe-adfs-m", "hfe-adfs-l", "beebscsi", "adfs-hard", "adfs-physical"].includes(format.value)
+        : ["adfs-s", "adfs-m", "adfs-l", "adfs-e", "adfs-f", "hfe-adfs-s", "hfe-adfs-m", "hfe-adfs-l", "beebscsi", "adfs-hard", "adfs-physical"].includes(format.value)
           ? "Volume title"
           : "Disk title";
     titleHelp.textContent = hasTitle
@@ -9076,7 +9082,7 @@ async function showJobsPanel() {
       const details = job?.details;
       if (!details?.request?.items) return toast("This operation has no resumable item plan.", true);
       const done = new Set([...(details.completed || []), ...(details.skipped || [])].map(item => Number(item.sourceSlot)));
-      const request = { ...details.request, items: details.request.items.filter(item => !done.has(Number(item.sourceSlot))), operationId: crypto.randomUUID() };
+      const request = { ...details.request, items: details.request.items.filter(item => !done.has(Number(item.sourceSlot))), operationId: newUuid() };
       if (!request.items.length) return toast("No pending items remain.");
       button.disabled = true;
       try {
