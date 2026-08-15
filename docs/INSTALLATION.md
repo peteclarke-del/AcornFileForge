@@ -1,10 +1,43 @@
-# Installing Acorn File Forge
+# Installing and operating Acorn File Forge
 
-Acorn File Forge is distributed as a Docker application. The same repository builds on 64-bit desktop Linux, Apple Silicon through Docker Desktop, x86-64 systems and Raspberry Pi Linux. CI builds `linux/amd64`, `linux/arm64` and 32-bit `linux/arm/v7` on every pull request.
+Acorn File Forge is distributed as a Docker application. The repository builds
+the web service, filesystem tools, conversion tools and managed emulators into
+one image. The supported build targets are `linux/amd64`, `linux/arm64` and
+32-bit `linux/arm/v7`.
 
-## Desktop installation
+Return to the [documentation index](README.md) for media, editor, ROM, firmware
+and release references.
 
-Install Git, Docker Engine and Docker Compose, then use the public HTTPS address:
+The normal installation exposes:
+
+- port `8666` for the application and API;
+- port `8668` for the managed emulator display over noVNC;
+- the named `acorn-file-forge-work` volume for private working sessions.
+
+Neither port should be exposed directly to an untrusted network. Acorn File
+Forge is designed for a local machine or trusted LAN. Use an authenticated,
+TLS-enabled reverse proxy before making it reachable from elsewhere.
+
+## Before installing
+
+You need:
+
+- Git;
+- Docker Engine or Docker Desktop;
+- Docker Compose v2, normally invoked as `docker compose`;
+- enough storage for compiler layers, the final image and the media you edit;
+- a current browser with JavaScript, `dialog`, IndexedDB and drag-and-drop
+  support.
+
+Large DAT, HDF and RAW images require additional temporary space while an image
+is uploaded, checkpointed and packaged. Allow space for the source image, its
+working copy and the finished ZIP at the same time. Raspberry Pi builds also
+need room for native HxC, Capstone, Elkulator and B-em compilation.
+
+## Install on desktop Linux, macOS or Windows
+
+Clone the public repository over HTTPS. HTTPS does not require a GitHub SSH
+key:
 
 ```bash
 git clone https://github.com/peteclarke-del/AcornFileForge.git
@@ -12,13 +45,27 @@ cd AcornFileForge
 docker compose up --build -d
 ```
 
-Open <http://localhost:8666>. Port `8668` carries the managed emulator display. Do not expose either port to an untrusted network without putting an authenticated reverse proxy in front of them.
+Open <http://localhost:8666> after the service reports healthy.
 
-The first build compiles the bundled disk conversion and emulator tools. Later builds reuse Docker's layer cache. View build output with `docker compose build --progress=plain` if a slow machine appears idle.
+![Acorn File Forge ready for its first image](images/getting-started.png)
 
-## Raspberry Pi installation
+On macOS and Windows, run the same commands in a terminal supported by Docker
+Desktop. Make sure Docker Desktop is running and has enough memory and disk
+allocated for a native multi-stage build. On Linux, the Docker daemon must be
+running and the current user must either belong to the `docker` group or use an
+approved equivalent setup.
 
-A 64-bit Raspberry Pi OS installation is recommended, although current 32-bit Raspberry Pi OS releases are also covered by the build matrix. Make sure the root filesystem has several gigabytes free for compiler layers, the final application image and working media.
+Systems which still use the old standalone Compose program can substitute
+`docker-compose` for `docker compose`. The repository file is named
+`docker-compose.yml` and both commands read it from the project directory.
+
+## Install on Raspberry Pi
+
+64-bit Raspberry Pi OS is recommended. Current 32-bit Raspberry Pi OS is also
+covered by the `linux/arm/v7` build gate. A Pi 4 or newer with sensible swap and
+several gigabytes of free storage provides the most practical first build.
+
+Install the host packages:
 
 ```bash
 sudo apt update
@@ -26,7 +73,15 @@ sudo apt install -y git docker.io docker-compose-plugin
 sudo usermod -aG docker "$USER"
 ```
 
-Log out and back in after changing group membership. Then clone and build as the normal user:
+Log out and back in after changing group membership, then verify Docker without
+`sudo`:
+
+```bash
+docker version
+docker compose version
+```
+
+Clone and build as the normal user:
 
 ```bash
 git clone https://github.com/peteclarke-del/AcornFileForge.git
@@ -35,19 +90,33 @@ docker compose build --pull --progress=plain
 docker compose up -d
 ```
 
-Open `http://<pi-address>:8666` from a browser on the same trusted network. The multi-stage Dockerfile compiles Capstone when the architecture does not have a suitable binary package. It installs the resulting native module into a staged Python tree so the runtime does not repeat wheel-tag compatibility checks after a successful native build. It also compiles HxC, Elkulator and B-em. A first Pi build can therefore take a while, but it must keep producing build output. The compiler and headers remain in builder layers and are not copied into the runtime image.
+Open `http://<pi-address>:8666` from a browser on the same trusted network.
 
-## Updates and retained work
+### What to expect from the first Pi build
 
-```bash
-git pull --ff-only
-docker compose build
-docker compose up -d
-```
+The first build is deliberately substantial. The Dockerfile compiles native
+components in architecture-matched builder stages and copies only the runtime
+results into the final image. On a Pi this can take many minutes. Plain progress
+output should continue to show package installation or compilation even when a
+single build step is slow.
 
-The named `acorn-file-forge-work` volume retains browser-owned working sessions across container replacement. `docker compose down` leaves it intact. `docker compose down -v` deletes it and must only be used when every retained session can be discarded.
+The build performs the following platform-sensitive work:
 
-## Checks
+1. Builds a native Capstone installation when no suitable wheel can be used.
+2. Builds the HxC command-line converter.
+3. Builds Elkulator and B-em runtime components.
+4. Installs Trixie package names appropriate to the target architecture,
+   including `liballegro4.4t64`.
+5. Verifies that Capstone exposes ARM, M68K and MOS 65xx support.
+6. Reconstructs and checks the bundled RH Plus support ROM.
+
+Do not cancel a build merely because another independent builder is still
+running. BuildKit may show a stage as `CANCELED` after a different stage fails;
+the first `ERROR` block is the useful diagnosis.
+
+## First launch
+
+Check the service and API:
 
 ```bash
 docker compose ps
@@ -55,13 +124,209 @@ curl http://localhost:8666/api/health
 docker compose logs --tail=100 acorn-file-forge
 ```
 
-A healthy API response contains `{"engine":"oaknut","status":"ok","version":"1.0.0-rc.1"}`. If the browser page is stale after an update, refresh it once. Open panes are restored from browser-local workspace state and the server-side session remains tied to that browser identity.
+A healthy response contains `"engine":"oaknut"`, `"status":"ok"` and the
+version recorded in the repository `VERSION` file. Do not use a version copied
+from this guide as the health criterion because the guide remains useful across
+release candidates.
 
-## Common installation mistakes
+At first launch the page contains one empty pane. Choose **Open image**,
+**Create new image** or **Recover previous session**. The application stores a
+random browser identity locally and uses it to isolate recoverable sessions.
+Another browser profile cannot browse those sessions merely because it reaches
+the same server.
 
-- `git@github.com: Permission denied (publickey)` means SSH credentials are not configured. Use the HTTPS clone command above.
-- `no configuration file provided` usually means the shell is not inside the cloned `AcornFileForge` directory.
-- A historic `make: command not found` while building Capstone means an old Dockerfile is being used. Pull the current branch and rebuild.
-- `Package liballegro4.4 has no installation candidate` means the checkout predates the Debian Trixie package-name correction. Pull the current branch and rebuild with `--pull`.
-- `No matching distribution found for capstone` after a successful wheel build means the checkout still transports architecture-tagged wheels between build stages. Pull the current branch and rebuild; the current image copies a verified staged installation instead.
-- An out-of-memory failure on a small Pi is a host resource problem. Stop unrelated containers, enable sensible swap and rebuild with plain progress output.
+## Configuration
+
+The Compose service defines these settings:
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `ACORN_FILE_FORGE_WORK_DIR` | `/app/work` | Working-session and job storage inside the container |
+| `ACORN_MAX_UPLOAD_GIB` | `8` | Maximum accepted browser upload size in GiB |
+| Application port | `8666` | Web UI and JSON API |
+| Emulator display port | `8668` | noVNC display for managed emulators |
+
+To change a published host port, edit only the left side of the Compose mapping.
+For example, `127.0.0.1:9866:8666` keeps the service local and opens it at
+`http://localhost:9866`. The application continues to listen on `8666` inside
+the container.
+
+Increasing the upload limit also increases the maximum temporary storage an
+operation may consume. It does not enlarge a filesystem or bypass an image
+format's own capacity rules.
+
+## Working sessions, browser identity and backups
+
+Files selected in the browser are uploaded into private working sessions. The
+source files on the host are never modified in place. The named Docker volume
+retains those sessions across ordinary container replacement:
+
+```bash
+docker compose down
+docker compose up -d
+```
+
+`docker compose down -v` deletes the volume. Use it only when every recoverable
+working image can be discarded.
+
+For an operational backup, save important images through the UI first. A saved
+timestamped ZIP is the portable, documented result. To make an additional
+administrator backup of the Docker volume, stop writes and use the normal
+volume-backup procedure for the host. Restoring only browser local storage does
+not restore server image bytes, and restoring only the volume does not recreate
+the original browser identity.
+
+Normal browser refresh restores open pane references, current directories and
+the workspace layout. Deliberately closing a pane removes it from automatic
+restore while its server-side recovery copy remains available until cleared.
+
+## Updating
+
+Save or checkpoint important work, then update the checked-out branch:
+
+```bash
+git pull --ff-only
+docker compose build --pull
+docker compose up -d
+```
+
+`docker compose up -d` replaces the application container but reuses the named
+work volume. Refresh the browser once after the new health endpoint responds.
+If static assets appear mixed between versions, perform a hard refresh rather
+than clearing the work volume.
+
+Review changes before updating a production-like local installation. Media
+editing code can legitimately tighten validation when an unsafe format variant
+is discovered.
+
+## Stopping, starting and removing the service
+
+```bash
+# Stop and retain the container and work volume
+docker compose stop
+
+# Start it again
+docker compose start
+
+# Remove the container and network, retaining the work volume
+docker compose down
+
+# Remove the container, network and every retained working session
+docker compose down -v
+```
+
+Removing the Git checkout does not remove the named Docker volume. Removing the
+volume does not remove timestamped ZIPs already downloaded through the browser.
+
+## Logs and diagnostics
+
+Useful commands are:
+
+```bash
+docker compose ps
+docker compose logs --tail=200 acorn-file-forge
+docker compose logs -f acorn-file-forge
+docker image ls acorn-file-forge
+docker volume inspect acorn-file-forge-work
+```
+
+For a reproducible build diagnosis:
+
+```bash
+git status --short
+git rev-parse HEAD
+docker compose build --pull --no-cache --progress=plain
+```
+
+Keep the full first error block. Later `CANCELED` lines usually describe stages
+BuildKit stopped after that error and are not independent failures.
+
+## Common installation and build failures
+
+### `Permission denied (publickey)` while cloning
+
+The `git@github.com:...` address uses SSH authentication. Use the public HTTPS
+command instead:
+
+```bash
+git clone https://github.com/peteclarke-del/AcornFileForge.git
+```
+
+### `no configuration file provided: not found`
+
+The shell is not in the cloned project directory. Run `cd AcornFileForge`, then
+confirm `docker-compose.yml` is present before starting the build.
+
+### Docker socket permission denied
+
+Log out and back in after adding the account to the `docker` group. Verify with
+`docker version`. Avoid changing Docker socket ownership as a shortcut.
+
+### `make: command not found` while building Capstone
+
+The checkout predates the native dependency builder. Pull the current branch
+and rebuild. The current builder installs its compiler and `make` before
+building Capstone.
+
+### `liballegro4.4 has no installation candidate`
+
+The checkout predates Debian Trixie's `liballegro4.4t64` correction. Pull the
+current branch and rebuild with `--pull`.
+
+### `No matching distribution found for capstone==5.0.9`
+
+Older builds moved an architecture-tagged wheel between incompatible Python
+stages. The current Dockerfile copies a verified staged native installation.
+Pull the current branch and rebuild. If the message remains, include the
+`python-deps` stage above it in the report.
+
+### Build appears to stop for a long time
+
+Use `docker compose build --progress=plain`. HxC, Capstone and emulator builds
+can be slow on a Pi. A healthy build continues to print compiler output or
+eventually advances. Check free disk, available memory, swap and host
+temperature before assuming a software deadlock.
+
+### Out of memory or a compiler killed with signal 9
+
+Stop unrelated containers, provide sensible swap and rebuild. Do not keep
+restarting the same build while the host is under memory pressure because that
+also consumes disk with incomplete cache layers.
+
+### Port 8666 or 8668 is already in use
+
+Stop the conflicting service or change the host side of the mapping in
+`docker-compose.yml`. Keep container ports `8666` and `8668` unchanged.
+
+### Application starts but an emulator window is blank
+
+Check port `8668`, browser pop-up policy and the application log. Managed
+emulators run through a virtual display inside the container. Firmware is
+audited before compatible Archimedes actions are enabled. See the
+[firmware notes](../firmware/README.md).
+
+### Browser cannot recover a session
+
+Confirm the same browser profile is being used, the named volume still exists
+and the application origin has not changed from `localhost` to an IP address or
+different port. Browser identity and server-side session bytes are both needed.
+
+## Security and privacy notes
+
+- The application does not require a cloud account.
+- Online Library searches contact enabled public catalogue sites through the
+  server when the user starts a search.
+- Uploaded images remain in the local Docker work volume unless the operator
+  has separately configured remote storage or backups.
+- Managed emulator ports do not provide authentication.
+- Treat disk images and archives as untrusted input. Acorn File Forge validates
+  formats and filenames, but operators should still keep the service local and
+  retain known-good originals.
+- Do not redistribute firmware, commercial images or downloaded software
+  without the appropriate permission.
+
+## Developer installation checks
+
+After modifying build or dependency files, test at least one clean native build
+and rely on CI for all three supported Linux architectures. The full release
+gate is in [RELEASE-CHECKLIST.md](RELEASE-CHECKLIST.md).
