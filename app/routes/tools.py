@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import hashlib
 import os
 import shlex
 import subprocess
@@ -25,6 +24,7 @@ from ..analysis_service import (
     menu_test_report,
     preflight_report,
 )
+from ..checksum import sha256_bytes
 from ..disk_service import DiskError, DiskService
 from ..emulator_config import configured_emulator, emulator_command, emulator_status
 from ..hardware_profiles import normalise_hardware_profile
@@ -678,7 +678,7 @@ def create_tools_blueprint(
             raise DiskError("Assembly source is limited to 4 MiB per operation.")
         current = service.read_file(session, slot, path, side)
         expected = str(data.get("sha256") or "")
-        if hashlib.sha256(current).hexdigest() != expected:
+        if sha256_bytes(current) != expected:
             raise DiskError("The binary changed after the disassembly opened. Reopen it before assembling.")
         with tempfile.TemporaryDirectory(dir=service.work_dir, prefix="assemble-file-") as folder:
             source_path = Path(folder) / "source.asm"
@@ -707,7 +707,7 @@ def create_tools_blueprint(
             image=image,
             result={
                 "size": len(assembled), "changedBytes": changed,
-                "sha256": hashlib.sha256(assembled).hexdigest(),
+                "sha256": sha256_bytes(assembled),
                 "stdout": completed.stdout[-20000:], "stderr": completed.stderr[-20000:],
             },
         )

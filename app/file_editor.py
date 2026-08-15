@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import tempfile
@@ -8,7 +7,7 @@ from difflib import unified_diff
 from bisect import bisect_right
 from pathlib import Path
 
-from .checksum import sha256_path
+from .checksum import sha256_bytes, sha256_path
 from .content_kind import (
     analyse_content,
     format_basic_listing as _format_basic_listing,
@@ -72,7 +71,7 @@ def inspect_file_data(
 ) -> dict:
     """Inspect already-extracted bytes with the normal content-aware editor rules."""
     size = len(data) if size is None else int(size)
-    digest = digest or hashlib.sha256(data).hexdigest()
+    digest = digest or sha256_bytes(data)
     truncated = size > len(data)
     if is_uef_container(data):
         return {
@@ -471,7 +470,7 @@ def disassemble_file_data(
 ) -> dict:
     """Disassemble already-extracted bytes using the pane's hardware profile."""
     size = len(data) if size is None else int(size)
-    digest = digest or hashlib.sha256(data).hexdigest()
+    digest = digest or sha256_bytes(data)
     if not data:
         raise DiskError("An empty file has no machine code to disassemble.")
     architecture, reason = _architecture(session, architecture)
@@ -772,7 +771,7 @@ def _find_row(service, session, path, slot, side):
 
 def replace_file_bytes(service, session, path, slot, side, content: bytes, expected_sha256: str) -> dict:
     current = service.read_file(session, slot, path, side)
-    if hashlib.sha256(current).hexdigest() != expected_sha256:
+    if sha256_bytes(current) != expected_sha256:
         raise DiskError("The file changed after the editor opened it. Reopen the file before saving.")
     row = _find_row(service, session, path, slot, side)
     with tempfile.NamedTemporaryFile(dir=service.work_dir, prefix="file-edit-", delete=False) as temporary:
@@ -810,7 +809,7 @@ def update_file_properties(
 ) -> dict:
     """Rewrite catalogue metadata without changing the file's bytes."""
     content = service.read_file(session, slot, path, side)
-    if hashlib.sha256(content).hexdigest() != expected_sha256:
+    if sha256_bytes(content) != expected_sha256:
         raise DiskError("The file changed after the editor opened it. Reopen the file before changing its properties.")
     _find_row(service, session, path, slot, side)
     with tempfile.NamedTemporaryFile(dir=service.work_dir, prefix="file-properties-", delete=False) as temporary:
@@ -883,7 +882,7 @@ def save_editor_text_as(
 ) -> tuple[dict, str]:
     """Create an edited sibling while retaining the original file's Acorn metadata."""
     current = service.read_file(session, slot, path, side)
-    if hashlib.sha256(current).hexdigest() != expected_sha256:
+    if sha256_bytes(current) != expected_sha256:
         raise DiskError("The file changed after the editor opened it. Reopen the file before saving.")
     leaf = service.validate_leaf_name(session, new_name, slot)
     parent, separator, _old_leaf = path.rpartition(".")
@@ -930,7 +929,7 @@ def data_range(data: bytes, target_name: str, offset: int, length: int, *, read_
     offset = max(0, min(offset, max(0, len(data) - 1))) if data else 0
     chunk = data[offset:offset + length]
     return {"offset": offset, "length": len(chunk), "size": len(data), "data": chunk.hex().upper(),
-            "version": hashlib.sha256(data).hexdigest(), "target": "file", "targetName": target_name,
+            "version": sha256_bytes(data), "target": "file", "targetName": target_name,
             "readOnly": bool(read_only)}
 
 
@@ -955,14 +954,14 @@ def search_data(data: bytes, query, mode, start, direction, wrap) -> dict:
         if wrapped:
             found = data.rfind(pattern, min(len(data), max(0, start + 1)))
     return {"offset": found if found >= 0 else None, "wrapped": bool(wrapped and found >= 0),
-            "version": hashlib.sha256(data).hexdigest()}
+            "version": sha256_bytes(data)}
 
 
 def write_file_range(service, session, path, slot, side, expected_version, changes, confirmed):
     if not confirmed:
         raise DiskError("Raw file writes require explicit dangerous-change confirmation.")
     data = service.read_file(session, slot, path, side)
-    if hashlib.sha256(data).hexdigest() != expected_version:
+    if sha256_bytes(data) != expected_version:
         raise DiskError("The file changed after the hex editor loaded it. Reopen it before writing.")
     result = bytearray(data)
     decoded = _decode_changes(changes, len(result))
@@ -970,4 +969,4 @@ def write_file_range(service, session, path, slot, side, expected_version, chang
         result[offset:offset + len(replacement)] = replacement
     image = replace_file_bytes(service, session, path, slot, side, bytes(result), expected_version)
     return {"written": sum(len(value) for _offset, value in decoded),
-            "version": hashlib.sha256(result).hexdigest(), "image": image}
+            "version": sha256_bytes(result), "image": image}

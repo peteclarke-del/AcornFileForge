@@ -13,6 +13,11 @@ _CHUNK_SIZE = 8 * 1024 * 1024
 _ZERO_CHUNK = bytes(_CHUNK_SIZE)
 
 
+def sha256_bytes(data: bytes) -> str:
+    """Return the SHA-256 digest for an in-memory payload."""
+    return hashlib.sha256(data).hexdigest()
+
+
 def _update_zeros(digest, length: int, advanced: Callable[[int], None] | None = None) -> None:
     while length:
         size = min(length, _CHUNK_SIZE)

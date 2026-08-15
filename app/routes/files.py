@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import hashlib
 import io
 import tempfile
 import zipfile
@@ -12,6 +11,7 @@ from flask import Blueprint, jsonify, request, send_file
 from .effects import image_mutation, request_effect
 
 from ..acorn_metadata import format_inf
+from ..checksum import sha256_bytes
 from ..archive_utils import open_single_upload_image
 from ..archive_browser import (
     ArchiveError,
@@ -274,7 +274,7 @@ def create_files_blueprint(
         if not member:
             raise ArchiveError("Choose an archive member to inspect.")
         content, metadata = read_archive_member_details(data, filename, member)
-        digest = hashlib.sha256(content).hexdigest()
+        digest = sha256_bytes(content)
         return session, member, content, metadata, digest
 
     @blueprint.get("/api/images/<image_id>/archive/tree")
@@ -315,7 +315,7 @@ def create_files_blueprint(
         return jsonify(inspect_file_data(
             content[:MAX_DISASSEMBLY_FILE], metadata, member, read_only=not writable,
             size=len(content), digest=digest,
-        ) | {"archiveSha256": hashlib.sha256(archive_data).hexdigest(), "archiveEditable": writable})
+        ) | {"archiveSha256": sha256_bytes(archive_data), "archiveEditable": writable})
 
     @blueprint.put("/api/images/<image_id>/archive/inspect")
     @image_mutation("editing a file inside an archive")
@@ -330,13 +330,13 @@ def create_files_blueprint(
         side = optional_int(body.get("side"))
         filename = str(body.get("name") or path.rsplit(".", 1)[-1])
         archive_data = service.read_file(session, slot, path, side)
-        archive_digest = hashlib.sha256(archive_data).hexdigest()
+        archive_digest = sha256_bytes(archive_data)
         if archive_digest != str(body.get("archiveSha256") or ""):
             raise ArchiveError("The archive changed after the member opened. Reopen it before saving.")
         if session.hfe_read_only or session.kind == "tape" or not archive_member_editable(archive_data, filename):
             raise ArchiveError("This container cannot be rebuilt safely in the current image.")
         original, metadata = read_archive_member_details(archive_data, filename, member)
-        if hashlib.sha256(original).hexdigest() != str(body.get("sha256") or ""):
+        if sha256_bytes(original) != str(body.get("sha256") or ""):
             raise ArchiveError("The archive member changed after it opened. Reopen it before saving.")
         inspection = inspect_file_data(original, metadata, member, read_only=False)
         if not inspection["editable"]:
@@ -348,7 +348,7 @@ def create_files_blueprint(
         image = replace_file_bytes(service, session, path, slot, side, rebuilt, archive_digest)
         saved, saved_metadata = read_archive_member_details(rebuilt, filename, member)
         result = inspect_file_data(saved, saved_metadata, member, read_only=False)
-        result.update(archiveSha256=hashlib.sha256(rebuilt).hexdigest(), archiveEditable=True)
+        result.update(archiveSha256=sha256_bytes(rebuilt), archiveEditable=True)
         return jsonify(image=image, inspection=result)
 
     @blueprint.get("/api/images/<image_id>/archive/disassembly")
