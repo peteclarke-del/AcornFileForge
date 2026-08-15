@@ -80,7 +80,8 @@ test("catalogue metadata presents every address as a full Acorn word", () => {
     },
   );
   assert.equal(metadata.entryAddresses({ name: "README" }).available, false);
-  assert.equal(metadata.isRiscOsEncoded({ load: 0xFFF12300, exec: 0 }), true);
+  assert.equal(metadata.isRiscOsEncoded({ load: 0xFFF12300, exec: 0 }), false);
+  assert.equal(metadata.isRiscOsEncoded({ load: 0xFFF12300, exec: 0 }, true), true);
 });
 
 test("help handbook is isolated behind an injected modal boundary", () => {

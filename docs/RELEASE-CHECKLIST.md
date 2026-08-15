@@ -131,6 +131,12 @@ Manually verify at least one representative image for each changed family.
 For a broad release, cover all of these:
 
 - [ ] DFS catalogue groups, metadata, file operations and image creation.
+- [ ] File-level Load and Execute columns show full eight-digit words on DFS,
+      MMB disk, ADFS and ROMFS views. Packed DFS addresses are conventionally
+      sign-extended rather than displayed as misleading short positive values.
+- [ ] Address editing changes both catalogue words without changing file bytes,
+      creates an undo point and presents the general and FileCore-specific
+      safety warnings where applicable.
 - [ ] MMB empty slots, multi-selection, slot drag, Cut/Copy/Paste, access,
       duplicate detection, menu edit and individual slot download.
 - [ ] ADFS directory traversal, same-image move, installed-disk audit, global
@@ -206,6 +212,8 @@ Every tested **Save image** download must contain:
 - [ ] a timestamped, collision-resistant ZIP name;
 - [ ] the image under its intended user-facing name;
 - [ ] DSC, INF or other partner metadata files where applicable;
+- [ ] individual file exports include a matching `.inf` with the real Acorn
+      path, load word, execute word, length and lock state;
 - [ ] generated technical `README.md` with version, profile, catalogue,
       warnings, checksums and usage notes;
 - [ ] `ROM-project.json` for ROM projects;
