@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
-import hashlib
 from pathlib import Path
 
 from flask import Blueprint, Response, jsonify, request
 
+from ..checksum import sha256_bytes
 from ..disk_service import DiskError, DiskService
 from ..emulator_config import emulator_status
 from ..rom_workbench import (
@@ -73,7 +73,7 @@ def create_rom_tools_blueprint(service: DiskService, root: Path) -> Blueprint:
     def rom_save_identity(image_id):
         session, data = session_bytes(image_id)
         document = payload()
-        record = {"sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
+        record = {"sha256": sha256_bytes(data), "size": len(data)}
         for key, limit in {"title": 160, "version": 80, "publisher": 160,
                            "platform": 120, "notes": 2000}.items():
             record[key] = str(document.get(key) or "")[:limit]

@@ -47,10 +47,6 @@ def decode_disc_json(output: str) -> dict:
         raise DiskError("The disk engine returned an unreadable response.") from exc
 
 
-def run_disc_json(args: list[str]) -> dict:
-    return decode_disc_json(run_disc(args))
-
-
 def run_hxcfe(args: list[str]) -> str:
     try:
         result = subprocess.run(

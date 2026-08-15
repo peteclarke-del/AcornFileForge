@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import csv
-import hashlib
 import io
 import re
 from collections import defaultdict, deque
 
-from .checksum import sha256_path
+from .checksum import sha256_bytes, sha256_path
 from .dfs_compat import dfs_catalogue_files, infer_dfs_launch_page
 from .disk_service import MMB_HEADER_SIZE, MMB_SLOT_SIZE, DiskError
 from .menu_interpreter import decode_basic
@@ -21,10 +20,6 @@ COMMAND_RE = re.compile(
     r"(?:\*\s*)?(CHAIN|EXEC|RUN|LOAD|DIR|LIB)\s*[\"']?([^\"'\s:\r]+)",
     re.IGNORECASE,
 )
-
-
-def _sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 def _join(parent: str, name: str) -> str:
@@ -179,7 +174,7 @@ def _mmb_manifest(service, session) -> dict:
             image.seek(MMB_HEADER_SIZE + slot["slot"] * MMB_SLOT_SIZE)
             data = image.read(MMB_SLOT_SIZE)
             files = dfs_catalogue_files(data)
-            record["sha256"] = _sha256(data)
+            record["sha256"] = sha256_bytes(data)
             record["fileCount"] = len(files)
             rows.append(record)
             for item in files:
@@ -192,7 +187,7 @@ def _mmb_manifest(service, session) -> dict:
                     "size": item.length,
                     "load": f"{item.load:06X}",
                     "execute": f"{item.execute:06X}",
-                    "sha256": _sha256(payload),
+                    "sha256": sha256_bytes(payload),
                 })
     menus = []
     for menu in installed_mmb_menus(service, session):
