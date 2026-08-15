@@ -75,6 +75,30 @@ class FileRouteTests(unittest.TestCase):
             None,
         )
 
+    def test_catalogue_address_change_updates_both_words_together(self):
+        self.service.set_file_addresses.return_value = {
+            "load": 0xFFFF1900,
+            "execute": 0xFFFF8023,
+            "access": 8,
+            "length": 2048,
+        }
+        response = self.client.post(
+            "/api/images/test/addresses",
+            json={
+                "slot": 3,
+                "side": 2,
+                "path": "R.PROGRAM",
+                "load": "&FFFF1900",
+                "execute": "&FFFF8023",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.service.set_file_addresses.assert_called_once_with(
+            self.session, 3, "R.PROGRAM", "&FFFF1900", "&FFFF8023", 2,
+        )
+        self.assertEqual(response.get_json()["metadata"]["execute"], 0xFFFF8023)
+
     def test_mkdir_validates_and_creates_an_adfs_directory(self):
         self.session.kind = "adfs"
 
@@ -152,6 +176,24 @@ class FileRouteTests(unittest.TestCase):
             self.assertEqual(
                 archive.read("DEMO.inf"),
                 b"$.DEMO FFFF1900 FFFF8023 00000007 Locked\n",
+            )
+        response.close()
+
+    def test_inf_sidecar_retains_the_actual_dfs_catalogue_prefix(self):
+        exported = Path(self.temporary.name) / "exported-prefix"
+        exported.write_bytes(b"payload")
+        self.service.export_file.return_value = exported
+        self.service.file_metadata.return_value = {
+            "load": 0x1900, "execute": 0x8023, "access": 0, "length": 7,
+        }
+
+        response = self.client.get(
+            "/api/images/test/file?path=R.DEMO&bundle=metadata"
+        )
+        with zipfile.ZipFile(io.BytesIO(response.data)) as archive:
+            self.assertEqual(
+                archive.read("DEMO.inf"),
+                b"R.DEMO 00001900 00008023 00000007\n",
             )
         response.close()
 

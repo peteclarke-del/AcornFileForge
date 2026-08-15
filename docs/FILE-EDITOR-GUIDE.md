@@ -40,6 +40,12 @@ same dispatch is available through **Analyse > Open selected file**. The arrow
 beside a filename downloads the original file and applicable Acorn metadata
 without opening an editor.
 
+The pane's **Load** and **Execute** columns describe the catalogue entry rather
+than the editor's interpretation of the bytes. Select either value to review
+and, on writable media, change both words through the guarded metadata dialog.
+See the [catalogue metadata guide](FILE-METADATA-GUIDE.md) before changing an
+entry whose original values are unknown.
+
 Content detection uses evidence in this order:
 
 1. an authoritative Acorn filetype or recognised filename;

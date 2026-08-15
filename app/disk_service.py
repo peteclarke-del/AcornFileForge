@@ -14,6 +14,7 @@ from typing import BinaryIO, Callable
 
 from .adfs_install_service import ADFSInstallMixin
 from .adfs_format import probe_new_map_adfs
+from .acorn_metadata import canonical_dfs_address, parse_address as parse_catalogue_address
 from .beebscsi_geometry import (
     MAX_SIZE as BEEBSCSI_MAX_SIZE,
     OLD_DIRECTORY_ENTRY_OFFSET as ADFS_OLD_DIRECTORY_ENTRY_OFFSET,
@@ -1913,6 +1914,10 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
                     f"{len(listing['entries'])} files in {group_count} DFS catalogue "
                     f"group{'s' if group_count != 1 else ''}"
                 )
+            for row in listing["entries"]:
+                if row.get("type") not in {"dir", "directory"}:
+                    row["load"] = canonical_dfs_address(row.get("load"))
+                    row["exec"] = canonical_dfs_address(row.get("exec"))
         listing["capacity"] = self.capacity(session, slot)
         return listing
 
@@ -2176,6 +2181,8 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
                             "prefix": prefix,
                             "path": path,
                         })
+                        files[-1]["load"] = canonical_dfs_address(load)
+                        files[-1]["exec"] = canonical_dfs_address(execute)
                         content_kind = self._listing_content_kind(
                             session, slot, side, path, files[-1],
                             lambda path=path: mount.read_bytes(path),
@@ -2442,6 +2449,80 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
                     )
             self._mark_mutated(session, slot)
         return targets
+
+    def set_file_addresses(
+        self,
+        session: ImageSession,
+        slot: int | None,
+        path: str,
+        load: str,
+        execute: str,
+        side: int | None = None,
+    ) -> dict:
+        """Update both catalogue address words without rewriting file data."""
+        if session.kind in {"rom", "tape"} or (session.kind == "mmb" and slot is None):
+            raise DiskError("This view does not contain editable file catalogue addresses.")
+        self.require_writable_geometry(session)
+        try:
+            from oaknut.file import AcornMeta
+            from oaknut.filesystem import AcornMetadata
+        except ImportError as exc:
+            raise DiskError("The Oaknut catalogue metadata API is unavailable.") from exc
+        try:
+            parsed_load = parse_catalogue_address(load)
+            parsed_execute = parse_catalogue_address(execute)
+        except (TypeError, ValueError) as exc:
+            raise DiskError(
+                "Load and execution addresses must each contain one to eight hexadecimal digits."
+            ) from exc
+        if not 0 <= parsed_load <= 0xFFFFFFFF or not 0 <= parsed_execute <= 0xFFFFFFFF:
+            raise DiskError("Catalogue addresses must fit in an unsigned 32-bit word.")
+
+        def update(mount, target: str) -> dict:
+            if not isinstance(mount, AcornMetadata):
+                raise DiskError("This filesystem does not carry Acorn load and execution addresses.")
+            if not mount.exists(target):
+                raise DiskError(f"“{target}” no longer exists.")
+            stat = mount.stat(target)
+            if stat.is_dir:
+                raise DiskError("Directories do not have editable load and execution addresses.")
+            current = mount.acorn_meta(target)
+            mount.set_acorn_meta(
+                target,
+                AcornMeta(
+                    load_address=parsed_load,
+                    exec_address=parsed_execute,
+                    access=current.access,
+                ),
+            )
+            return {
+                "load": parsed_load,
+                "execute": parsed_execute,
+                "access": int(current.access or 0),
+                "length": int(stat.length or 0),
+            }
+
+        if session.kind == "romfs":
+            with self.romfs_mount(session, writable=True) as mount:
+                metadata = update(mount, path)
+            self._mark_mutated(session, None)
+            return metadata
+
+        try:
+            from oaknut.disc.mount import resolve_mount
+        except ImportError as exc:
+            raise DiskError("The Oaknut filesystem mount API is unavailable.") from exc
+        with session.lock:
+            if session.kind == "adfs" and slot is None:
+                with self.adfs_mount(session) as mount:
+                    metadata = update(mount, path)
+            else:
+                disk_path = self.resolve(session, slot)
+                root = self.compound(disk_path, self.inner_for(session, "$", side))
+                with resolve_mount(root, writable=True) as resolved:
+                    metadata = update(resolved.mount, self.inner_for(session, path, side))
+            self._mark_mutated(session, slot)
+        return metadata
 
     def put(
         self,
@@ -4214,9 +4295,14 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
             target = self.inner_for(session, inner, side)
             stat = resolved.mount.stat(target)
             metadata = resolved.mount.acorn_meta(target)
+            load = int(metadata.load_address or 0)
+            execute = int(metadata.exec_address or 0)
+            if session.kind in {"dfs", "mmb"}:
+                load = canonical_dfs_address(load)
+                execute = canonical_dfs_address(execute)
             return {
-                "load": int(metadata.load_address or 0),
-                "execute": int(metadata.exec_address or 0),
+                "load": load,
+                "execute": execute,
                 "access": int(metadata.access or 0),
                 "length": int(stat.length or 0),
             }

@@ -55,6 +55,16 @@ class RomfsTests(unittest.TestCase):
         self.assertEqual(row["exec"], 0x1900)
         self.assertEqual(self.service.read_file(session, None, "PROGRAM"), b"DATA")
 
+        metadata = self.service.set_file_addresses(
+            session, None, "PROGRAM", "&FFFF3000", "0xFFFF8023",
+        )
+        self.assertEqual(metadata["load"], 0xFFFF3000)
+        self.assertEqual(metadata["execute"], 0xFFFF8023)
+        updated = self.service.list_directory(session, "$", None)["entries"][0]
+        self.assertEqual(updated["load"], 0xFFFF3000)
+        self.assertEqual(updated["exec"], 0xFFFF8023)
+        self.assertEqual(self.service.read_file(session, None, "PROGRAM"), b"DATA")
+
         self.service.set_access(session, None, ["PROGRAM"], False)
         self.assertTrue(self.service.list_directory(session, "$", None)["entries"][0]["runOnly"])
         self.service.mutate(session, None, ["mv", "{image}:PROGRAM", "NEW.NAME"])

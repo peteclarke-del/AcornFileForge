@@ -10,6 +10,7 @@ import tarfile
 import zipfile
 from copy import copy
 
+from .acorn_metadata import parse_inf, spark_metadata
 from .content_kind import LISTING_SNIFF_LIMIT, analyse_content, is_uef_container, metadata_kind
 from .disk_service import DiskError
 from .uef import UEFError, parse_uef
@@ -119,6 +120,9 @@ def _members(data: bytes, filename: str) -> tuple[str, list[dict]]:
                 if name:
                     row = {"name": name, "size": item.file_size, "dir": item.is_dir(), "source": item.filename}
                     if not item.is_dir():
+                        metadata = spark_metadata(item.extra)
+                        if metadata:
+                            row.update(metadata)
                         content_kind = _bounded_member_kind(
                             name, item.file_size,
                             lambda item=item: archive.read(item),
@@ -126,6 +130,18 @@ def _members(data: bytes, filename: str) -> tuple[str, list[dict]]:
                         if content_kind:
                             row["contentKind"] = content_kind
                     rows.append(row)
+            sidecars = {
+                row["name"][:-4].casefold(): parse_inf(archive.read(row["source"])[:4096])
+                for row in rows
+                if not row["dir"] and row["name"].casefold().endswith(".inf") and row["size"] <= 4096
+            }
+            for row in rows:
+                metadata = sidecars.get(row["name"].casefold())
+                if metadata and not row["dir"]:
+                    row.update(
+                        load=metadata["load"], execute=metadata["execute"],
+                        access=0x08 if metadata["locked"] else 0,
+                    )
     elif kind == "tar":
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as archive:
             for item in archive.getmembers()[:MAX_ENTRIES]:
@@ -140,6 +156,20 @@ def _members(data: bytes, filename: str) -> tuple[str, list[dict]]:
                         if content_kind:
                             row["contentKind"] = content_kind
                     rows.append(row)
+            sidecars = {}
+            for row in rows:
+                if row["dir"] or not row["name"].casefold().endswith(".inf") or row["size"] > 4096:
+                    continue
+                extracted = archive.extractfile(row["source"])
+                if extracted:
+                    sidecars[row["name"][:-4].casefold()] = parse_inf(extracted.read(4096))
+            for row in rows:
+                metadata = sidecars.get(row["name"].casefold())
+                if metadata and not row["dir"]:
+                    row.update(
+                        load=metadata["load"], execute=metadata["execute"],
+                        access=0x08 if metadata["locked"] else 0,
+                    )
     else:
         rows.append({"name": _safe_name(_standalone_name(filename)), "size": None, "dir": False, "source": ""})
     if len(rows) >= MAX_ENTRIES:
@@ -169,9 +199,12 @@ def list_archive(data: bytes, filename: str, directory: str = "") -> dict:
             child["length"] = int(member["size"] or 0)
             if member.get("contentKind"):
                 child["contentKind"] = member["contentKind"]
+            if member.get("load") is not None or member.get("execute") is not None:
+                child.update(
+                    load=int(member.get("load") or 0), exec=int(member.get("execute") or 0),
+                )
             if kind == "uef":
                 child.update(
-                    load=member["load"], exec=member["execute"],
                     attr="R/" if member["complete"] else "R/?",
                     complete=member["complete"],
                     contentKind=member["contentKind"],
@@ -221,8 +254,10 @@ def read_archive_member_details(data: bytes, filename: str, member_name: str) ->
         "load": int(match.get("load") or 0),
         "execute": int(match.get("execute") or 0),
         "attr": "R/",
+        "access": int(match.get("access") or 0),
         "archiveKind": kind,
         "contentKind": match.get("contentKind"),
+        "metadataAvailable": match.get("load") is not None or match.get("execute") is not None,
     }
 
 
