@@ -22,6 +22,7 @@ const visuals = load("app/static/file-visuals.js", "AcornFileVisuals");
 const imports = load("app/static/import-planning.js", "AcornImportPlanning");
 const help = load("app/static/help.js", "AcornHelp");
 const editorWorkspace = load("app/static/editor-workspace.js", "AcornEditorWorkspace");
+const identifiers = load("app/static/identifiers.js", "AcornIdentifiers");
 const operationUI = load("app/static/operation-ui.js", "AcornOperationUI");
 const workspacePersistence = load("app/static/workspace-persistence.js", "AcornWorkspacePersistence");
 const paneView = load("app/static/pane-view.js", "AcornPaneView");
@@ -94,9 +95,31 @@ test("operation lifecycle is isolated behind an injected pane controller", () =>
   const controller = operationUI.create({
     panes: [], api() {}, setLoading() {}, renderPane() {},
     modal: { open: false }, setModalAbort() {}, setModalProgress() {},
+    newUuid: () => "00000000-0000-4000-8000-000000000000",
   });
   assert.equal(typeof controller.guardedPaneAction, "function");
   assert.equal(typeof controller.trackedPaneOperation, "function");
+});
+
+test("operation identifiers use the browser UUID implementation when available", () => {
+  assert.equal(identifiers.newUuid({ randomUUID: () => "native-uuid" }), "native-uuid");
+});
+
+test("operation identifiers remain available on non-secure HTTP origins", () => {
+  const cryptoSource = {
+    getRandomValues(bytes) {
+      bytes.fill(0);
+      return bytes;
+    },
+  };
+  assert.equal(identifiers.newUuid(cryptoSource), "00000000-0000-4000-8000-000000000000");
+});
+
+test("operation identifiers fail explicitly on obsolete browsers without Web Crypto", () => {
+  assert.throws(
+    () => identifiers.newUuid({}),
+    /cannot create secure operation identifiers/i,
+  );
 });
 
 test("workspace recovery is isolated behind an injected persistence controller", () => {

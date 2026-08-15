@@ -945,8 +945,8 @@ function showHelp() {
             <h3>Compatibility, limits and troubleshooting</h3>
             <h4>Important compatibility limits</h4>
             <ul>
-              <li>The current filesystem engine safely edits DFS, ADFS S/M/L, supported old-map D/hard-drive layouts and BeebSCSI DAT with its matching DSC.</li>
-              <li>New-map E, F, F+ and later large FileCore variants are rejected instead of being guessed at. An <code>.adf</code> extension alone does not guarantee a supported layout.</li>
+              <li>The filesystem engine safely edits DFS, ADFS S/M/L, classic FileCore new-map E/F, supported old-map D/hard-drive layouts and BeebSCSI DAT with its matching DSC.</li>
+              <li>Classic 800 KiB E and 1.6 MiB F images support files, nested directories, metadata, map validation and fresh-image creation. F+, E+, big-directory and later large FileCore variants remain outside this support and are never guessed from the <code>.adf</code> extension.</li>
               <li>“Physical HDD” means a byte-for-byte RAW image. The browser and container do not access devices such as <code>/dev/sdb</code> directly.</li>
               <li>UEF tape catalogues are read-only; convert or copy their reconstructed files into writable media.</li>
               <li>HFE v2/v3, bad-sector and advanced track images open read-only. Clean sector-based HFE v1 images can be edited and are verified again when saved.</li>
@@ -959,6 +959,7 @@ function showHelp() {
               <dt>Not enough space</dt><dd>Delete unwanted data, compact the filesystem, or create a larger destination. DFS also has a 31-file catalogue limit.</dd>
               <dt>DSD will not insert</dt><dd>Choose a starting position with two adjacent empty MMB slots.</dd>
               <dt>HFE is read-only</dt><dd>The image uses HFE v2/v3, reports bad sectors, or contains track features the sector editor cannot reproduce safely. Export its files or copy its readable sectors to another image.</dd>
+              <dt>ADFS E or F is detected but cannot be opened</dt><dd>This normally means a source installation is using an unpatched system copy of Oaknut. Use the Docker build, or apply the implementation patch in <code>docs/patches/oaknut</code>. Images containing defect objects or unexplained allocated objects can be opened but are deliberately not rewritten.</dd>
               <dt>Name collision found</dt><dd>Use the default DISC-0000 naming strategy, or review every highlighted name. The check is case-insensitive and scoped to each destination parent.</dd>
               <dt>Empty disk found</dt><dd>Choose Skip and continue or Abort. Blank disks can be stored in MMB, but do not become empty ADFS directories.</dd>
               <dt>Destination exists</dt><dd>An empty directory is reused silently. A populated directory offers Keep, Replace or Abort; a file is never overwritten as though it were an empty directory.</dd>

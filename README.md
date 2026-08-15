@@ -1115,7 +1115,7 @@ still stops only at a safe filesystem boundary.
 |---|---|---|
 | Acorn DFS | SSD, DSD | Browse catalogue prefixes, add, export, rename, delete, lock, compact, validate, and copy files |
 | MMB | MMB | Browse all slots, create or insert disks, set read-only/read-write access, edit embedded DFS disks, drag to cut and paste slot blocks, and maintain Universal or SPI game menus |
-| ADFS floppy | ADS, ADM, ADL, ADF, DSK | Traverse directories and perform normal file and directory operations when the FileCore layout is supported |
+| ADFS floppy | ADS, ADM, ADL, ADF, DSK | Traverse and edit old-map S/M/L and classic new-map E/F directories, files and metadata |
 | Acorn hard drive | DAT with matching DSC, HDF, HDD | Browse and edit hierarchical ADFS volumes, including virtual hard-drive images |
 | Raw drive dump | IMG, RAW, BIN, extensionless images | Identify the filesystem from its contents, then open it as DFS or ADFS |
 | Acorn cassette | UEF and compressed UEF | Reconstruct ordinary tape files, export them, drag them to disks, or convert them to SSD or DSD |
@@ -1141,6 +1141,8 @@ dialog then offers:
 - ADFS S floppy, 160 KiB
 - ADFS M floppy, 320 KiB
 - ADFS L floppy, 640 KiB
+- FileCore ADFS E floppy, 800 KiB
+- FileCore ADFS F floppy, 1.6 MiB
 - HFE-wrapped DFS SSD/DSD and ADFS S/M/L floppies
 - BeebSCSI ADFS hard drive as a matched DAT and DSC pair
 - Archimedes or RISC OS virtual hard drive in HDF form
@@ -2003,6 +2005,7 @@ verify the target device carefully.
 The installed Oaknut engine safely edits:
 
 - ADFS S, M, and L floppy layouts
+- classic FileCore new-map E and F floppy layouts
 - Old-map D and old-map hard-drive layouts that it can identify
 - BeebSCSI DAT images, with a matching DSC carried alongside the DAT
 
@@ -2023,14 +2026,20 @@ Data beyond the map is never removed when any byte in that area is non-zero.
 Likewise, a DAT shorter than its ADFS extent is not padded because real
 filesystem data may be missing.
 
-New-map E, F, F+, and later large FileCore variants are not currently edited.
-They are rejected instead of being guessed at. Standard Archimedes floppy
-images are often E or F format, so an `.adf` filename alone does not guarantee
-that the image can be opened by this build.
+Acorn File Forge's Docker build applies the bundled Oaknut implementation for
+classic E and F media. It validates both allocation-map copies, translates
+fragmented object addresses, traverses 2 KiB directories and performs changes
+through a transactional compacting writer. Files, nested directories, Acorn
+metadata, titles, access flags and boot options can be edited, and fresh E/F
+images can be created. An image with defect objects or unexplained allocated
+objects remains readable but is not rewritten.
 
-This is the main compatibility gap to be aware of. The user interface and
-transfer model are ready for those layouts, but the underlying writer must
-support them before edits can be made safely.
+F+, E+, big-directory, format-version and later large FileCore variants remain
+outside this support. An `.adf` suffix is therefore still only a hint. A source
+installation using an unpatched Oaknut release reports the detected classic E
+or F geometry and explains how to install the bundled patch instead of falling
+back to a generic unrecognised-filesystem message. See the
+[Oaknut E/F implementation notes](docs/OAKNUT-NEW-MAP-PROPOSAL.md).
 
 ### HDF and RAW creation detail
 

@@ -92,6 +92,14 @@ docker compose up -d
 
 Open `http://<pi-address>:8666` from a browser on the same trusted network.
 
+The save and background-operation identifiers work on this plain-HTTP LAN URL.
+Browsers expose `crypto.randomUUID()` only in a secure context, which excludes
+an ordinary `http://<pi-address>` page. Acorn File Forge therefore uses the
+browser's cryptographically secure `getRandomValues()` API to construct a UUID
+when `randomUUID()` is unavailable. No HTTPS-only API or weak random fallback
+is required. TLS is still strongly recommended whenever the service leaves a
+trusted private network.
+
 ### What to expect from the first Pi build
 
 The first build is deliberately substantial. The Dockerfile compiles native
@@ -109,6 +117,7 @@ The build performs the following platform-sensitive work:
    including `liballegro4.4t64`.
 5. Verifies that Capstone exposes ARM, M68K and MOS 65xx support.
 6. Reconstructs and checks the bundled RH Plus support ROM.
+7. Applies and import-checks the bundled Oaknut classic FileCore E/F patch.
 
 Do not cancel a build merely because another independent builder is still
 running. BuildKit may show a stage as `CANCELED` after a different stage fails;

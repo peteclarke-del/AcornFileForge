@@ -17,7 +17,7 @@ class GeneratedMediaMatrixTests(unittest.TestCase):
 
             self.assertEqual(
                 {item.format for item in media},
-                {"ssd", "dsd", "adfs-s", "adfs-m", "adfs-l", "mmb", "beebscsi", "rom", "romfs", "hfe", "uef"},
+                {"ssd", "dsd", "adfs-s", "adfs-m", "adfs-l", "adfs-e", "adfs-f", "mmb", "beebscsi", "rom", "romfs", "hfe", "uef"},
             )
             for item in media:
                 self.assertTrue(item.session.path.is_file(), item.format)
