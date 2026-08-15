@@ -18,7 +18,7 @@ RUN python -m pip install --no-cache-dir --root=/python-install -r requirements.
        --directory=/python-install/usr/local/lib/python3.12/site-packages \
        < /tmp/oaknut-filecore.patch \
     && PYTHONPATH=/python-install/usr/local/lib/python3.12/site-packages \
-       python -c "from capstone import CS_ARCH_ARM, CS_ARCH_M68K, CS_ARCH_MOS65XX, Cs; from oaknut.adfs.new_map import SingleZoneNewMap, MultiZoneNewMap; Cs(CS_ARCH_MOS65XX, 0); print('Staged Capstone and writable FileCore E/F support are available')"
+       python -c "from capstone import CS_ARCH_ARM, CS_ARCH_M68K, CS_ARCH_MOS65XX, Cs; from oaknut.adfs.new_map import SingleZoneNewMap, MultiZoneNewMap; Cs(CS_ARCH_MOS65XX, 0); print('Staged Capstone ARM, M68K and MOS65XX support is available; writable FileCore E/F support is available')"
 
 FROM debian:bookworm-slim AS hxc-builder
 
