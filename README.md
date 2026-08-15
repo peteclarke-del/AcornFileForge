@@ -1245,7 +1245,8 @@ uses neutral metadata only when no reliable source exists.
 Double-clicking an ordinary file opens the appropriate BASIC, text,
 disassembly or hex view. The download arrow beside the filename exports a small
 ZIP containing the loose file and its matching `.inf` sidecar. The sidecar
-records the catalogue filename, load address, execute address, length and lock
+records the real catalogue path, including a DFS prefix such as `R.PROGRAM`,
+plus the load address, execute address, length and lock
 state, so moving the file through a modern host filesystem does not discard its
 Acorn identity. Complete SSD, DSD, ADFS, HFE and MMB image saves do not receive
 a bogus image-level `.inf`: those formats already carry the metadata internally
@@ -1254,10 +1255,26 @@ DAT saves continue to include the required matching DSC geometry file.
 
 ### Files and directories
 
+![A DFS catalogue showing explicit load and execution address columns](docs/images/catalogue-addresses.png)
+
 - Use **File → New → New file** in a writable SSD, DSD, MMB disk, ADFS floppy or
   ADFS hard-drive directory. The filename is constrained to that filing
   system's limit, the initial file is zero bytes, and its load and execution
   addresses default to `&00000000`. Existing files are never replaced.
+- File-level panes have separate **Load** and **Execute** columns. Values are
+  shown as complete eight-digit Acorn catalogue words. DFS sign-extended
+  addresses are presented in their conventional form, such as `&FFFF1900`,
+  rather than exposing the packed catalogue representation.
+- Select either address value to edit both words together. The confirmation
+  warns that an incorrect load or entry address can crash the software. On a
+  RISC OS-style FileCore entry it also explains that the words can encode the
+  filetype and timestamp. The edit changes catalogue metadata in place and
+  does not rewrite the file payload.
+- Read the [catalogue metadata guide](docs/FILE-METADATA-GUIDE.md) for the
+  format-specific representation, `.inf` syntax, metadata priority and a
+  practical verification checklist.
+
+![The guarded catalogue address editor](docs/images/catalogue-address-edit-warning.png)
 - Choose **File → Insert Folder & Contents** or drop a host folder to import a complete batch.
   ADFS defaults to preserving its hierarchy and also offers a flat import. DFS
   imports the regular files into the open catalogue group because its directory
@@ -2475,7 +2492,8 @@ A healthy response looks like:
 - Python 3.12
 - Flask 3.1
 - Gunicorn 23
-- Oaknut Disc 12.13.1
+- Oaknut Disc 12.13.1 with Oaknut ADFS 12.14.0 for native writable FileCore
+  E/F support
 - HxC Floppy Emulator command-line engine 2.16.15.2, compiled from a pinned
   upstream revision during the Docker build
 - Docker or Docker Compose

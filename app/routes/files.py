@@ -11,6 +11,7 @@ from pathlib import Path
 from flask import Blueprint, jsonify, request, send_file
 from .effects import image_mutation, request_effect
 
+from ..acorn_metadata import format_inf
 from ..archive_utils import open_single_upload_image
 from ..archive_browser import (
     ArchiveError,
@@ -18,7 +19,6 @@ from ..archive_browser import (
     archive_member_editable,
     is_archive_name,
     list_archive,
-    read_archive_member,
     read_archive_member_details,
     replace_archive_member,
 )
@@ -286,10 +286,21 @@ def create_files_blueprint(
     def archive_file(image_id):
         data, filename = archive_context(image_id)
         member = request.args.get("member", "")
-        content = read_archive_member(data, filename, member)
+        content, metadata = read_archive_member_details(data, filename, member)
+        leaf = member.rsplit("/", 1)[-1] or "archive-member"
+        if request.args.get("bundle") == "metadata" and metadata.get("metadataAvailable"):
+            stream = io.BytesIO()
+            with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr(leaf, content)
+                archive.writestr(f"{leaf}.inf", format_inf(leaf, metadata))
+            stream.seek(0)
+            return send_file(
+                stream, mimetype="application/zip", as_attachment=True,
+                download_name=f"{leaf}-with-metadata.zip",
+            )
         return send_file(
             io.BytesIO(content), mimetype="application/octet-stream", as_attachment=True,
-            download_name=member.rsplit("/", 1)[-1] or "archive-member",
+            download_name=leaf,
         )
 
     @blueprint.get("/api/images/<image_id>/archive/inspect")
@@ -576,6 +587,24 @@ def create_files_blueprint(
             optional_int(data.get("side")),
         )
         return jsonify(image=service.summary(session), paths=updated)
+
+    @blueprint.post("/api/images/<image_id>/addresses")
+    @image_mutation("changing file catalogue addresses")
+    def addresses(image_id):
+        data = payload()
+        session = service.get(image_id)
+        path = str(data.get("path") or "").strip()
+        if not path:
+            raise DiskError("Choose a file whose catalogue addresses should be changed.")
+        metadata = service.set_file_addresses(
+            session,
+            optional_int(data.get("slot")),
+            path,
+            str(data.get("load") or ""),
+            str(data.get("execute") or ""),
+            optional_int(data.get("side")),
+        )
+        return jsonify(image=service.summary(session), path=path, metadata=metadata)
 
     @blueprint.post("/api/images/<image_id>/files")
     @image_mutation("adding a file")
@@ -1004,10 +1033,7 @@ def create_files_blueprint(
                 ) as archive_temp:
                     archive_path = Path(archive_temp.name)
                 cleanup.append(archive_path)
-                inf = (
-                    f"$.{name} {metadata['load']:08X} {metadata['execute']:08X} "
-                    f"{metadata['length']:08X}{' Locked' if metadata['access'] & 8 else ''}\n"
-                )
+                inf = format_inf(inner, metadata)
                 with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
                     archive.write(path, name)
                     archive.writestr(f"{name}.inf", inf)

@@ -11,6 +11,7 @@ from app.archive_browser import (
     archive_member_editable,
     list_archive,
     read_archive_member,
+    read_archive_member_details,
     replace_archive_member,
 )
 from tests.uef_fixture import minimal_uef
@@ -42,6 +43,31 @@ class ArchiveBrowserTests(unittest.TestCase):
         boot = list_archive(stream.getvalue(), "collection.zip", "Games/Arcadians")
         self.assertEqual(boot["entries"][0]["contentKind"], "script")
         self.assertEqual(read_archive_member(stream.getvalue(), "collection.zip", "Games/README"), b"Games collection")
+
+    def test_companion_inf_and_spark_metadata_are_exposed_by_archive_members(self):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("Games/PROGRAM", b"payload")
+            archive.writestr("Games/PROGRAM.inf", b"R.PROGRAM FFFF1900 FFFF8023 00000007 Locked\n")
+        listing = list_archive(stream.getvalue(), "collection.zip", "Games")
+        program = next(row for row in listing["entries"] if row["name"] == "PROGRAM")
+        self.assertEqual(program["load"], 0xFFFF1900)
+        self.assertEqual(program["exec"], 0xFFFF8023)
+        _content, metadata = read_archive_member_details(
+            stream.getvalue(), "collection.zip", "Games/PROGRAM",
+        )
+        self.assertTrue(metadata["metadataAvailable"])
+        self.assertEqual(metadata["load"], 0xFFFF1900)
+
+    def test_companion_inf_accepts_locked_without_a_length_field(self):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("PROGRAM", b"payload")
+            archive.writestr("PROGRAM.inf", b"$.PROGRAM FF1900 FF8023 Locked\n")
+        _content, metadata = read_archive_member_details(
+            stream.getvalue(), "collection.zip", "PROGRAM",
+        )
+        self.assertEqual(metadata["access"], 0x08)
 
     def test_tar_and_standalone_gzip_are_supported(self):
         stream = io.BytesIO()

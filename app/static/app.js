@@ -12,6 +12,7 @@ const {
 } = window.AcornWorkspace;
 const { entryIcon, fileKindKey, FILE_ICONS, PANE_ICONS } = window.AcornFileVisuals;
 const { newUuid } = window.AcornIdentifiers;
+const { entryAddresses, formatAddress, isRiscOsEncoded, parseAddress } = window.AcornMetadata;
 const {
   allocateFilesToDfsDisks,
   ignoredFolderFile,
@@ -654,6 +655,8 @@ function renderPane(index, preserveScroll = false) {
     <td class="file-name-cell"><div class="file-name-wrap"><span class="file-icon dir" title="Parent directory">${FILE_ICONS.folderUp}</span><strong>..</strong></div></td>
     <td class="meta">Parent directory</td>
     <td class="meta">-</td>
+    <td class="meta address-cell">-</td>
+    <td class="meta address-cell">-</td>
     <td><span class="pill">-</span></td>
   </tr>` : "";
   const rows = pane.entries.map(entry => {
@@ -670,6 +673,7 @@ function renderPane(index, preserveScroll = false) {
     const attr = entryType === "disk"
       ? (entry.formatted ? (entry.writable ? "RW" : "RO") : "-")
       : entry.attr || "";
+    const addresses = entryAddresses(entry);
     const entryKey = entrySelectionKey(entry);
     const rowActionable = !isArchive && !isVirtual && !pane.image.readOnly && !isTape && (isSlots ? entry.formatted : canEdit);
     const accessActionable = rowActionable;
@@ -684,10 +688,17 @@ function renderPane(index, preserveScroll = false) {
       ${!isRom || entry.header ? `<button class="row-action row-rename" type="button" draggable="false" title="Rename ${esc(actionName)}" aria-label="Rename ${esc(actionName)}" ${multiSelection ? "hidden" : ""}>✎</button>` : ""}
       ${rowActionable ? `<button class="row-action delete row-delete" type="button" draggable="false" title="${isSlots ? "Eject" : "Delete"} ${esc(actionName)}" aria-label="${isSlots ? "Eject" : "Delete"} ${esc(actionName)}" ${hideGroupAction ? "hidden" : ""}>×</button>` : ""}
     </span>` : "";
-  const accessCell = `<td class="access-cell"><span class="pill">${esc(attr || detail)}</span>${accessActionable && !isRom ? `<span class="access-actions" ${hideGroupAction ? "hidden" : ""}>
+    const accessCell = `<td class="access-cell"><span class="pill">${esc(attr || detail)}</span>${accessActionable && !isRom ? `<span class="access-actions" ${hideGroupAction ? "hidden" : ""}>
       <button class="row-action row-read-write" type="button" draggable="false" title="${isRomfs ? "Make loadable" : "Mark read / write"} · ${esc(actionName)}" aria-label="${isRomfs ? "Make loadable" : "Mark read / write"} ${esc(actionName)}">◇</button>
       <button class="row-action row-read-only" type="button" draggable="false" title="${isRomfs ? "Mark *RUN-only" : "Mark read-only"} · ${esc(actionName)}" aria-label="${isRomfs ? "Mark run-only" : "Mark read-only"} ${esc(actionName)}">◆</button>
     </span>` : ""}</td>`;
+    const addressTitle = isRiscOsEncoded(entry, pane.image.kind === "adfs")
+      ? "This FileCore catalogue word also encodes the RISC OS filetype and datestamp"
+      : "Acorn catalogue address";
+    const editableAddresses = addresses.available && !isDir && !isVirtual && !isArchive && !pane.image.readOnly && !isTape;
+    const addressCell = (kind, display) => `<td class="meta address-cell" data-label="${kind === "load" ? "Load" : "Execute"}">${editableAddresses
+      ? `<button type="button" class="address-edit" data-address-kind="${kind}" title="Edit ${kind} address. ${esc(addressTitle)}">${esc(display)}</button>`
+      : `<span title="${esc(addressTitle)}">${esc(display)}</span>`}</td>`;
     const romHeader = entry.header || null;
     const romOffset = Number.isFinite(Number(entry.fileOffset)) ? Number(entry.fileOffset) : Number(entry.bank || 0) * Number(pane.image.rom?.bankSize || entry.length || 0);
     const romMapped = pane.image.rom?.platform === "bbc-master-electron" && Number(entry.length) <= 16384
@@ -726,6 +737,8 @@ function renderPane(index, preserveScroll = false) {
       </div></td>
       <td class="meta">${esc(isVirtual ? "DFS catalogue" : isDir ? (isArchive ? (pane.archiveKind === "uef" ? "Tape folder" : "Archive folder") : "Directory") : isArchiveFile ? "Archive" : isArchive ? (pane.archiveKind === "uef" ? "Tape file" : "Archive file") : "File")}</td>
       <td class="meta">${esc(size)}</td>
+      ${addressCell("load", addresses.loadDisplay)}
+      ${addressCell("execute", addresses.executeDisplay)}
       ${accessCell}`;
     return `<tr class="file-row${selectedKeys.has(entryKey) ? " selected" : ""}${entry.empty ? " empty-slot" : ""}${isVirtual ? " virtual-catalogue-row" : ""}${entry.catalogueBreak ? " catalogue-break" : ""}${rowIsPendingCut(pane, entry) ? " clipboard-cut" : ""}"${openHint}
       aria-selected="${selectedKeys.has(entryKey)}"
@@ -886,7 +899,7 @@ function renderPane(index, preserveScroll = false) {
     ${isRomfs ? `<aside class="rom-pane-guide" aria-label="ROMFS pane guidance"><span><b>Flat catalogue</b> · case-sensitive names, maximum 10 characters</span><span><b>Access</b> switches between loadable and *RUN-only</span><span><b>ROMFS properties</b> edits title, version and copyright</span><span><b>Check filesystem</b> verifies every block CRC</span></aside>` : ""}
     <div class="list-wrap">
       ${loadingMarkup(pane)}
-      ${(parentRow || rows) ? `<table class="file-list${isSlots ? " mmb-slot-list" : ""}${isRom ? " rom-bank-list" : ""}" role="grid" aria-label="${isSlots ? "MMB disk slots" : isRom ? "ROM bank inventory" : "Files in " + esc(location)}"><thead><tr>${isSlots ? "<th>Slot</th><th>Name</th><th>Kind</th><th>Access</th>" : isRom ? "<th>Bank and address</th><th>Identity</th><th>Purpose and entry points</th><th>Contents</th>" : "<th>Name</th><th>Kind</th><th>Size</th><th>Access</th>"}</tr></thead><tbody>${parentRow}${rows}</tbody></table>` : '<div class="empty-list">Nothing here yet.<br>Drop a host file into this pane to add it.</div>'}
+      ${(parentRow || rows) ? `<table class="file-list${isSlots ? " mmb-slot-list" : ""}${isRom ? " rom-bank-list" : " catalogue-file-list"}" role="grid" aria-label="${isSlots ? "MMB disk slots" : isRom ? "ROM bank inventory" : "Files in " + esc(location)}"><thead><tr>${isSlots ? "<th>Slot</th><th>Name</th><th>Kind</th><th>Access</th>" : isRom ? "<th>Bank and address</th><th>Identity</th><th>Purpose and entry points</th><th>Contents</th>" : '<th>Name</th><th>Kind</th><th>Size</th><th title="Catalogue load address">Load</th><th title="Catalogue execution address">Execute</th><th>Access</th>'}</tr></thead><tbody>${parentRow}${rows}</tbody></table>` : '<div class="empty-list">Nothing here yet.<br>Drop a host file into this pane to add it.</div>'}
     </div>
     <footer class="pane-foot"><span>${pane.image.readOnly ? "Read-only safe view · " : ""}${selectedKeys.size ? `${selectedKeys.size} selected · ` : ""}${pane.entries.length} ${isSlots ? "formatted or named slots" : isRom ? `bank${pane.entries.length === 1 ? "" : "s"}` : "objects"} · ${esc(pane.description || "")}</span>${capacityMarkup(pane.capacity)}</footer>`;
 
@@ -1069,6 +1082,14 @@ function wireRow(row, index) {
     } else if (panes[index].archivePath) window.location.href = archiveMemberUrl(panes[index], row.dataset.name);
     else downloadFile(index, row.dataset.name, row.dataset.path || null);
   });
+  row.querySelectorAll(".address-edit").forEach(button => button.addEventListener("click", event => {
+    event.preventDefault();
+    event.stopPropagation();
+    selectForAction(false);
+    editFileAddresses(index, selectedEntry(index)).catch(error => {
+      toast(`Could not change the catalogue addresses: ${error.message}`, true);
+    });
+  }));
   row.querySelector(".row-rename")?.addEventListener("click", event => {
     event.preventDefault();
     event.stopPropagation();
@@ -2242,7 +2263,7 @@ async function leaveArchive(index) {
   await loadDirectory(index);
 }
 
-function archiveMemberUrl(pane, name) {
+function archiveMemberUrl(pane, name, bundleMetadata = true) {
   const query = new URLSearchParams({
     path: pane.archivePath,
     name: pane.archiveName,
@@ -2250,6 +2271,7 @@ function archiveMemberUrl(pane, name) {
   });
   if (pane.slot !== null) query.set("slot", pane.slot);
   if (pane.side !== null) query.set("side", pane.side);
+  if (bundleMetadata) query.set("bundle", "metadata");
   return `/api/images/${pane.image.id}/archive/file?${query}`;
 }
 
@@ -2262,15 +2284,16 @@ function archiveMemberTarget(pane, name) {
     ...(pane.slot != null ? { slot: pane.slot } : {}),
     ...(pane.side != null ? { side: pane.side } : {}),
   };
-  const downloadUrl = `/api/images/${pane.image.id}/archive/file?${new URLSearchParams(context)}`;
+  const rawDownloadUrl = `/api/images/${pane.image.id}/archive/file?${new URLSearchParams(context)}`;
+  const metadataContext = { ...context, bundle: "metadata" };
   return {
     context,
     displayPath: `${pane.archiveName}/${member}`,
     inspectEndpoint: `/api/images/${pane.image.id}/archive/inspect`,
     disassemblyEndpoint: `/api/images/${pane.image.id}/archive/disassembly`,
     hexEndpoint: `/api/images/${pane.image.id}/archive-hex`,
-    downloadUrl,
-    exportUrl: downloadUrl,
+    downloadUrl: `/api/images/${pane.image.id}/archive/file?${new URLSearchParams(metadataContext)}`,
+    exportUrl: rawDownloadUrl,
     readOnly: true,
   };
 }
@@ -3355,6 +3378,46 @@ function createEmptyFile(index) {
     setSelection(pane, [String(form.get("name"))], String(form.get("name")));
     renderPane(index);
     toast(`${form.get("name")} created`);
+  });
+}
+
+async function editFileAddresses(index, entry) {
+  const pane = panes[index];
+  if (!pane?.image || !entry || entry.type === "dir" || entry.type === "directory") return;
+  const addresses = entryAddresses(entry);
+  if (!addresses.available) throw new Error("This entry does not carry Acorn catalogue addresses.");
+  const path = entry.path || fullPath(pane.path, entry.leafName || entry.name);
+  const riscos = isRiscOsEncoded(entry, pane.image.kind === "adfs");
+  return showModal(`
+    <h2>Change catalogue addresses</h2>
+    <p>Editing <code>${esc(path)}</code>. These values control where Acorn software is loaded and where execution begins.</p>
+    <div class="help-warning"><strong>This can stop the file or application from loading.</strong> Use values from the original catalogue, a trusted <code>.inf</code> sidecar, or the software's documentation. Incorrect addresses can cause errors, crashes or memory corruption.</div>
+    ${riscos ? `<div class="help-warning"><strong>This is a RISC OS-style FileCore entry.</strong> Its load and execute words also encode filetype and timestamp information. Directly changing either word can change or remove that meaning.${entry.filetype !== undefined && entry.filetype !== "" ? ` Current filetype: <code>&amp;${String(entry.filetype).replace(/^(?:&|0x)/i, "").toUpperCase().padStart(3, "0")}</code>.` : ""}</div>` : ""}
+    <div class="field-grid two">
+      <div class="field"><label>Load address</label><input name="load" value="${esc(addresses.loadDisplay)}" required></div>
+      <div class="field"><label>Execution address</label><input name="execute" value="${esc(addresses.executeDisplay)}" required></div>
+    </div>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button danger" value="change">I understand, change addresses</button></div>`,
+  async form => {
+    const load = parseAddress(form.get("load"));
+    const execute = parseAddress(form.get("execute"));
+    if (load === null || execute === null) throw new Error("Enter each address as up to eight hexadecimal digits, optionally prefixed with & or 0x.");
+    const data = await paneOperation(index, `Updating catalogue metadata for ${entry.name}…`, () => api(`/api/images/${pane.image.id}/addresses`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        path,
+        slot: pane.slot,
+        side: pane.side,
+        load: formatAddress(load),
+        execute: formatAddress(execute),
+      }),
+    }));
+    pane.image = data.image;
+    await loadDirectory(index);
+    setSelection(pane, [entrySelectionKey(entry)], entrySelectionKey(entry));
+    renderPane(index);
+    toast(`${entry.name} catalogue addresses updated`);
   });
 }
 
