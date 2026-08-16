@@ -127,7 +127,13 @@
       const pane = panes[index];
       if (!pane) return null;
       const hadGeometry = pane.windowState && Number(pane.windowState.width) > 0 && Number(pane.windowState.height) > 0;
-      pane.windowState = normaliseState(pane.windowState);
+      const existing = pane.windowState;
+      const normalised = normaliseState(existing);
+      // Pointer interactions retain this object while apply() runs. Replacing
+      // it here would leave the active drag or resize updating a stale object.
+      pane.windowState = existing && typeof existing === "object"
+        ? Object.assign(existing, normalised)
+        : normalised;
       if (!hadGeometry) Object.assign(pane.windowState, defaultGeometry(index, bounds(), { width: minWidth, height: minHeight }));
       highestZ = Math.max(highestZ, pane.windowState.z);
       return pane.windowState;
@@ -249,19 +255,42 @@
       delete preview.dataset.snap;
     }
 
+    function trackPointer(event, move, finish) {
+      const pointerId = event.pointerId;
+      const pointerTarget = event.currentTarget;
+      const onMove = moveEvent => {
+        if (moveEvent.pointerId === pointerId) move(moveEvent);
+      };
+      const onEnd = endEvent => {
+        if (endEvent.pointerId !== pointerId) return;
+        global.removeEventListener("pointermove", onMove);
+        global.removeEventListener("pointerup", onEnd);
+        global.removeEventListener("pointercancel", onEnd);
+        if (pointerTarget?.hasPointerCapture?.(pointerId)) pointerTarget.releasePointerCapture(pointerId);
+        finish(endEvent);
+      };
+      global.addEventListener("pointermove", onMove);
+      global.addEventListener("pointerup", onEnd);
+      global.addEventListener("pointercancel", onEnd);
+    }
+
     function wireDragging(index, host) {
       const handle = host.querySelector(".pane-drag-handle");
       if (!handle) return;
       handle.draggable = false;
-      handle.title = "Drag this pane. Move to an edge or corner to snap; use Alt and an arrow key from the keyboard.";
+      handle.title = "Drag the pane. You can also drag an empty part of its heading.";
       handle.setAttribute("aria-label", `Move ${paneLabel(index)}. Alt plus an arrow key snaps or minimises it. Shift plus Alt and an arrow key resizes it.`);
-      handle.onpointerdown = event => {
+      const startDragging = event => {
         if (event.button !== 0) return;
+        if (event.currentTarget.classList.contains("pane-head") && event.target.closest("button, input, a, summary, details, .image-title, .format-icon, .pane-head-actions")) return;
         event.preventDefault();
+        event.currentTarget.setPointerCapture?.(event.pointerId);
         bringToFront(index, false);
         const state = ensureState(index);
         const workspaceRect = container.getBoundingClientRect();
-        if (state.snap) {
+        const currentBounds = bounds();
+        const fillsWorkspace = state.width >= currentBounds.width - 1 && state.height >= currentBounds.height - 1;
+        if (state.snap || fillsWorkspace) {
           const restored = constrainGeometry(state.restore || defaultGeometry(index + 1, bounds(), { width: minWidth, height: minHeight }), bounds(), { width: minWidth, height: minHeight });
           const ratio = clamp((event.clientX - workspaceRect.left - state.x) / Math.max(1, state.width), 0.15, 0.85);
           Object.assign(state, restored, {
@@ -273,24 +302,21 @@
         }
         const start = { x: event.clientX, y: event.clientY, left: state.x, top: state.y };
         host.classList.add("pane-moving");
-        handle.setPointerCapture(event.pointerId);
-        handle.onpointermove = moveEvent => {
+        trackPointer(event, moveEvent => {
           const currentBounds = bounds();
           state.x = clamp(start.left + moveEvent.clientX - start.x, 0, Math.max(0, currentBounds.width - state.width));
           state.y = clamp(start.top + moveEvent.clientY - start.y, 0, Math.max(0, currentBounds.height - state.height));
           apply(index);
           showPreview(snapTarget({ x: moveEvent.clientX - workspaceRect.left, y: moveEvent.clientY - workspaceRect.top }, currentBounds));
-        };
-        handle.onpointerup = () => {
+        }, () => {
           host.classList.remove("pane-moving");
-          handle.onpointermove = null;
-          handle.onpointerup = null;
-          handle.onpointercancel = null;
           if (previewTarget) setSnap(index, previewTarget); else changed();
           hidePreview();
-        };
-        handle.onpointercancel = handle.onpointerup;
+        });
       };
+      handle.onpointerdown = startDragging;
+      const heading = host.querySelector(".pane-head");
+      if (heading) heading.onpointerdown = startDragging;
       handle.ondblclick = event => {
         event.preventDefault();
         toggleMaximize(index);
@@ -347,24 +373,19 @@
           if (event.button !== 0) return;
           event.preventDefault();
           event.stopPropagation();
+          handle.setPointerCapture?.(event.pointerId);
           if (ensureState(index).snap) restoreGeometry(index);
           bringToFront(index, false);
           const state = ensureState(index);
           const start = { x: state.x, y: state.y, width: state.width, height: state.height, pointerX: event.clientX, pointerY: event.clientY };
           host.classList.add("pane-resizing");
-          handle.setPointerCapture(event.pointerId);
-          handle.onpointermove = moveEvent => {
+          trackPointer(event, moveEvent => {
             Object.assign(state, resizeGeometry(start, direction, moveEvent.clientX - start.pointerX, moveEvent.clientY - start.pointerY, bounds()));
             apply(index);
-          };
-          handle.onpointerup = () => {
+          }, () => {
             host.classList.remove("pane-resizing");
-            handle.onpointermove = null;
-            handle.onpointerup = null;
-            handle.onpointercancel = null;
             changed();
-          };
-          handle.onpointercancel = handle.onpointerup;
+          });
         };
         host.append(handle);
       }

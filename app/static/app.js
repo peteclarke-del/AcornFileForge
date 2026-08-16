@@ -950,13 +950,12 @@ function renderPane(index, preserveScroll = false) {
   host.querySelectorAll(".crumb[data-archive-member]").forEach(button => button.onclick = () => navigateArchive(index, button.dataset.archiveMember));
   host.querySelectorAll(".file-row").forEach(row => wireRow(row, index));
   if ((pane.image.kind === "dfs") || (pane.image.kind === "mmb" && pane.slot !== null)) {
-    const header = host.querySelector(".pane-head");
-    header.draggable = true;
-    header.ondragstart = event => {
-      if (event.target.closest(".pane-drag-handle, .pane-head-actions")) {
-        event.preventDefault();
-        return;
-      }
+    const diskHandle = host.querySelector(".format-icon");
+    diskHandle.draggable = true;
+    diskHandle.classList.add("disk-transfer-handle");
+    diskHandle.title = "Drag this disk image into another pane";
+    diskHandle.setAttribute("aria-label", `${paneFormat(pane.image)} disk image. Drag to transfer it to another pane.`);
+    diskHandle.ondragstart = event => {
       event.dataTransfer.effectAllowed = "copy";
       event.dataTransfer.setData("application/x-beeb-disk", JSON.stringify({
         image: pane.image.id, slot: pane.slot, name: pane.slotName || pane.image.name

@@ -16,6 +16,31 @@ const target = process.env.ACORN_FILE_FORGE_URL || "http://127.0.0.1:8666";
 
     const panes = page.locator(".pane");
     if (await panes.count() !== 1) throw new Error("Workspace did not start with one pane");
+
+    // The initial pane fills the workspace. Its first drag must restore it to
+    // a movable size instead of leaving x/y clamped at zero.
+    const firstPane = panes.first();
+    const firstInitial = await firstPane.boundingBox();
+    const firstGrip = await firstPane.locator(".pane-drag-handle").boundingBox();
+    await page.mouse.move(firstGrip.x + firstGrip.width / 2, firstGrip.y + firstGrip.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(firstGrip.x + 150, firstGrip.y + 110, { steps: 8 });
+    await page.mouse.up();
+    const firstMoved = await firstPane.boundingBox();
+    if (firstMoved.x <= firstInitial.x || firstMoved.y <= firstInitial.y || firstMoved.width >= firstInitial.width) {
+      throw new Error(`The initial full-size pane did not restore and move (${JSON.stringify({ firstInitial, firstMoved })})`);
+    }
+
+    const resizeHandle = await firstPane.locator(".resize-se").boundingBox();
+    await page.mouse.move(resizeHandle.x + resizeHandle.width / 2, resizeHandle.y + resizeHandle.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(resizeHandle.x - 60, resizeHandle.y - 40, { steps: 6 });
+    await page.mouse.up();
+    const firstResized = await firstPane.boundingBox();
+    if (firstResized.width >= firstMoved.width || firstResized.height >= firstMoved.height) {
+      throw new Error(`The lower-right resize handle did not resize the pane (${JSON.stringify({ firstMoved, firstResized })})`);
+    }
+
     for (let count = 0; count < 4; count += 1) await page.locator("#addPaneButton").click();
     if (await panes.count() !== 5) throw new Error("Workspace still limits the number of panes");
     if (await page.locator("#addPaneButton").isDisabled()) throw new Error("Add Pane became disabled");
