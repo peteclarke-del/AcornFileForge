@@ -84,10 +84,18 @@ const target = process.env.ACORN_FILE_FORGE_URL || "http://127.0.0.1:8666";
     if (!manifestJob || manifestJob.state !== "complete") {
       throw new Error(`Manifest export was not tracked to completion: ${JSON.stringify(manifestJob)}`);
     }
+    await page.locator("#modal").waitFor({ state: "hidden" });
 
     await firstPane.locator("summary", { hasText: "Analyse" }).click();
-    await firstPane.locator(".find-duplicates").click();
-    await page.locator(".duplicate-groups").waitFor();
+    const findDuplicates = firstPane.locator(".find-duplicates");
+    await findDuplicates.waitFor({ state: "visible" });
+    await page.waitForFunction(
+      command => !command.disabled && command.getAttribute("aria-disabled") !== "true",
+      await findDuplicates.elementHandle(),
+    );
+    await findDuplicates.click();
+    await page.locator("#modal").waitFor({ state: "visible" });
+    await page.locator("#modal .duplicate-groups").waitFor({ state: "visible" });
     const duplicateJob = await page.evaluate(async () => {
       const response = await fetch("/api/operations");
       const data = await response.json();
@@ -97,6 +105,7 @@ const target = process.env.ACORN_FILE_FORGE_URL || "http://127.0.0.1:8666";
       throw new Error(`Duplicate analysis was not tracked to completion: ${JSON.stringify(duplicateJob)}`);
     }
     await page.locator("#modal .modal-close").click();
+    await page.locator("#modal").waitFor({ state: "hidden" });
 
     await firstPane.locator("summary", { hasText: "Analyse" }).click();
     const compare = firstPane.locator(".compare-image");
