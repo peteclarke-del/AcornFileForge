@@ -7105,6 +7105,7 @@ async function runHealthCheck(index) {
       operationId => api(
         `/api/images/${pane.image.id}/health?${new URLSearchParams({ operationId })}`
       ),
+      { abortMode: "read-only" },
     );
   } finally {
     modal.classList.remove("busy");
@@ -7189,6 +7190,7 @@ async function runAdfsInstallationAudit(index, root = "$") {
     operationId => api(
       `/api/images/${pane.image.id}/adfs-installations/audit?${new URLSearchParams({ root, operationId })}`
     ),
+    { abortMode: "read-only" },
   );
 }
 
@@ -7231,7 +7233,7 @@ function renderAdfsInstallationAudit(index, report) {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ directories, operationId }),
         },
-      ));
+      ), { abortMode: "atomic" });
       pane.image = result.image;
       await refreshCurrentView(index);
       renderAdfsInstallationAudit(index, await runAdfsInstallationAudit(index, report.root));
@@ -9142,11 +9144,12 @@ function showImageComparison(index) {
     const button = event.currentTarget;
     button.disabled = true;
     resultHost.innerHTML = "<p>Building manifests and comparing image contents…</p>";
+    modal.classList.add("busy");
     try {
-      report = await api(`/api/images/${pane.image.id}/compare`, {
+      report = await trackedPaneOperation(index, "Comparing image contents", operationId => api(`/api/images/${pane.image.id}/compare`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ otherImage: modalContent.querySelector('[name="otherImage"]').value }),
-      });
+        body: JSON.stringify({ otherImage: modalContent.querySelector('[name="otherImage"]').value, operationId }),
+      }), { abortMode: "read-only" });
       modalContent.querySelector(".image-comparison-dialog")?.classList.add("comparison-complete");
       const sections = ["added", "removed", "modified", "metadata"];
       resultHost.innerHTML = `<div class="comparison-summary">${sections.map(name => `<strong><span>${report.summary[name].toLocaleString()}</span>${name}</strong>`).join("")}<strong><span>${report.summary.total.toLocaleString()}</span>total</strong></div>
@@ -9156,23 +9159,26 @@ function showImageComparison(index) {
       modalContent.querySelector("[data-export-patch]").disabled = !report.sameFormat || report.base.kind === "tape";
     } catch (error) {
       resultHost.innerHTML = `<p class="help-warning">${esc(error.message)}</p>`;
-    } finally { button.disabled = false; }
+    } finally { button.disabled = false; modal.classList.remove("busy"); }
   };
   modalContent.querySelector("[data-export-comparison]").onclick = () => {
     if (!report) return;
     downloadJson(report, `${pathNameWithoutExtension(pane.image.name)}-comparison.json`);
   };
   modalContent.querySelector("[data-export-patch]").onclick = event => downloadImagePatch(
-    pane, modalContent.querySelector('[name="otherImage"]').value, event.currentTarget,
+    index, pane, modalContent.querySelector('[name="otherImage"]').value, event.currentTarget,
   );
 }
 
-async function downloadImagePatch(pane, candidateId, button) {
+async function downloadImagePatch(index, pane, candidateId, button) {
   const original = button.textContent;
   button.disabled = true;
   button.textContent = "Building patch…";
+  modal.classList.add("busy");
   try {
-    const response = await fetch(`/api/images/${pane.image.id}/patch?${new URLSearchParams({ otherImage: candidateId })}`);
+    const response = await trackedPaneOperation(index, "Building guarded patch", operationId => fetch(
+      `/api/images/${pane.image.id}/patch?${new URLSearchParams({ otherImage: candidateId, operationId })}`,
+    ), { abortMode: "read-only" });
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
       throw new Error(error.error || `Patch creation failed (${response.status})`);
@@ -9188,7 +9194,7 @@ async function downloadImagePatch(pane, candidateId, button) {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     toast(`Guarded patch ready · ${humanSize(blob.size)}`);
   } catch (error) { toast(error.message, true); }
-  finally { button.disabled = false; button.textContent = original; }
+  finally { button.disabled = false; button.textContent = original; modal.classList.remove("busy"); }
 }
 
 function showApplyImagePatch(index) {
@@ -9201,7 +9207,10 @@ function showApplyImagePatch(index) {
     <div class="help-warning"><strong>This changes image contents.</strong> An automatic undo checkpoint is created first. A stale, corrupt or wrong-format patch is rejected and rolled back.</div>
     <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="apply" data-apply-patch disabled>Apply verified patch</button></div>
   </div>`, async form => {
-    const data = await api(`/api/images/${pane.image.id}/patch`, { method: "POST", body: form });
+    const data = await trackedPaneOperation(index, "Applying guarded patch", operationId => {
+      form.set("operationId", operationId);
+      return api(`/api/images/${pane.image.id}/patch`, { method: "POST", body: form });
+    }, { abortMode: "atomic" });
     pane.image = data.image;
     await refreshCurrentView(index);
     toast(`${data.patch.operations.toLocaleString()} guarded patch operation${data.patch.operations === 1 ? "" : "s"} applied`);
@@ -9219,8 +9228,12 @@ function showApplyImagePatch(index) {
     resultHost.innerHTML = `<div class="analysis-loading compact"><span class="modal-progress-icon" aria-hidden="true">↻</span><p>Verifying ${esc(file.name)}…</p></div>`;
     const form = new FormData();
     form.append("patch", file, file.name);
+    modal.classList.add("busy");
     try {
-      const data = await api(`/api/images/${pane.image.id}/patch/inspect`, { method: "POST", body: form });
+      const data = await trackedPaneOperation(index, "Verifying guarded patch", operationId => {
+        form.set("operationId", operationId);
+        return api(`/api/images/${pane.image.id}/patch/inspect`, { method: "POST", body: form });
+      }, { abortMode: "read-only" });
       if (input.files?.[0] !== file) return;
       const report = data.patch;
       const summary = report.summary || {};
@@ -9233,7 +9246,7 @@ function showApplyImagePatch(index) {
     } catch (error) {
       if (input.files?.[0] !== file) return;
       resultHost.innerHTML = `<p class="help-warning"><strong>Patch verification failed.</strong> ${esc(error.message)}</p>`;
-    }
+    } finally { modal.classList.remove("busy"); }
   };
 }
 

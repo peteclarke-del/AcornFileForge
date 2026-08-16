@@ -409,19 +409,27 @@ def create_tools_blueprint(
     @request_effect("read-only", "comparing logical image contents")
     def compare_image(image_id):
         data = payload()
+        operation_id = data.get("operationId")
         other_image_id = str(data.get("otherImage") or "").strip()
         if not other_image_id:
             raise DiskError("Choose another open image to compare.")
         if other_image_id == image_id:
             raise DiskError("Choose two different open images to compare.")
-        return jsonify(compare_images(
-            service,
-            service.get(image_id),
-            service.get(other_image_id),
-        ))
+        with operations.tracked(
+            operation_id,
+            "Cataloguing images for comparison",
+            "Image comparison complete",
+        ) as progress:
+            return jsonify(compare_images(
+                service,
+                service.get(image_id),
+                service.get(other_image_id),
+                progress,
+            ))
 
     @blueprint.get("/api/images/<image_id>/patch")
     def create_image_patch(image_id):
+        operation_id = request.args.get("operationId")
         other_image_id = str(request.args.get("otherImage") or "").strip()
         if not other_image_id or other_image_id == image_id:
             raise DiskError("Choose a different open image as the patch candidate.")
@@ -431,7 +439,12 @@ def create_tools_blueprint(
         ) as temporary:
             patch_path = Path(temporary.name)
         try:
-            write_patch_archive(service, base, candidate, patch_path)
+            with operations.tracked(
+                operation_id,
+                "Cataloguing images for a guarded patch",
+                "Guarded patch archive ready",
+            ) as progress:
+                write_patch_archive(service, base, candidate, patch_path, progress)
         except Exception:
             patch_path.unlink(missing_ok=True)
             raise
@@ -451,15 +464,25 @@ def create_tools_blueprint(
     @blueprint.post("/api/images/<image_id>/patch")
     @image_mutation("applying a guarded image patch")
     def apply_image_patch(image_id):
-        with uploaded_patch_path(service.work_dir) as patch_path:
-            result = apply_patch_archive(service, service.get(image_id), patch_path)
+        operation_id = request.form.get("operationId")
+        with operations.tracked(
+            operation_id,
+            "Verifying the guarded patch",
+            "Guarded patch applied and verified",
+        ) as progress, uploaded_patch_path(service.work_dir) as patch_path:
+            result = apply_patch_archive(service, service.get(image_id), patch_path, progress)
         return jsonify(image=service.summary(service.get(image_id)), patch=result)
 
     @blueprint.post("/api/images/<image_id>/patch/inspect")
     @request_effect("read-only", "inspecting a guarded image patch")
     def inspect_image_patch(image_id):
-        with uploaded_patch_path(service.work_dir) as patch_path:
-            result = inspect_patch_archive(service, service.get(image_id), patch_path)
+        operation_id = request.form.get("operationId")
+        with operations.tracked(
+            operation_id,
+            "Inspecting the guarded patch",
+            "Patch preflight complete",
+        ) as progress, uploaded_patch_path(service.work_dir) as patch_path:
+            result = inspect_patch_archive(service, service.get(image_id), patch_path, progress)
         return jsonify(patch=result)
 
     @blueprint.post("/api/images/<image_id>/manifest/apply")

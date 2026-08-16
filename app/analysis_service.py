@@ -155,11 +155,17 @@ def dependency_report(service, session, path: str, slot: int | None, side: int |
     }
 
 
-def _mmb_manifest(service, session) -> dict:
+def _mmb_manifest(service, session, progress=None) -> dict:
     slots = service.list_slots(session)
     rows = []
     with session.path.open("rb") as image:
-        for slot in slots:
+        for index, slot in enumerate(slots):
+            if progress:
+                progress(
+                    f"Reading MMB slot {slot['slot']} · {slot['name'] or 'Empty'}",
+                    index,
+                    len(slots),
+                )
             record = {
                 "recordType": "slot",
                 "slot": slot["slot"],
@@ -189,6 +195,8 @@ def _mmb_manifest(service, session) -> dict:
                     "execute": f"{item.execute:06X}",
                     "sha256": sha256_bytes(payload),
                 })
+    if progress:
+        progress("Reading installed MMB menu records", len(slots), len(slots))
     menus = []
     for menu in installed_mmb_menus(service, session):
         item = dict(menu)
@@ -204,16 +212,24 @@ def _mmb_manifest(service, session) -> dict:
     return {"image": service.summary(session), "records": rows, "menus": menus}
 
 
-def build_manifest(service, session) -> dict:
+def build_manifest(service, session, progress=None) -> dict:
     if session.kind == "mmb":
-        return _mmb_manifest(service, session)
+        return _mmb_manifest(service, session, progress)
     if session.kind == "rom":
         records = []
-        for row in service.list_rom_banks(session):
+        banks = service.list_rom_banks(session)
+        for index, row in enumerate(banks):
             path = f"bank:{row['bank']}"
+            if progress:
+                progress(f"Checksumming ROM {path}", index, len(banks))
             exported = service.export_file(session, None, path)
             try:
-                digest = sha256_path(exported)
+                digest = sha256_path(
+                    exported,
+                    (lambda current, total: progress(
+                        f"Checksumming ROM {path}", current, total
+                    )) if progress else None,
+                )
             finally:
                 exported.unlink(missing_ok=True)
             records.append({
@@ -230,7 +246,7 @@ def build_manifest(service, session) -> dict:
     records = []
     sides = [0, 2] if session.kind == "dfs" and session.path.name.lower().endswith(".dsd") else [None]
     for side in sides:
-        for path, row in _walk(service, session, None, side):
+        for path, row in _walk(service, session, None, side, progress):
             record = {
                 "recordType": "directory" if row.get("type") in {"dir", "directory"} else "file",
                 "path": path,
@@ -244,9 +260,16 @@ def build_manifest(service, session) -> dict:
                 try:
                     exported = service.export_file(session, None, path, side)
                     try:
-                        record["sha256"] = sha256_path(exported)
+                        record["sha256"] = sha256_path(
+                            exported,
+                            (lambda current, total: progress(
+                                f"Checksumming {path}", current, total
+                            )) if progress else None,
+                        )
                     finally:
                         exported.unlink(missing_ok=True)
+                except OperationCancelled:
+                    raise
                 except DiskError as exc:
                     record["error"] = str(exc)
             records.append(record)

@@ -1019,17 +1019,22 @@ When two images use the same filesystem family, compatible DFS side layout and
 ROM bank size, the comparison can also create an `.affpatch.zip`. It contains a
 readable patch plan plus only the added or changed payload bytes. Payloads are
 checksummed and streamed straight into the ZIP, so a large FileCore batch does
-not accumulate every changed file in application memory. Applying it
-through **Analyse → Apply guarded patch**
-first performs a read-only preflight. The dialog checks the format, physical
-layout, exact base fingerprint and SHA-256 of every embedded payload, then shows
-the source and candidate names, change counts and an itemised operation preview.
-The Apply button remains disabled until that inspection succeeds. Applying the
-verified archive creates an automatic checkpoint, repeats the validation before
-the first write, performs the operations and verifies the complete candidate
-fingerprint. A stale, damaged or wrong-format patch is rejected. A failed final
-verification reports the first mismatched logical object and the mutation
-wrapper restores the checkpoint rather than leaving a half-applied image.
+not accumulate every changed file in application memory. Comparison, archive
+creation and preflight verification report the current catalogue, checksum or
+payload phase, together with byte or item counts, elapsed time, measured
+throughput and ETA where meaningful. Abort stops these read-only stages at the
+next stream or catalogue boundary without changing either image. Applying it
+through **Analyse → Apply guarded patch** first performs a read-only preflight.
+The dialog checks the format, physical layout, exact base fingerprint and
+SHA-256 of every embedded payload, then shows the source and candidate names,
+change counts and an itemised operation preview. The Apply button remains
+disabled until that inspection succeeds. Applying the verified archive creates
+an automatic checkpoint, repeats the validation before the first write,
+performs the operations and verifies the complete candidate fingerprint. Abort
+during application restores that checkpoint, so a partial patch is not kept. A
+stale, damaged or wrong-format patch is rejected. A failed final verification
+reports the first mismatched logical object and the mutation wrapper restores
+the checkpoint rather than leaving a half-applied image.
 
 **Find duplicates / variants** uses full SHA-256 hashes for byte-identical
 content and a conservative normalised-title comparison for likely release or
@@ -2071,7 +2076,7 @@ verify the target device carefully.
 
 ### FileCore compatibility note
 
-The released Oaknut 12.14.1 engine safely edits ADFS S, M, L and D, New-map E,
+The released Oaknut 12.15.1 engine safely edits ADFS S, M, L and D, New-map E,
 F and G, and the E+, F+ and G+ Big-directory variants. The app creates all ten
 standard floppy formats, detects their on-disc structures, preserves Acorn
 metadata, compacts allocation and runs the filesystem validator. Standard New
@@ -2542,7 +2547,7 @@ A healthy response looks like:
 - Python 3.12
 - Flask 3.1
 - Gunicorn 23
-- Oaknut Disc, ADFS and ROMFS 12.14.1, including writable FileCore
+- Oaknut Disc, ADFS and ROMFS 12.15.1, including writable FileCore
   S/M/L/D/E/E+/F/F+/G/G+ and hard-disk support
 - HxC Floppy Emulator command-line engine 2.16.15.2, compiled from a pinned
   upstream revision during the Docker build

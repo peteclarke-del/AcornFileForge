@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from app.image_diff import compare_manifests, manifest_fingerprint, record_key
+from app.image_diff import compare_images, compare_manifests, manifest_fingerprint, record_key
 
 
 def manifest(name: str, kind: str, records: list[dict]) -> dict:
@@ -66,6 +68,23 @@ class ImageDiffTests(unittest.TestCase):
         ])
         self.assertEqual(compare_manifests(base, candidate)["summary"]["total"], 0)
         self.assertEqual(manifest_fingerprint(base), manifest_fingerprint(candidate))
+
+    def test_image_comparison_reports_each_catalogue_phase(self) -> None:
+        base = manifest("old", "dfs", [])
+        candidate = manifest("new", "dfs", [])
+        updates = []
+        sessions = [
+            SimpleNamespace(kind="dfs", name="old.ssd"),
+            SimpleNamespace(kind="dfs", name="new.ssd"),
+        ]
+
+        with patch("app.image_diff.build_manifest", side_effect=[base, candidate]) as builder:
+            report = compare_images(None, *sessions, lambda *values: updates.append(values))
+
+        self.assertEqual(report["summary"]["total"], 0)
+        self.assertEqual(builder.call_count, 2)
+        self.assertTrue(all(call.args[2] is not None for call in builder.call_args_list))
+        self.assertEqual(updates[-1], ("Comparing logical contents and metadata", 2, 2))
 
 
 if __name__ == "__main__":

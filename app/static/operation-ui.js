@@ -1,21 +1,46 @@
 window.AcornOperationUI = (() => {
   function create({ panes, api, setLoading, renderPane, modal, setModalAbort, setModalProgress, newUuid }) {
-    async function trackedPaneOperation(index, message, operation) {
+    function abortPresentation(mode) {
+      if (mode === "read-only") return {
+        message: "Stopping at the next safe read boundary. No image data is being changed.",
+        details: [
+          { label: "Safety", value: "The current read or checksum block will finish before stopping" },
+          { label: "Image state", value: "The open images remain unchanged" },
+        ],
+        error: "Read-only operation aborted safely. No image data was changed.",
+      };
+      if (mode === "atomic") return {
+        message: "Stopping at the next safe boundary, then restoring the pre-operation checkpoint.",
+        details: [
+          { label: "Safety", value: "The current atomic disk command will finish before rollback" },
+          { label: "Image state", value: "No partial patch or repair will be retained" },
+        ],
+        error: "Operation aborted safely. The pre-operation image state was restored.",
+      };
+      return {
+        message: "Finishing the current atomic disk command. No further disks or files will be started.",
+        details: [
+          { label: "Safety", value: "The current image write will complete or be cleaned up before stopping" },
+          { label: "Completed work", value: "Previously completed batch items will be preserved" },
+        ],
+        error: "Operation aborted safely. Completed items were preserved.",
+      };
+    }
+
+    async function trackedPaneOperation(index, message, operation, { abortMode = "batch" } = {}) {
       const pane = panes[index];
       const operationId = newUuid();
       let polling = true;
       let abortRequested = false;
+      const abort = abortPresentation(abortMode);
       setLoading(index, true, message);
       if (modal.open) {
         setModalAbort(async () => {
           abortRequested = true;
           setModalProgress({
             title: "Stopping operation safely",
-            message: "Finishing the current atomic disk command. No further disks or files will be started.",
-            details: [
-              { label: "Safety", value: "The current image write will complete or be cleaned up before stopping" },
-              { label: "Completed work", value: "Previously completed batch items will be preserved" },
-            ],
+            message: abort.message,
+            details: abort.details,
           });
           await api(`/api/operations/${operationId}/cancel`, { method: "POST" });
         });
@@ -30,11 +55,8 @@ window.AcornOperationUI = (() => {
             if (modal.open) {
               setModalProgress({
                 title: "Stopping operation safely",
-                message: "Finishing the current atomic disk command. No further disks or files will be started.",
-                details: [
-                  { label: "Safety", value: "The current image write will complete or be cleaned up before stopping" },
-                  { label: "Completed work", value: "Previously completed batch items will be preserved" },
-                ],
+                message: abort.message,
+                details: abort.details,
               });
             }
             renderPane(index);
@@ -81,7 +103,7 @@ window.AcornOperationUI = (() => {
         return await operation(operationId);
       } catch (error) {
         if (abortRequested) {
-          const aborted = new Error("Operation aborted safely. Completed items were preserved.");
+          const aborted = new Error(abort.error);
           aborted.data = error.data;
           throw aborted;
         }
