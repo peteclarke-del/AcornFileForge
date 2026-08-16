@@ -1,5 +1,5 @@
 window.AcornEditorWorkspace = (() => {
-  function create({ storage, key, maxDocuments = 24, maxDraftBytes = 512 * 1024, maxPanes = 3 }) {
+  function create({ storage, key, maxDocuments = 24, maxDraftBytes = 512 * 1024, maxPanes = Number.POSITIVE_INFINITY }) {
     const state = {
       documents: new Map(),
       active: null,
