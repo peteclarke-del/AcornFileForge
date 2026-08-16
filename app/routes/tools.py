@@ -12,7 +12,7 @@ from copy import copy
 from datetime import datetime, timezone
 from pathlib import Path
 
-from flask import Blueprint, Response, jsonify, request
+from flask import Blueprint, Response, after_this_request, jsonify, request, send_file
 from .effects import image_mutation, request_effect
 
 from ..analysis_service import (
@@ -28,6 +28,8 @@ from ..checksum import sha256_bytes
 from ..disk_service import DiskError, DiskService
 from ..emulator_config import configured_emulator, emulator_command, emulator_status
 from ..hardware_profiles import normalise_hardware_profile
+from ..image_diff import compare_images
+from ..image_patch import apply_patch_archive, write_patch_archive
 from ..file_editor import (
     disassemble_file,
     inspect_editable_file,
@@ -385,6 +387,66 @@ def create_tools_blueprint(
             mimetype=mimetype,
             headers={"Content-Disposition": f'attachment; filename="{stem}-manifest.{suffix}"'},
         )
+
+    @blueprint.post("/api/images/<image_id>/compare")
+    @request_effect("read-only", "comparing logical image contents")
+    def compare_image(image_id):
+        data = payload()
+        other_image_id = str(data.get("otherImage") or "").strip()
+        if not other_image_id:
+            raise DiskError("Choose another open image to compare.")
+        if other_image_id == image_id:
+            raise DiskError("Choose two different open images to compare.")
+        return jsonify(compare_images(
+            service,
+            service.get(image_id),
+            service.get(other_image_id),
+        ))
+
+    @blueprint.get("/api/images/<image_id>/patch")
+    def create_image_patch(image_id):
+        other_image_id = str(request.args.get("otherImage") or "").strip()
+        if not other_image_id or other_image_id == image_id:
+            raise DiskError("Choose a different open image as the patch candidate.")
+        base, candidate = service.get(image_id), service.get(other_image_id)
+        with tempfile.NamedTemporaryFile(
+            dir=service.work_dir, prefix="image-patch-", suffix=".affpatch.zip", delete=False,
+        ) as temporary:
+            patch_path = Path(temporary.name)
+        try:
+            write_patch_archive(service, base, candidate, patch_path)
+        except Exception:
+            patch_path.unlink(missing_ok=True)
+            raise
+
+        @after_this_request
+        def remove_patch(response):
+            patch_path.unlink(missing_ok=True)
+            return response
+
+        return send_file(
+            patch_path,
+            mimetype="application/zip",
+            as_attachment=True,
+            download_name=f"{Path(base.name).stem}-to-{Path(candidate.name).stem}.affpatch.zip",
+        )
+
+    @blueprint.post("/api/images/<image_id>/patch")
+    @image_mutation("applying a guarded image patch")
+    def apply_image_patch(image_id):
+        upload = request.files.get("patch")
+        if not upload or not upload.filename:
+            raise DiskError("Choose an Acorn File Forge patch ZIP to apply.")
+        with tempfile.NamedTemporaryFile(
+            dir=service.work_dir, prefix="uploaded-patch-", suffix=".zip", delete=False,
+        ) as temporary:
+            upload.save(temporary)
+            patch_path = Path(temporary.name)
+        try:
+            result = apply_patch_archive(service, service.get(image_id), patch_path)
+        finally:
+            patch_path.unlink(missing_ok=True)
+        return jsonify(image=service.summary(service.get(image_id)), patch=result)
 
     @blueprint.post("/api/images/<image_id>/manifest/apply")
     @image_mutation("applying reviewed menu metadata")
