@@ -65,14 +65,30 @@ def _walk(
                 pending.append(path)
 
 
-def inspect_file(service, session, path: str, slot: int | None, side: int | None) -> dict:
+def inspect_file(
+    service,
+    session,
+    path: str,
+    slot: int | None,
+    side: int | None,
+    progress=None,
+) -> dict:
+    report = progress or (lambda _message, _current=None, _total=None: None)
+    report(f"Reading launcher {path}", 0, None)
     exported = service.export_file(session, slot, path, side)
     try:
         size = exported.stat().st_size
         with exported.open("rb") as source:
             preview = source.read(MAX_INSPECT_BYTES)
         truncated = size > len(preview)
-        digest = sha256_path(exported)
+        digest = sha256_path(
+            exported,
+            (
+                lambda current, total: report(
+                    f"Checksumming launcher {path}", current, total
+                )
+            ) if progress else None,
+        )
     finally:
         exported.unlink(missing_ok=True)
     basic = decode_basic(preview)
@@ -112,12 +128,19 @@ def inspect_file(service, session, path: str, slot: int | None, side: int | None
     }
 
 
-def dependency_report(service, session, path: str, slot: int | None, side: int | None) -> dict:
-    inspected = inspect_file(service, session, path, slot, side)
+def dependency_report(
+    service,
+    session,
+    path: str,
+    slot: int | None,
+    side: int | None,
+    progress=None,
+) -> dict:
+    inspected = inspect_file(service, session, path, slot, side, progress)
     parent = path.rsplit(".", 1)[0] if "." in path else "$"
     catalogue = [
         (candidate_path, row)
-        for candidate_path, row in _walk(service, session, slot, side)
+        for candidate_path, row in _walk(service, session, slot, side, progress)
         if row.get("type") not in {"dir", "directory"}
     ]
     by_path = {candidate_path.casefold(): (candidate_path, row) for candidate_path, row in catalogue}
@@ -286,8 +309,154 @@ def manifest_csv(manifest: dict) -> str:
     return output.getvalue()
 
 
-def duplicate_report(service, session) -> dict:
-    manifest = build_manifest(service, session)
+def _menu_search_record(entry: dict, *, menu_type: str, slot=None, root=None) -> dict:
+    filename = str(entry.get("filename") or "").strip()
+    disk_title = str(entry.get("diskTitle") or "").strip()
+    if root is not None:
+        directory = (
+            disk_title if disk_title.startswith("$")
+            else _join(str(root), disk_title) if disk_title
+            else str(root)
+        )
+        path = filename if filename.startswith("$") else _join(directory, filename) if filename else directory
+    else:
+        path = filename if filename.startswith("$") else _join("$", filename) if filename else "$"
+    return {
+        "virtual": True,
+        "resultType": "menu",
+        "kind": "menu",
+        "name": str(entry.get("title") or filename or disk_title or "Menu entry"),
+        "fileName": path.rsplit(".", 1)[-1] if filename else "",
+        "path": path,
+        "openable": bool(filename and (root is not None or slot is not None)),
+        "searchFields": {
+            "menu title": entry.get("title"),
+            "publisher": entry.get("publisher"),
+            "disk title": disk_title,
+            "launcher": filename,
+            "action": entry.get("action"),
+            "PAGE": entry.get("page"),
+            "menu type": menu_type,
+        },
+        **({"slot": int(slot)} if slot is not None else {}),
+    }
+
+
+def _project_offset(value) -> int | None:
+    try:
+        text = str(value).strip()
+        return int(text[1:], 16) if text.startswith("&") else int(text, 0)
+    except (TypeError, ValueError):
+        return None
+
+
+def workspace_metadata_records(service, session) -> list[dict]:
+    """Return bounded menu and saved-project records for workspace search."""
+    records: list[dict] = []
+    if session.kind == "mmb":
+        slots_by_title: dict[str, list[int]] = defaultdict(list)
+        for slot in service.list_slots(session):
+            if slot.get("formatted"):
+                slots_by_title[str(slot.get("name") or "").casefold()].append(int(slot["slot"]))
+        for menu in installed_mmb_menus(service, session):
+            menu_type = str(menu.get("type") or "")
+            if menu_type not in {"universal", "universal-4r", "spi-game-menu"}:
+                continue
+            data_file = "$.EGAMDAT" if menu_type == "universal-4r" else "$.GAMDATA"
+            try:
+                entries = parse_mmb_menu_data(
+                    service.read_file(session, int(menu["slot"]), data_file), menu_type
+                )
+            except DiskError:
+                continue
+            for entry in entries:
+                matching_slots = slots_by_title.get(str(entry.get("diskTitle") or "").casefold()) or [None]
+                records.extend(
+                    _menu_search_record(entry, menu_type=menu_type, slot=slot)
+                    for slot in matching_slots
+                )
+    elif session.kind == "adfs":
+        for menu in installed_adfs_menus(service, session):
+            records.extend(
+                _menu_search_record(
+                    entry,
+                    menu_type=str(menu.get("type") or "adfs-universal"),
+                    root=str(menu.get("root") or "$"),
+                )
+                for entry in menu.get("entries", [])
+            )
+    if session.kind == "rom":
+        project = session.rom_project or {}
+        identity = project.get("identity") or {}
+        records.append({
+            "virtual": True, "resultType": "rom-project", "kind": "rom-project",
+            "name": str(identity.get("title") or session.name), "path": "ROM project",
+            "openable": False, "romProject": True,
+            "searchFields": {
+                "title": identity.get("title"), "version": identity.get("version"),
+                "publisher": identity.get("publisher"), "platform": identity.get("platform"),
+                "identity notes": identity.get("notes"), "project notes": project.get("notes"),
+                "hardware": project.get("hardware"),
+            },
+        })
+        for address, label in dict(project.get("symbols") or {}).items():
+            records.append({
+                "virtual": True, "resultType": "rom-symbol", "kind": "rom-project",
+                "name": str(label), "path": "ROM project symbols", "openable": False,
+                "romProject": True, "romTab": "code", "address": address,
+                "searchFields": {"symbol": label, "address": address},
+            })
+        for region in project.get("regions") or []:
+            records.append({
+                "virtual": True, "resultType": "rom-region", "kind": "rom-project",
+                "name": str(region.get("name") or "ROM region"), "path": "ROM project regions",
+                "openable": False, "romProject": True, "romTab": "code",
+                "address": region.get("start"),
+                "searchFields": {
+                    "region": region.get("name"), "start": region.get("start"),
+                    "end": region.get("end"),
+                },
+            })
+    for key, project in list((session.editor_projects or {}).items())[:4096]:
+        parts = str(key).split("|", 2)
+        if len(parts) != 3:
+            continue
+        slot_text, side_text, path = parts
+        context = {
+            "path": path,
+            **({"slot": int(slot_text)} if slot_text != "-" else {}),
+            **({"side": int(side_text)} if side_text != "-" else {}),
+        }
+        common = {
+            "virtual": True, "kind": "project", "path": path,
+            "fileName": path.rsplit(".", 1)[-1], "openable": True, **context,
+        }
+        if project.get("notes"):
+            records.append({
+                **common, "resultType": "project-notes", "name": path.rsplit(".", 1)[-1],
+                "searchFields": {"project notes": project.get("notes")},
+            })
+        for offset, label in dict(project.get("symbols") or {}).items():
+            parsed_offset = _project_offset(offset)
+            if parsed_offset is None:
+                continue
+            records.append({
+                **common, "resultType": "project-symbol", "name": str(label),
+                "offset": parsed_offset, "searchFields": {"symbol": label, "offset": offset},
+            })
+        for offset, comment in dict(project.get("comments") or {}).items():
+            parsed_offset = _project_offset(offset)
+            if parsed_offset is None:
+                continue
+            records.append({
+                **common, "resultType": "project-comment", "name": path.rsplit(".", 1)[-1],
+                "offset": parsed_offset, "searchFields": {"comment": comment, "offset": offset},
+            })
+    return records[:20_000]
+
+
+def duplicate_report(service, session, progress=None) -> dict:
+    manifest = build_manifest(service, session, progress)
     exact: dict[str, list[dict]] = defaultdict(list)
     variants: dict[str, list[dict]] = defaultdict(list)
     for row in manifest["records"]:
@@ -655,27 +824,106 @@ def health_report(service, session, progress=None) -> dict:
     return {"status": score, "checks": checks, "repairable": repairable}
 
 
+COMPATIBILITY_REPORT_FORMAT = "acorn-file-forge-compatibility-report"
+COMPATIBILITY_REPORT_VERSION = 1
+
+
+def compatibility_report_markdown(report: dict) -> str:
+    lines = [
+        "# Acorn File Forge compatibility report",
+        "",
+        f"Operation: {report['operation']}",
+        f"Source: {report['source']['kind']}",
+        f"Target: {report['target']['kind']}",
+        f"Can proceed: {'yes' if report['canProceed'] else 'no'}",
+        "",
+        "## Items",
+        "",
+    ]
+    for item in report["items"]:
+        lines.append(f"### {item['sourceName'] or 'Unnamed item'}")
+        lines.append("")
+        lines.append(f"- Target name: `{item['targetName']}`")
+        lines.append(f"- Type: {item['type']}")
+        lines.append(f"- Load: {item['metadata']['load'] or 'not supplied'}")
+        lines.append(f"- Execute: {item['metadata']['execute'] or 'not supplied'}")
+        for conversion in item["conversions"]:
+            lines.append(f"- Conversion: {conversion}")
+        for loss in item["losses"]:
+            lines.append(f"- Metadata loss: {loss}")
+        lines.append("")
+    lines.extend(["## Findings", ""])
+    lines.extend(
+        f"- {finding['severity'].upper()}: {finding['message']}"
+        for finding in report["issues"]
+    )
+    if not report["issues"]:
+        lines.append("- No compatibility findings.")
+    return "\n".join(lines) + "\n"
+
+
 def preflight_report(service, session, payload: dict) -> dict:
     operation = str(payload.get("operation") or "review")
     changes = list(payload.get("changes") or [])
     issues = []
+    items = []
     seen = set()
-    limit = 7 if session.kind == "dfs" else 10 if session.kind == "adfs" else 12
+    target_kind = str(payload.get("targetKind") or session.kind)
+    source_kind = str(payload.get("sourceKind") or session.kind)
+    limit = 7 if target_kind in {"dfs", "mmb"} else 10 if target_kind == "adfs" else 12
     for offset, change in enumerate(changes):
         name = str(change.get("name") or change.get("destination") or "")
         leaf = name.rsplit(".", 1)[-1]
         normal = re.sub(r"[.:*#/\x00-\x1f]", "_", leaf)[:limit]
+        conversions = []
+        losses = []
         if normal != leaf:
             issues.append({"severity": "warning", "item": offset, "message": f"{leaf} becomes {normal or 'FILE'}"})
+            conversions.append(f"Filename {leaf} becomes {normal or 'FILE'}")
         key = normal.casefold()
         if key in seen:
             issues.append({"severity": "error", "item": offset, "message": f"{normal} clashes after target-name conversion"})
         seen.add(key)
-    return {
+        item_type = str(change.get("type") or "file")
+        if target_kind in {"dfs", "mmb"} and item_type in {"dir", "directory", "folder"}:
+            losses.append("The target DFS catalogue cannot preserve a hierarchical directory.")
+            issues.append({
+                "severity": "error", "item": offset,
+                "message": f"{leaf} is a directory, but the target DFS catalogue is flat",
+            })
+        if source_kind == "adfs" and target_kind in {"dfs", "mmb"} and change.get("filetype"):
+            losses.append("RISC OS filetype metadata is not represented directly by DFS.")
+        items.append({
+            "index": offset,
+            "sourceName": leaf,
+            "targetName": normal or "FILE",
+            "source": str(change.get("source") or ""),
+            "type": item_type,
+            "metadata": {
+                "load": str(change.get("load") or ""),
+                "execute": str(change.get("execute") or ""),
+                "access": str(change.get("access") or change.get("attr") or ""),
+                "filetype": str(change.get("filetype") or ""),
+            },
+            "conversions": conversions,
+            "losses": losses,
+        })
+    report = {
+        "format": COMPATIBILITY_REPORT_FORMAT,
+        "version": COMPATIBILITY_REPORT_VERSION,
         "operation": operation,
         "dryRun": True,
+        "source": {"kind": source_kind},
+        "target": {
+            "kind": target_kind,
+            "image": session.name,
+            "hardwareProfile": str((session.hardware_profile or {}).get("name") or ""),
+        },
         "changes": changes,
+        "items": items,
         "issues": issues,
         "canProceed": not any(item["severity"] == "error" for item in issues),
         "summary": f"{len(changes)} proposed changes, {len(issues)} findings",
     }
+    report["markdown"] = compatibility_report_markdown(report)
+    return report

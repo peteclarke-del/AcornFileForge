@@ -9,10 +9,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.errors import DiskError
-from app.image_diff import manifest_fingerprint
+from app.image_diff import compare_manifests, manifest_fingerprint
 from app.image_patch import (
     PATCH_FORMAT,
     _catalogue_address,
+    _selected_candidate_manifest,
     apply_patch_archive,
     inspect_patch_archive,
     write_patch_archive,
@@ -38,6 +39,25 @@ class PatchService:
 
 
 class ImagePatchTests(unittest.TestCase):
+    def test_selective_candidate_automatically_includes_a_required_parent_directory(self) -> None:
+        base = manifest("base", [])
+        candidate = manifest("candidate", [
+            {"recordType": "directory", "path": "$.Games", "size": 0},
+            {"recordType": "file", "path": "$.Games.NEW", "size": 9, "sha256": "new"},
+        ])
+        comparison = compare_manifests(base, candidate)
+        file_key = next(
+            row["key"] for row in comparison["changes"]["added"]
+            if row["after"]["recordType"] == "file"
+        )
+
+        derived, selection = _selected_candidate_manifest(
+            "adfs", base, candidate, comparison, [file_key]
+        )
+
+        self.assertEqual(len(derived["records"]), 2)
+        self.assertEqual(len(selection["automaticallyIncludedKeys"]), 1)
+
     def test_numeric_manifest_addresses_are_rendered_as_hexadecimal(self) -> None:
         self.assertEqual(_catalogue_address(1900), "76C")
         self.assertEqual(_catalogue_address("00001900"), "00001900")
@@ -91,6 +111,51 @@ class ImagePatchTests(unittest.TestCase):
         self.assertTrue(any(message.startswith("Cataloguing base image") for message in messages))
         self.assertIn("Compressing $.NEW", messages)
         self.assertEqual(updates[-1], ("Guarded patch archive is ready", 1, 1))
+
+    def test_patch_expands_a_proven_rename_into_guarded_remove_and_add_operations(self) -> None:
+        base = manifest("base", [
+            {"recordType": "file", "path": "$.OLD", "size": 9, "sha256": "same"},
+        ])
+        candidate = manifest("candidate", [
+            {"recordType": "file", "path": "$.NEW", "size": 9, "sha256": "same"},
+        ])
+        with tempfile.TemporaryDirectory() as folder:
+            destination = Path(folder) / "rename.affpatch.zip"
+            service = PatchService(Path(folder))
+            sessions = [SimpleNamespace(kind="dfs"), SimpleNamespace(kind="dfs")]
+            with patch("app.image_patch.build_manifest", side_effect=[base, candidate]):
+                document = write_patch_archive(service, *sessions, destination)
+            with patch("app.image_patch.build_manifest", return_value=base):
+                inspected = inspect_patch_archive(service, sessions[0], destination)
+
+        self.assertEqual(document["summary"]["renamed"], 1)
+        self.assertEqual([item["action"] for item in document["operations"]], ["removed", "added"])
+        self.assertEqual(inspected["operationCount"], 2)
+
+    def test_selective_patch_derives_and_verifies_its_own_candidate_fingerprint(self) -> None:
+        base = manifest("base", [
+            {"recordType": "file", "path": "$.CHANGED", "size": 3, "sha256": "old"},
+        ])
+        candidate = manifest("candidate", [
+            {"recordType": "file", "path": "$.CHANGED", "size": 13, "sha256": "changed"},
+            {"recordType": "file", "path": "$.NEW", "size": 9, "sha256": "new"},
+        ])
+        changed_key = compare_manifests(base, candidate)["changes"]["modified"][0]["key"]
+        with tempfile.TemporaryDirectory() as folder:
+            destination = Path(folder) / "selected.affpatch.zip"
+            service = PatchService(Path(folder))
+            sessions = [SimpleNamespace(kind="dfs"), SimpleNamespace(kind="dfs")]
+            with patch("app.image_patch.build_manifest", side_effect=[base, candidate]):
+                document = write_patch_archive(
+                    service, *sessions, destination, selected_keys=[changed_key]
+                )
+            with patch("app.image_patch.build_manifest", return_value=base):
+                inspected = inspect_patch_archive(service, sessions[0], destination)
+
+        self.assertEqual(document["summary"]["total"], 1)
+        self.assertEqual(document["selection"]["requestedKeys"], [changed_key])
+        self.assertEqual(len(document["candidateRecords"]), 1)
+        self.assertEqual(inspected["operationCount"], 1)
 
     def test_wrong_base_fingerprint_is_rejected_before_mutation(self) -> None:
         current = manifest("current", [{"recordType": "file", "path": "$.A", "sha256": "a", "size": 1}])

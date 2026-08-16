@@ -30,7 +30,13 @@ def _version(path: Path) -> str:
     return f"{stat.st_size:x}-{stat.st_mtime_ns:x}"
 
 
-def _compare_streams(source: BinaryIO, source_size: int, candidate: BinaryIO, candidate_size: int) -> dict:
+def _compare_streams(
+    source: BinaryIO,
+    source_size: int,
+    candidate: BinaryIO,
+    candidate_size: int,
+    progress=None,
+) -> dict:
     limit = min(source_size, candidate_size, MAX_COMPARE_BYTES)
     offset = 0
     count = abs(source_size - candidate_size)
@@ -47,6 +53,17 @@ def _compare_streams(source: BinaryIO, source_size: int, candidate: BinaryIO, ca
         compared = min(len(left), len(right))
         if not compared:
             break
+        if left[:compared] == right[:compared]:
+            if open_start is not None:
+                if len(ranges) < MAX_COMPARE_RANGES:
+                    ranges.append([open_start, open_end])
+                else:
+                    ranges_truncated = True
+                open_start = None
+            offset += compared
+            if progress:
+                progress(offset, limit)
+            continue
         for index, (current, other) in enumerate(zip(left[:compared], right[:compared])):
             absolute = offset + index
             if current == other:
@@ -65,10 +82,18 @@ def _compare_streams(source: BinaryIO, source_size: int, candidate: BinaryIO, ca
                 open_start = absolute
             open_end = absolute
         offset += compared
+        if progress:
+            progress(offset, limit)
     if open_start is not None and len(ranges) < MAX_COMPARE_RANGES:
         ranges.append([open_start, open_end])
     elif open_start is not None:
         ranges_truncated = True
+    if source_size != candidate_size:
+        tail = [min(source_size, candidate_size), max(source_size, candidate_size) - 1]
+        if len(ranges) < MAX_COMPARE_RANGES:
+            ranges.append(tail)
+        else:
+            ranges_truncated = True
     return {
         "count": count,
         "sourceSize": source_size,
@@ -92,6 +117,18 @@ def compare_raw_image(session: ImageSession, candidate: BinaryIO, candidate_size
 
 def compare_data(data: bytes, candidate: BinaryIO, candidate_size: int) -> dict:
     return _compare_streams(BytesIO(data), len(data), candidate, candidate_size)
+
+
+def compare_paths(source_path: Path, candidate_path: Path, progress=None) -> dict:
+    """Compare two local image components without loading either into memory."""
+    with source_path.open("rb") as source, candidate_path.open("rb") as candidate:
+        return _compare_streams(
+            source,
+            source_path.stat().st_size,
+            candidate,
+            candidate_path.stat().st_size,
+            progress,
+        )
 
 
 def raw_image_range(

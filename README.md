@@ -98,6 +98,9 @@ test important downloads before putting them onto real hardware.
 
 Bug reports and proposed improvements can be raised in the
 [GitHub repository](https://github.com/peteclarke-del/AcornFileForge).
+The [product backlog](docs/BACKLOG.md) records the agreed larger improvements,
+splits completed foundations from unfinished work and keeps them separate from
+the reusable release checklist.
 
 ## Documentation map
 
@@ -992,6 +995,23 @@ ADFS it means the current directory itself contains the installed menu files;
 navigating away disables the command and returning to that menu root enables
 it again.
 
+### Workspace search
+
+The header **Search** command scans every distinct open filesystem with one
+query, including every formatted MMB slot. It searches filenames, filetype and
+access metadata, load and execution addresses, bounded BASIC and script text,
+and useful printable strings inside binary files and raw ROM banks. Recognised
+MMB and ADFS menu titles, publishers, disk titles, launch actions and PAGE
+values are indexed too. ROM Workbench identity, symbols, regions, notes and
+saved disassembly comments participate in the same search. Enter an 8 to 64
+digit SHA-256 prefix to identify exact file content; the result shows the
+complete digest. Each result identifies its pane, image, path, DFS side, MMB
+slot or ROM bank. Opening a result restores and raises that pane, navigates to
+the containing location and opens the file, ROM Workbench tab or saved address.
+Binary-string results go directly to the matching disassembly or Hex offset.
+File scanning and result counts are bounded so an accidental broad query
+cannot consume unbounded memory.
+
 ### Manifests, duplicates, and variants
 
 **Export collection manifest** produces JSON or CSV. MMB JSON contains all
@@ -1008,15 +1028,27 @@ menu work.
 **Compare with open image** builds the same complete logical manifest for two
 open images and matches records by filesystem location, MMB slot, DFS side or
 ROM bank. Added and removed objects are separated from changed content and
-metadata-only changes. Full file and slot SHA-256 values distinguish a real
-payload change from allocation or directory movement. Each report includes
+metadata-only changes. A file that has moved or been renamed is reported
+directly when its content, size and filesystem context provide one unique
+match. Ambiguous duplicates remain separate additions and removals rather than
+being guessed. Full file and slot SHA-256 values distinguish a real payload
+change from allocation or directory movement. Each report includes
 deterministic base and candidate fingerprints and can be exported as JSON for
 review, automation or later patch planning. Comparing different filesystem
 families is allowed as an inventory exercise, but the result is explicitly
-marked as unsuitable for a directly applicable patch.
+marked as unsuitable for a directly applicable patch. The same report joins
+that logical evidence to changed raw-byte ranges for the primary image and,
+where present, its companion descriptor. Equal one-megabyte chunks are skipped
+as units, avoiding per-byte range construction across large unchanged HDD
+areas. The shared raw-comparison safety limit covers the first 1 GiB of the
+common span and explicitly marks larger comparisons as bounded.
 
 When two images use the same filesystem family, compatible DFS side layout and
-ROM bank size, the comparison can also create an `.affpatch.zip`. It contains a
+ROM bank size, the comparison can also create an `.affpatch.zip`. Tick logical
+changes to export only that reviewed subset, or leave every checkbox clear to
+export the full comparison. Selective patches derive a new candidate
+fingerprint and automatically close dependencies around new parent directories,
+removed directory descendants and complete MMB slots. The archive contains a
 readable patch plan plus only the added or changed payload bytes. Payloads are
 checksummed and streamed straight into the ZIP, so a large FileCore batch does
 not accumulate every changed file in application memory. Comparison, archive
@@ -1035,6 +1067,14 @@ during application restores that checkpoint, so a partial patch is not kept. A
 stale, damaged or wrong-format patch is rejected. A failed final verification
 reports the first mismatched logical object and the mutation wrapper restores
 the checkpoint rather than leaving a half-applied image.
+
+**Analyse → Dry-run selected items** produces the versioned Acorn File Forge
+compatibility-report document without writing to the image. It records the
+source and target format, proposed target name, load and execute addresses,
+access state and filetype for every selected item. Filename conversions,
+directory loss and unsupported RISC OS filetype metadata are attached to the
+individual item that caused them. The reviewed report can be downloaded as
+JSON for automation or Markdown for a package record.
 
 **Find duplicates / variants** uses full SHA-256 hashes for byte-identical
 content and a conservative normalised-title comparison for likely release or
@@ -2221,16 +2261,15 @@ Closing a work pane now detaches the image without deleting its server-side
 working copy. Reopen it through **Recover previous session**. Permanent removal
 is deliberately confined to the recovery dialog's confirmed **Clear** actions.
 
-The browser remembers the currently displayed one, two or three work panes and
-their order. A normal refresh reopens each
-image and returns to the same MMB slot, DFS side or ADFS directory. Closing a
-pane removes it from automatic reopening while keeping its recovery copy.
+The browser remembers every currently displayed work pane, its position, size,
+stacking state and order. A normal refresh reopens each image and returns to
+the same MMB slot, DFS side or ADFS directory. Closing a pane removes it from
+automatic reopening while keeping its recovery copy.
 On the first refresh after upgrading from a version without workspace memory,
 the newest working session owned by that browser is reopened automatically.
 This one-time bridge stops the upgrade itself returning active work to the
 empty start screen.
 
-The recovery dialog can permanently clear the selected previous session or all
 Use **Recover previous session** to remove individual retained sessions or clear
 the previous sessions shown there. Images currently open in any pane are
 omitted from those clearing controls. Clearing removes only Docker-side working

@@ -7,10 +7,12 @@ from unittest.mock import Mock, patch
 
 from app.analysis_service import (
     build_manifest,
+    dependency_report,
     duplicate_report,
     health_report,
     inspect_file,
     menu_test_report,
+    workspace_metadata_records,
     preflight_report,
 )
 from app.disk_service import DiskError, DiskService, ImageSession, MMB_HEADER_SIZE, MMB_SLOT_SIZE
@@ -18,6 +20,57 @@ from app.operations import OperationCancelled
 
 
 class AnalysisServiceTests(unittest.TestCase):
+    @patch("app.analysis_service.parse_mmb_menu_data")
+    @patch("app.analysis_service.installed_mmb_menus")
+    def test_workspace_metadata_exposes_mmb_menu_publishers_and_launchers(
+        self, installed, parse_menu,
+    ) -> None:
+        installed.return_value = [{"slot": 0, "type": "universal"}]
+        parse_menu.return_value = [{
+            "title": "Arcadians", "publisher": "Acornsoft",
+            "diskTitle": "ARCADIANS", "filename": "SSDMENU",
+            "action": "CHAIN", "page": "E00",
+        }]
+        service = Mock()
+        service.list_slots.return_value = [
+            {"slot": 20, "formatted": True, "name": "ARCADIANS"},
+        ]
+        service.read_file.return_value = b"menu"
+
+        records = workspace_metadata_records(service, Mock(kind="mmb", editor_projects={}))
+
+        self.assertEqual(records[0]["slot"], 20)
+        self.assertEqual(records[0]["fileName"], "SSDMENU")
+        self.assertEqual(records[0]["searchFields"]["publisher"], "Acornsoft")
+
+    def test_workspace_metadata_exposes_rom_symbols_regions_and_editor_comments(self) -> None:
+        session = Mock(
+            kind="rom",
+            name="TOOLS.rom",
+            rom_project={
+                "identity": {"title": "Development Tools"},
+                "symbols": {"32768": "service_entry"},
+                "regions": [{"start": "&8000", "end": "&80FF", "name": "Dispatch table"}],
+            },
+            editor_projects={
+                "-|-|bank:0": {
+                    "notes": "Reverse engineering notes",
+                    "symbols": {"&8010": "command_dispatch"},
+                    "comments": {"32": "Command parser"},
+                },
+            },
+        )
+
+        records = workspace_metadata_records(Mock(), session)
+
+        self.assertTrue(any(row.get("resultType") == "rom-symbol" for row in records))
+        self.assertTrue(any(row.get("resultType") == "rom-region" for row in records))
+        comment = next(row for row in records if row.get("resultType") == "project-comment")
+        self.assertEqual(comment["offset"], 32)
+        self.assertEqual(comment["fileName"], "bank:0")
+        saved_symbol = next(row for row in records if row.get("resultType") == "project-symbol")
+        self.assertEqual(saved_symbol["offset"], 0x8010)
+
     def test_preflight_reports_target_truncation_and_collision(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "disk.adl"
@@ -31,8 +84,35 @@ class AnalysisServiceTests(unittest.TestCase):
             )
 
             self.assertFalse(report["canProceed"])
+            self.assertEqual(report["format"], "acorn-file-forge-compatibility-report")
+            self.assertEqual(report["version"], 1)
+            self.assertEqual(report["items"][0]["sourceName"], "LONG-FILENAME")
+            self.assertEqual(report["items"][0]["targetName"], "LONG-FILEN")
             self.assertTrue(any("becomes" in item["message"] for item in report["issues"]))
             self.assertTrue(any("clashes" in item["message"] for item in report["issues"]))
+            self.assertIn("# Acorn File Forge compatibility report", report["markdown"])
+
+    def test_preflight_records_per_item_directory_and_filetype_losses(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "disk.ssd"
+            path.write_bytes(b"image")
+            session = ImageSession("b" * 32, path.name, "dfs", path)
+
+            report = preflight_report(
+                DiskService(folder),
+                session,
+                {
+                    "operation": "copy",
+                    "sourceKind": "adfs",
+                    "targetKind": "dfs",
+                    "changes": [{"name": "Games", "type": "directory", "filetype": "FF8"}],
+                },
+            )
+
+            self.assertFalse(report["canProceed"])
+            self.assertEqual(len(report["items"][0]["losses"]), 2)
+            self.assertIn("hierarchical directory", report["items"][0]["losses"][0])
+            self.assertIn("RISC OS filetype", report["items"][0]["losses"][1])
 
     def test_inspector_decodes_plain_text_loader_commands(self) -> None:
         service = Mock()
@@ -86,6 +166,15 @@ class AnalysisServiceTests(unittest.TestCase):
         self.assertEqual(len(report["gameDuplicates"]), 1)
         self.assertEqual({item["diskTitle"] for item in report["gameDuplicates"][0]}, {"ALPHA DISK", "BETA DISK"})
         self.assertEqual([[item["slot"] for item in group] for group in report["contentMatches"]], [[10, 20]])
+
+    @patch("app.analysis_service.build_manifest")
+    def test_duplicate_finder_forwards_progress_to_manifest_build(self, manifest) -> None:
+        manifest.return_value = {"records": [], "menus": []}
+        progress = Mock()
+
+        duplicate_report(Mock(), Mock(kind="dfs"), progress)
+
+        self.assertIs(manifest.call_args.args[2], progress)
 
     @patch("app.analysis_service.test_installed_adfs_menu_entries")
     def test_adfs_menu_runner_reports_proven_page_mismatch(self, test_entries) -> None:
@@ -177,6 +266,25 @@ class AnalysisServiceTests(unittest.TestCase):
         self.assertEqual(menu_check["findings"][0]["menuSlot"], 0)
         self.assertEqual(menu_check["findings"][0]["title"], "Example Game")
         self.assertIn("required disk title", menu_check["findings"][0]["problems"][0])
+
+    def test_dependency_scan_honours_cancellation_during_catalogue_walk(self) -> None:
+        service = Mock()
+        temporary = tempfile.NamedTemporaryFile(delete=False)
+        temporary.write(b'CHAIN "GAME"\r')
+        temporary.close()
+        service.export_file.return_value = Path(temporary.name)
+        service.list_directory.return_value = {"entries": []}
+        session = Mock(kind="adfs")
+
+        def abort(message, _current, _total):
+            if message.startswith("Reading directory"):
+                raise OperationCancelled("Stopped safely")
+
+        try:
+            with self.assertRaises(OperationCancelled):
+                dependency_report(service, session, "$.!BOOT", None, None, abort)
+        finally:
+            Path(temporary.name).unlink(missing_ok=True)
 
     @patch("app.analysis_service.installed_mmb_menus")
     def test_mmb_menu_test_itemises_unreadable_menu_database(self, installed_menus) -> None:
