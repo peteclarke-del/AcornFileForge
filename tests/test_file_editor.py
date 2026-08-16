@@ -8,6 +8,7 @@ from unittest.mock import Mock
 
 from oaknut.basic import detokenise, tokenise
 
+from app.checksum import sha256_bytes
 from app.content_kind import analyse_content, metadata_kind
 from app.disk_service import DiskService
 from app.file_editor import (
@@ -27,6 +28,7 @@ from app.file_editor import (
     verify_basic_source,
     write_file_range,
 )
+from app.operations import OperationCancelled
 from tests.uef_fixture import minimal_uef
 
 
@@ -107,6 +109,100 @@ class FileEditorTests(unittest.TestCase):
         self.assertEqual(report["filesConsidered"], 2)
         self.assertEqual(report["results"][0]["slot"], 2)
         self.assertEqual(report["results"][0]["diskTitle"], "REPTON")
+
+    def test_image_search_matches_catalogue_addresses_and_access_metadata(self):
+        service = Mock()
+        service.list_dfs_catalogue_files.return_value = [{
+            "name": "GAME", "path": "$.GAME", "length": 4,
+            "loadHex": "00001900", "executeHex": "00008023", "attr": "L",
+        }]
+        service.read_file.return_value = b"\x00\x01\x02\x03"
+
+        report = search_image_files(
+            service, SimpleNamespace(kind="dfs"), "&1900", None, None,
+        )
+
+        self.assertEqual(report["results"][0]["metadataMatches"], ["load"])
+
+    def test_image_search_accepts_a_sha256_prefix_and_returns_the_full_digest(self):
+        service = Mock()
+        content = b"A uniquely hashed Acorn file"
+        service.list_dfs_catalogue_files.return_value = [{
+            "name": "HASHED", "path": "$.HASHED", "length": len(content),
+        }]
+        service.read_file.return_value = content
+        digest = sha256_bytes(content)
+
+        report = search_image_files(
+            service, SimpleNamespace(kind="dfs"), digest[:12], None, None,
+        )
+
+        self.assertTrue(report["results"][0]["hashMatch"])
+        self.assertEqual(report["results"][0]["sha256"], digest)
+
+    def test_image_search_reports_a_useful_binary_string_offset(self):
+        service = Mock()
+        content = bytes(range(32)) + b"LOAD GAME DATA" + bytes(range(32))
+        service.list_dfs_catalogue_files.return_value = [{
+            "name": "CODE", "path": "$.CODE", "length": len(content),
+        }]
+        service.read_file.return_value = content
+
+        report = search_image_files(
+            service, SimpleNamespace(kind="dfs"), "game data", None, None,
+        )
+
+        self.assertEqual(report["results"][0]["matches"][0]["offset"], 32)
+
+    def test_image_search_honours_cancellation_between_files(self):
+        service = Mock()
+        service.list_dfs_catalogue_files.return_value = [
+            {"name": "ONE", "path": "$.ONE", "length": 1},
+            {"name": "TWO", "path": "$.TWO", "length": 1},
+        ]
+        service.read_file.return_value = b"X"
+
+        def cancel(message, current, _total):
+            if message.startswith("Searching") and current == 1:
+                raise OperationCancelled("Stopped safely")
+
+        with self.assertRaises(OperationCancelled):
+            search_image_files(
+                service, SimpleNamespace(kind="dfs"), "missing", None, None,
+                progress=cancel,
+            )
+
+    def test_image_search_includes_installed_menu_and_project_metadata(self):
+        service = Mock()
+        service.list_dfs_catalogue_files.return_value = []
+        supplemental = [{
+            "virtual": True, "resultType": "menu", "kind": "menu",
+            "name": "Arcadians", "fileName": "SSDMENU", "path": "$.SSDMENU",
+            "slot": 20, "openable": True,
+            "searchFields": {"publisher": "Acornsoft", "action": "CHAIN"},
+        }]
+
+        report = search_image_files(
+            service, SimpleNamespace(kind="dfs"), "acornsoft", None, None,
+            supplemental=supplemental,
+        )
+
+        self.assertEqual(report["results"][0]["metadataMatches"], ["publisher"])
+        self.assertEqual(report["results"][0]["fileName"], "SSDMENU")
+
+    def test_image_search_reads_raw_rom_banks(self):
+        service = Mock()
+        service.list_rom_banks.return_value = [{
+            "bank": 0, "name": "Network ROM", "length": 64,
+        }]
+        service.read_file.return_value = bytes(16) + b"NETWORK COMMAND" + bytes(33)
+
+        report = search_image_files(
+            service, SimpleNamespace(kind="rom"), "network command", None, None,
+        )
+
+        self.assertEqual(report["results"][0]["path"], "bank:0")
+        self.assertEqual(report["results"][0]["matches"][0]["offset"], 16)
 
     def test_basic_listing_always_has_a_space_after_the_line_number(self):
         self.assertEqual(
