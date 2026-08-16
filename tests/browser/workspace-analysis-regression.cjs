@@ -56,9 +56,48 @@ const target = process.env.ACORN_FILE_FORGE_URL || "http://127.0.0.1:8666";
     await page.waitForFunction(() => !document.querySelector(".workspace-search-status")?.textContent.includes("Searching"));
     const searchStatus = await page.locator(".workspace-search-status").textContent();
     if (!searchStatus.includes("across 2 images")) throw new Error(`Workspace search omitted an image: ${searchStatus}`);
+    const searchJobs = await page.evaluate(async () => {
+      const response = await fetch("/api/operations");
+      const data = await response.json();
+      return data.operations.filter(item => item.message === "Workspace image search complete");
+    });
+    if (searchJobs.length !== 2 || searchJobs.some(item => item.state !== "complete")) {
+      throw new Error(`Workspace searches were not tracked to completion: ${JSON.stringify(searchJobs)}`);
+    }
     await page.locator("#modal .modal-close").click();
 
     const firstPane = page.locator('.pane[data-pane="0"]');
+    await firstPane.locator("summary", { hasText: "Analyse" }).click();
+    await firstPane.locator(".export-manifest").click();
+    const [manifestDownload] = await Promise.all([
+      page.waitForEvent("download"),
+      page.locator('[data-manifest="json"]').click(),
+    ]);
+    if (!manifestDownload.suggestedFilename().endsWith("-manifest.json")) {
+      throw new Error(`Manifest used an unexpected filename: ${manifestDownload.suggestedFilename()}`);
+    }
+    const manifestJob = await page.evaluate(async () => {
+      const response = await fetch("/api/operations");
+      const data = await response.json();
+      return data.operations.find(item => item.message === "Collection manifest ready");
+    });
+    if (!manifestJob || manifestJob.state !== "complete") {
+      throw new Error(`Manifest export was not tracked to completion: ${JSON.stringify(manifestJob)}`);
+    }
+
+    await firstPane.locator("summary", { hasText: "Analyse" }).click();
+    await firstPane.locator(".find-duplicates").click();
+    await page.locator(".duplicate-groups").waitFor();
+    const duplicateJob = await page.evaluate(async () => {
+      const response = await fetch("/api/operations");
+      const data = await response.json();
+      return data.operations.find(item => item.message === "Duplicate analysis complete");
+    });
+    if (!duplicateJob || duplicateJob.state !== "complete") {
+      throw new Error(`Duplicate analysis was not tracked to completion: ${JSON.stringify(duplicateJob)}`);
+    }
+    await page.locator("#modal .modal-close").click();
+
     await firstPane.locator("summary", { hasText: "Analyse" }).click();
     const compare = firstPane.locator(".compare-image");
     if (await compare.isDisabled()) throw new Error("Comparison was disabled with two different images open");
@@ -77,8 +116,11 @@ const target = process.env.ACORN_FILE_FORGE_URL || "http://127.0.0.1:8666";
       const data = await response.json();
       return data.operations.find(item => item.message === "Image comparison complete");
     });
-    if (!comparisonJob || comparisonJob.state !== "complete" || comparisonJob.current !== 2 || comparisonJob.total !== 2) {
+    if (!comparisonJob || comparisonJob.state !== "complete" || comparisonJob.current !== 3 || comparisonJob.total !== 3) {
       throw new Error(`Comparison did not retain useful operation progress: ${JSON.stringify(comparisonJob)}`);
+    }
+    if (!(await page.locator(".raw-comparison").textContent()).includes("Primary image")) {
+      throw new Error("The comparison omitted raw component evidence");
     }
     const dialogBox = await page.locator("#modal").boundingBox();
     const contentBox = await page.locator(".image-comparison-dialog").boundingBox();
@@ -94,6 +136,31 @@ const target = process.env.ACORN_FILE_FORGE_URL || "http://127.0.0.1:8666";
       });
       if (!response.ok) throw new Error((await response.json()).error || "Could not prepare patch candidate");
     }, ids[1]);
+
+    const selectivePatch = await page.evaluate(async imageIds => {
+      const comparisonResponse = await fetch(`/api/images/${imageIds[0]}/compare`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ otherImage: imageIds[1] }),
+      });
+      const comparison = await comparisonResponse.json();
+      if (!comparisonResponse.ok) throw new Error(comparison.error || "Could not refresh comparison");
+      const selectedKeys = comparison.changes.added.map(change => change.key);
+      const response = await fetch(`/api/images/${imageIds[0]}/patch/build`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ otherImage: imageIds[1], selectedKeys }),
+      });
+      if (!response.ok) throw new Error((await response.json()).error || "Could not create selective patch");
+      return {
+        type: response.headers.get("content-type"),
+        disposition: response.headers.get("content-disposition"),
+        size: (await response.blob()).size,
+      };
+    }, ids);
+    if (!selectivePatch.type?.includes("zip") || !selectivePatch.disposition?.includes("affpatch.zip") || selectivePatch.size < 100) {
+      throw new Error(`Selective patch download was invalid: ${JSON.stringify(selectivePatch)}`);
+    }
 
     await page.locator("#modal .modal-close").click();
     await firstPane.locator("summary", { hasText: "Analyse" }).click();

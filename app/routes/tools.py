@@ -23,6 +23,7 @@ from ..analysis_service import (
     manifest_csv,
     menu_test_report,
     preflight_report,
+    workspace_metadata_records,
 )
 from ..checksum import sha256_bytes
 from ..disk_service import DiskError, DiskService
@@ -388,7 +389,13 @@ def create_tools_blueprint(
     @blueprint.get("/api/images/<image_id>/manifest")
     def manifest(image_id):
         session = service.get(image_id)
-        report = build_manifest(service, session)
+        operation_id = request.args.get("operationId")
+        with operations.tracked(
+            operation_id,
+            "Cataloguing image contents",
+            "Collection manifest ready",
+        ) as progress:
+            report = build_manifest(service, session, progress)
         output_format = request.args.get("format", "json").lower()
         if output_format == "csv":
             body = manifest_csv(report)
@@ -431,6 +438,23 @@ def create_tools_blueprint(
     def create_image_patch(image_id):
         operation_id = request.args.get("operationId")
         other_image_id = str(request.args.get("otherImage") or "").strip()
+        return _create_patch_download(image_id, other_image_id, operation_id, None)
+
+    @blueprint.post("/api/images/<image_id>/patch/build")
+    @request_effect("read-only", "building a selective guarded image patch")
+    def create_selective_image_patch(image_id):
+        data = payload()
+        selected_keys = data.get("selectedKeys")
+        if not isinstance(selected_keys, list):
+            raise DiskError("A selective patch requires a reviewed list of change keys.")
+        return _create_patch_download(
+            image_id,
+            str(data.get("otherImage") or "").strip(),
+            str(data.get("operationId") or "").strip() or None,
+            [str(key) for key in selected_keys],
+        )
+
+    def _create_patch_download(image_id, other_image_id, operation_id, selected_keys):
         if not other_image_id or other_image_id == image_id:
             raise DiskError("Choose a different open image as the patch candidate.")
         base, candidate = service.get(image_id), service.get(other_image_id)
@@ -444,7 +468,10 @@ def create_tools_blueprint(
                 "Cataloguing images for a guarded patch",
                 "Guarded patch archive ready",
             ) as progress:
-                write_patch_archive(service, base, candidate, patch_path, progress)
+                write_patch_archive(
+                    service, base, candidate, patch_path, progress,
+                    selected_keys=selected_keys,
+                )
         except Exception:
             patch_path.unlink(missing_ok=True)
             raise
@@ -514,7 +541,13 @@ def create_tools_blueprint(
 
     @blueprint.get("/api/images/<image_id>/duplicates")
     def duplicates(image_id):
-        return jsonify(duplicate_report(service, service.get(image_id)))
+        operation_id = request.args.get("operationId")
+        with operations.tracked(
+            operation_id,
+            "Hashing image contents for duplicate analysis",
+            "Duplicate analysis complete",
+        ) as progress:
+            return jsonify(duplicate_report(service, service.get(image_id), progress))
 
     @blueprint.get("/api/images/<image_id>/menu-tests")
     def menu_tests(image_id):
@@ -544,23 +577,38 @@ def create_tools_blueprint(
         path = request.args.get("path", "")
         if not path:
             raise DiskError("Choose a launcher to inspect.")
-        return jsonify(dependency_report(
-            service,
-            session,
-            path,
-            optional_int(request.args.get("slot")),
-            optional_int(request.args.get("side")),
-        ))
+        operation_id = request.args.get("operationId")
+        with operations.tracked(
+            operation_id,
+            "Indexing launcher dependencies",
+            "Dependency analysis complete",
+        ) as progress:
+            return jsonify(dependency_report(
+                service,
+                session,
+                path,
+                optional_int(request.args.get("slot")),
+                optional_int(request.args.get("side")),
+                progress,
+            ))
 
     @blueprint.get("/api/images/<image_id>/inspect/search")
     def search_inspected_files(image_id):
         session = service.get(image_id)
-        return jsonify(search_image_files(
-            service, session, str(request.args.get("query") or ""),
-            optional_int(request.args.get("slot")), optional_int(request.args.get("side")),
-            str(request.args.get("root") or "$"),
-            str(request.args.get("allSlots") or "false").lower() in {"1", "true", "yes"},
-        ))
+        operation_id = request.args.get("operationId")
+        with operations.tracked(
+            operation_id,
+            "Searching image catalogue and file content",
+            "Workspace image search complete",
+        ) as progress:
+            return jsonify(search_image_files(
+                service, session, str(request.args.get("query") or ""),
+                optional_int(request.args.get("slot")), optional_int(request.args.get("side")),
+                str(request.args.get("root") or "$"),
+                str(request.args.get("allSlots") or "false").lower() in {"1", "true", "yes"},
+                progress,
+                workspace_metadata_records(service, session),
+            ))
 
     @blueprint.put("/api/images/<image_id>/inspect")
     @image_mutation("editing a BASIC or text file")

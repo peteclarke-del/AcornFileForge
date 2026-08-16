@@ -6,7 +6,7 @@ from io import BytesIO
 from pathlib import Path
 
 from app.disk_service import DiskError, DiskService, ImageSession
-from app.hex_service import compare_data, raw_image_range, search_raw_image, write_raw_image
+from app.hex_service import compare_data, compare_paths, raw_image_range, search_raw_image, write_raw_image
 
 
 class HexServiceTests(unittest.TestCase):
@@ -109,9 +109,24 @@ class HexServiceTests(unittest.TestCase):
 
         self.assertEqual(report["count"], 10)
         self.assertEqual(report["differences"], [2, 3, 7, 8])
-        self.assertEqual(report["ranges"], [[2, 3], [7, 8]])
+        self.assertEqual(report["ranges"], [[2, 3], [7, 8], [9, 14]])
         self.assertEqual(report["sourceSize"], len(source))
         self.assertEqual(report["candidateSize"], len(candidate))
+
+    def test_path_comparison_streams_progress_and_skips_equal_chunks(self):
+        candidate = self.root / "candidate.ssd"
+        source = b"A" * (1024 * 1024) + b"B"
+        candidate.write_bytes(source[:-1] + b"C")
+        self.path.write_bytes(source)
+        updates = []
+
+        report = compare_paths(
+            self.path, candidate, lambda current, total: updates.append((current, total))
+        )
+
+        self.assertEqual(report["count"], 1)
+        self.assertEqual(report["ranges"], [[len(source) - 1, len(source) - 1]])
+        self.assertEqual(updates[-1], (len(source), len(source)))
 
 
 if __name__ == "__main__":

@@ -55,6 +55,113 @@ def _patch_changes(kind: str, comparison: dict):
             if kind == "rom" and record_type != "rom-bank":
                 continue
             yield action, change, row
+    for change in comparison["changes"].get("renamed", []):
+        before, after = change["before"], change["after"]
+        if kind in {"mmb", "rom"}:
+            continue
+        for action, row in (("removed", before), ("added", after)):
+            operation_change = {
+                "key": record_key(row),
+                "before": before if action == "removed" else None,
+                "after": after if action == "added" else None,
+                "changedFields": ["path"],
+            }
+            yield action, operation_change, row
+
+
+def _change_patchable(kind: str, change: dict) -> bool:
+    row = change.get("after") or change.get("before") or {}
+    if kind == "mmb":
+        return row.get("recordType") == "slot"
+    if kind == "rom":
+        return row.get("recordType") == "rom-bank"
+    return kind != "tape"
+
+
+def _parent_paths(path: str) -> list[str]:
+    parts = str(path or "").split(".")
+    return [".".join(parts[:index]) for index in range(1, len(parts)) if parts[index - 1] != "$"]
+
+
+def _selected_candidate_manifest(
+    kind: str,
+    base: dict,
+    candidate: dict,
+    comparison: dict,
+    selected_keys: list[str],
+) -> tuple[dict, dict]:
+    """Build a dependency-closed candidate for a reviewed logical subset."""
+    changes = {
+        change["key"]: (category, change)
+        for category, rows in comparison["changes"].items()
+        for change in rows
+        if _change_patchable(kind, change)
+    }
+    requested = {str(key) for key in selected_keys if str(key)}
+    unknown = sorted(requested - changes.keys())
+    if unknown:
+        raise DiskError(f"The selected patch item is unavailable or dependent-only: {unknown[0]}.")
+    if not requested:
+        raise DiskError("Select at least one independent change for a selective patch.")
+    selected = set(requested)
+    by_after_path = {
+        str(change.get("after", {}).get("path") or "").casefold(): key
+        for key, (category, change) in changes.items()
+        if category in {"added", "renamed"} and change.get("after", {}).get("path")
+    }
+    expanded = True
+    while expanded:
+        expanded = False
+        for key in list(selected):
+            category, change = changes[key]
+            after_path = str(change.get("after", {}).get("path") or "")
+            if category in {"added", "renamed"}:
+                for parent in _parent_paths(after_path):
+                    dependency = by_after_path.get(parent.casefold())
+                    if dependency and dependency not in selected:
+                        selected.add(dependency)
+                        expanded = True
+            before = change.get("before") or {}
+            if category == "removed" and before.get("recordType") == "directory":
+                prefix = str(before.get("path") or "").casefold() + "."
+                for dependency, (other_category, other) in changes.items():
+                    other_path = str((other.get("before") or {}).get("path") or "").casefold()
+                    if other_category == "removed" and other_path.startswith(prefix) and dependency not in selected:
+                        selected.add(dependency)
+                        expanded = True
+
+    base_records = {record_key(row): dict(row) for row in base.get("records", [])}
+    candidate_records = [dict(row) for row in candidate.get("records", [])]
+    candidate_by_key = {record_key(row): row for row in candidate_records}
+    if kind == "mmb":
+        slots = {
+            int((changes[key][1].get("after") or changes[key][1].get("before"))["slot"])
+            for key in selected
+        }
+        for key, row in list(base_records.items()):
+            if row.get("slot") is not None and int(row["slot"]) in slots:
+                base_records.pop(key)
+        for row in candidate_records:
+            if row.get("slot") is not None and int(row["slot"]) in slots:
+                base_records[record_key(row)] = row
+    else:
+        for key in sorted(selected):
+            category, change = changes[key]
+            before, after = change.get("before"), change.get("after")
+            if category in {"removed", "renamed"} and before:
+                base_records.pop(record_key(before), None)
+            if category in {"added", "renamed", "modified", "metadata"} and after:
+                base_records[record_key(after)] = candidate_by_key.get(record_key(after), dict(after))
+    derived = {
+        "image": candidate.get("image", {}),
+        "records": sorted(base_records.values(), key=record_key),
+        "menus": candidate.get("menus", []),
+    }
+    return derived, {
+        "requestedKeys": sorted(requested),
+        "includedKeys": sorted(selected),
+        "automaticallyIncludedKeys": sorted(selected - requested),
+    }
 
 
 def _payload_required(kind: str, operation: dict) -> bool:
@@ -242,6 +349,7 @@ def inspect_patch_archive(service, session, archive_path: Path, progress=None) -
         "payloadBytes": payload_bytes,
         "operations": document["operations"][:200],
         "truncated": len(document["operations"]) > 200,
+        "selection": document.get("selection"),
     }
 
 
@@ -269,6 +377,7 @@ def write_patch_archive(
     candidate_session,
     destination: Path,
     progress=None,
+    selected_keys: list[str] | None = None,
 ) -> dict:
     report = progress or (lambda _message, _current=None, _total=None: None)
     report(f"Cataloguing base image {_session_label(base_session)}", 0, None)
@@ -283,6 +392,12 @@ def write_patch_archive(
         raise DiskError("Patch sets require matching DFS side layouts or ROM bank sizes.")
     if base_session.kind == "tape":
         raise DiskError("UEF tape images are read-only and cannot receive patch sets.")
+    selection = None
+    if selected_keys is not None:
+        candidate, selection = _selected_candidate_manifest(
+            base_session.kind, base, candidate, comparison, selected_keys
+        )
+        comparison = compare_manifests(base, candidate)
 
     operation_count = sum(1 for _item in _patch_changes(base_session.kind, comparison))
     if operation_count > MAX_OPERATIONS:
@@ -347,6 +462,7 @@ def write_patch_archive(
             "candidateRecords": candidate.get("records", []),
             "summary": comparison["summary"],
             "operations": operations,
+            **({"selection": selection} if selection else {}),
         }
         archive.writestr("patch.json", json.dumps(document, indent=2, ensure_ascii=False))
     report("Guarded patch archive is ready", operation_count, operation_count)
@@ -550,7 +666,7 @@ def apply_patch_archive(service, session, archive_path: Path, progress=None) -> 
                 {"image": document.get("candidate", {}), "records": expected_records},
                 result,
             )
-            for category in ("added", "removed", "modified", "metadata"):
+            for category in ("added", "removed", "renamed", "modified", "metadata"):
                 if not verification["changes"][category]:
                     continue
                 mismatch = verification["changes"][category][0]

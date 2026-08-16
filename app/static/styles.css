@@ -725,15 +725,18 @@ dialog:has(.patch-preflight-dialog) { width: min(760px, calc(100vw - 30px)); }
 .patch-operation-preview > div:last-child { border-bottom: 0; }
 .patch-operation-preview b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .patch-operation-preview small { color: var(--muted); font: 9px DM Mono, monospace; }
-.comparison-summary { display: grid; grid-template-columns: repeat(5, minmax(86px, 1fr)); gap: 6px; margin-bottom: 10px; }
+.comparison-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(86px, 1fr)); gap: 6px; margin-bottom: 10px; }
 .comparison-summary strong { display: grid; padding: 8px; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); font-size: 9px; text-transform: uppercase; }
 .comparison-summary span { color: var(--ink); font-size: 18px; }
 .comparison-change-list { display: grid; gap: 6px; }
 .comparison-change-list details { border: 1px solid var(--line); border-radius: 5px; }
 .comparison-change-list summary { padding: 8px; cursor: pointer; font-weight: 700; }
-.comparison-change-list details > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 6px 9px; border-top: 1px solid var(--line); }
+.comparison-change-list details > div { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; padding: 6px 9px; border-top: 1px solid var(--line); align-items: center; }
 .comparison-change-list b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .comparison-change-list small { color: var(--muted); }
+.patch-choice-placeholder { width: 13px; }
+.raw-comparison section { display: grid; grid-template-columns: minmax(130px, auto) minmax(0, 1fr); gap: 4px 12px; padding: 8px 9px; border-top: 1px solid var(--line); }
+.raw-comparison section code, .raw-comparison section em { grid-column: 1 / -1; font-size: 10px; }
 @media (max-width: 720px) {
   .workspace-search-controls, .image-comparison-dialog > label { grid-template-columns: 1fr; }
   .comparison-summary { grid-template-columns: repeat(2, minmax(86px, 1fr)); }

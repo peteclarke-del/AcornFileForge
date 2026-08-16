@@ -3719,7 +3719,7 @@ function configureRomfs(index) {
   });
 }
 
-async function showRomWorkbench(index) {
+async function showRomWorkbench(index, initial = {}) {
   const pane = panes[index];
   if (pane?.image?.kind !== "rom") return;
   const imageId = pane.image.id;
@@ -3832,6 +3832,16 @@ async function showRomWorkbench(index) {
   root.querySelector(".save-rom-project").onclick = async () => { const symbols={}; root.querySelector('[name="projectSymbols"]').value.split(/\n/).forEach(line=>{const split=line.indexOf("=");if(split>0)symbols[line.slice(0,split).trim()]=line.slice(split+1).trim();}); const regions=[]; root.querySelector('[name="projectRegions"]').value.split(/\n/).forEach(line=>{const match=line.match(/^\s*([^\s-]+)\s*-\s*([^\s=]+)\s*=\s*(.+)$/);if(match)regions.push({start:match[1],end:match[2],name:match[3].trim()});}); const data=await api(`/api/images/${imageId}/rom/project`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({...project,hardware:root.querySelector('[name="projectHardware"]').value,notes:root.querySelector('[name="projectNotes"]').value,symbols,regions})});pane.image=data.image;toast("ROM project metadata saved"); };
   root.querySelector(".save-rom-identity").onclick = async () => { const body={title:root.querySelector('[name="identityTitle"]').value,version:root.querySelector('[name="identityVersion"]').value,publisher:root.querySelector('[name="identityPublisher"]').value,platform:root.querySelector('[name="identityPlatform"]').value,notes:root.querySelector('[name="identityNotes"]').value};const data=await api(`/api/images/${imageId}/rom/identity`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});pane.image=data.image;toast("ROM identity saved against its exact fingerprint"); };
   root.querySelector(".run-rom-emulator").onclick = async () => { const data=await api(`/api/images/${imageId}/rom/emulator`,{method:"POST"});root.querySelector(".rom-emulator-output").textContent=`Exit ${data.result.returnCode}\n${data.result.stdout}\n${data.result.stderr}`; };
+  if (initial.tab) activate(initial.tab);
+  if (initial.tab === "code" && initial.address != null) {
+    const rawAddress = String(initial.address).trim().replace(/^&/, "0x");
+    const address = Number(rawAddress);
+    if (Number.isFinite(address)) {
+      root.querySelector('[name="disasmBank"]').value = String(initial.bank ?? 0);
+      root.querySelector('[name="disasmOffset"]').value = `0x${Math.max(0, address >= 0x8000 ? address - 0x8000 : address).toString(16).toUpperCase()}`;
+      root.querySelector(".run-disassembly").click();
+    }
+  }
 }
 
 async function prepareHostFileMetadata(files) {
@@ -7279,6 +7289,10 @@ async function showSelectionPreflight(index) {
     name: entry.name,
     source: pane.image.kind === "mmb" && pane.slot === null ? `Slot ${entry.slot}` : entryImagePath(pane, entry),
     type: entry.type,
+    load: entry.loadHex || entry.load || "",
+    execute: entry.executeHex || entry.exec || entry.execute || "",
+    access: entry.attr || entry.access || "",
+    filetype: entry.filetype || "",
   }));
   if (!items.length) return toast("Select one or more items to dry-run.", true);
   analysisLoading("Dry-run preflight", `Reviewing ${items.length} selected item${items.length === 1 ? "" : "s"}…`);
@@ -7288,9 +7302,16 @@ async function showSelectionPreflight(index) {
       body: JSON.stringify({ operation: "selection", changes: items })
     });
     if (!replaceAnalysisLoading(`<div class="analysis-dialog wide-analysis"><small>PREFLIGHT / NO IMAGE WRITES</small><h2>${esc(report.summary)}</h2>
-      <div class="preflight-list">${items.map((item, offset) => `<article><b>${offset + 1}</b><span><strong>${esc(item.name)}</strong><small>${esc(item.source)} · ${esc(item.type)}</small></span></article>`).join("")}</div>
+      <div class="preflight-list">${report.items.map(item => `<article><b>${item.index + 1}</b><span><strong>${esc(item.sourceName)}${item.targetName !== item.sourceName ? ` → ${esc(item.targetName)}` : ""}</strong><small>${esc(item.source)} · ${esc(item.type)}${item.metadata.load ? ` · load ${esc(item.metadata.load)}` : ""}${item.metadata.execute ? ` · execute ${esc(item.metadata.execute)}` : ""}</small>${[...item.conversions, ...item.losses].map(note => `<em>${esc(note)}</em>`).join("")}</span></article>`).join("")}</div>
       <div class="finding-list">${report.issues.map(item => `<p class="finding ${esc(item.severity)}"><b>${esc(item.severity)}</b>${esc(item.message)}</p>`).join("") || '<p class="finding pass"><b>ready</b>No truncation or clashes were detected.</p>'}</div>
-      <div class="modal-actions"><button class="button primary" value="cancel">Close</button></div></div>`)) return;
+      <div class="modal-actions"><button class="button ghost" type="button" data-export-preflight="json">Export JSON</button><button class="button ghost" type="button" data-export-preflight="markdown">Export Markdown</button><button class="button primary" value="cancel">Close</button></div></div>`)) return;
+    modalContent.querySelector('[data-export-preflight="json"]').onclick = () => {
+      const documentValue = { ...report }; delete documentValue.markdown;
+      downloadJson(documentValue, `${pathNameWithoutExtension(pane.image.name)}-compatibility-report.json`);
+    };
+    modalContent.querySelector('[data-export-preflight="markdown"]').onclick = () => downloadDocument(
+      `${pathNameWithoutExtension(pane.image.name)}-compatibility-report.md`, report.markdown, "text/markdown;charset=utf-8",
+    );
   } catch (error) { toast(error.message, true); modal.close(); }
 }
 
@@ -8797,7 +8818,7 @@ async function renderDisassemblyEditor(index, entry, path, inspection, architect
   if (focusOffset != null) requestAnimationFrame(() => focusLine(focusOffset));
 }
 
-async function openFileEditor(index, name, target = null, pathOverride = null) {
+async function openFileEditor(index, name, target = null, pathOverride = null, focusOffset = null) {
   const pane = panes[index];
   const entry = pane.entries.find(item => String(item.name).toLocaleLowerCase() === String(name).toLocaleLowerCase());
   if (!entry) return toast("That file is no longer present. Refresh the pane and try again.", true);
@@ -8820,10 +8841,12 @@ async function openFileEditor(index, name, target = null, pathOverride = null) {
       pane.archiveMember = "";
       return loadDirectory(index);
     }
-    if (report.view === "disassembly") return renderDisassemblyEditor(index, entry, path, report, "auto", "", "0", "8192", null, target);
+    if (report.view === "disassembly") return renderDisassemblyEditor(
+      index, entry, path, report, "auto", "", String(focusOffset ?? 0), "8192", focusOffset, target,
+    );
     if (report.view === "hex") {
       modal.close();
-      return openFileHexEditor(index, entry, path, null, 0, target);
+      return openFileHexEditor(index, entry, path, null, focusOffset ?? 0, target);
     }
     const canEdit = report.editable && !report.readOnly && !pane.image.readOnly;
     const isBasic = report.view === "basic";
@@ -8934,7 +8957,15 @@ async function showDependencyReport(index) {
   analysisLoading("Checking loader dependencies", path);
   const query = new URLSearchParams({ path, ...(pane.slot != null ? { slot: pane.slot } : {}), ...(pane.side != null ? { side: pane.side } : {}) });
   try {
-    const report = await api(`/api/images/${pane.image.id}/dependencies?${query}`);
+    const report = await trackedPaneOperation(
+      index,
+      "Checking loader dependencies",
+      operationId => {
+        query.set("operationId", operationId);
+        return api(`/api/images/${pane.image.id}/dependencies?${query}`);
+      },
+      { abortMode: "read-only" },
+    );
     if (!replaceAnalysisLoading(`<div class="analysis-dialog"><small>DEPENDENCY-AWARE COPY CHECK</small><h2>${report.safeForSubdirectory ? "Safe for a subdirectory" : "Review before moving"}</h2>
       <div class="health-checks">${report.dependencies.map(item => `<article class="health-check ${item.resolved && !item.rootRelative ? "pass" : "warn"}"><b>${item.resolved ? "✓" : "!"}</b><span><strong>${esc(item.action)} ${esc(item.target)}</strong><small>${item.resolved ? `Found at ${esc(item.path)}` : "Not found beside launcher"}${item.rootRelative ? " · root-relative" : ""}</small></span></article>`).join("") || "<p>No conventional file dependencies were found.</p>"}</div>
       <div class="modal-actions"><button class="button primary" value="cancel">Close</button></div></div>`)) return;
@@ -8959,7 +8990,14 @@ async function showDuplicateReport(index) {
   const pane = panes[index];
   analysisLoading("Finding duplicates and variants", "Hashing catalogues and comparing normalised titles…");
   try {
-    const report = await api(`/api/images/${pane.image.id}/duplicates`);
+    const report = await trackedPaneOperation(
+      index,
+      "Finding duplicates and variants",
+      operationId => api(
+        `/api/images/${pane.image.id}/duplicates?${new URLSearchParams({ operationId })}`
+      ),
+      { abortMode: "read-only" },
+    );
     const group = (items, exact) => `<article><strong>${exact ? "Byte-identical" : "Likely variants"} · ${items.length}</strong><small>${items.map(item => item.diskTitle ? `Slot ${item.slot}: ${item.diskTitle}` : item.path).map(esc).join("<br>")}</small></article>`;
     if (!replaceAnalysisLoading(`<div class="analysis-dialog wide-analysis"><small>DUPLICATE / VARIANT FINDER</small><h2>${report.exact.length} exact groups · ${report.variants.length} variant groups</h2>
       <div class="duplicate-groups">${report.exact.map(items => group(items, true)).join("")}${report.variants.map(items => group(items, false)).join("") || "<p>No likely variants were found.</p>"}</div>
@@ -8975,7 +9013,14 @@ async function showMmbDuplicateCheck(index) {
   analysisLoading("Checking MMB duplicates", "Hashing complete disk slots and reading the installed menu…");
   try {
     const [report, menu] = await Promise.all([
-      api(`/api/images/${pane.image.id}/duplicates`),
+      trackedPaneOperation(
+        index,
+        "Checking MMB duplicates",
+        operationId => api(
+          `/api/images/${pane.image.id}/duplicates?${new URLSearchParams({ operationId })}`
+        ),
+        { abortMode: "read-only" },
+      ),
       api(`/api/images/${pane.image.id}/menu`),
     ]);
     const slotGroup = items => items
@@ -9090,12 +9135,34 @@ function showManifestExport(index) {
   showModal(`<h2>Export collection manifest</h2><p>Create a searchable catalogue of slots, files, menu information, Acorn metadata and checksums.</p>
     ${pane.image.kind === "mmb" ? '<label class="button small">Apply reviewed JSON<input type="file" accept="application/json,.json" data-apply-manifest hidden></label>' : ""}
     <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button" type="button" data-manifest="csv">Download CSV</button><button class="button primary" type="button" data-manifest="json">Download JSON</button></div>`);
-  modalContent.querySelectorAll("[data-manifest]").forEach(button => button.onclick = () => {
-    const link = document.createElement("a");
-    link.href = `/api/images/${pane.image.id}/manifest?format=${button.dataset.manifest}`;
-    link.target = "_blank";
-    link.click();
-    modal.close();
+  modalContent.querySelectorAll("[data-manifest]").forEach(button => button.onclick = async () => {
+    const buttons = [...modalContent.querySelectorAll("[data-manifest]")];
+    buttons.forEach(control => { control.disabled = true; });
+    modal.classList.add("busy");
+    try {
+      const response = await trackedPaneOperation(
+        index,
+        "Building collection manifest",
+        operationId => fetch(
+          `/api/images/${pane.image.id}/manifest?${new URLSearchParams({
+            format: button.dataset.manifest,
+            operationId,
+          })}`
+        ),
+        { abortMode: "read-only" },
+      );
+      const download = await downloadResponse(
+        response,
+        `${pathNameWithoutExtension(pane.image.name)}-manifest.${button.dataset.manifest}`,
+      );
+      toast(`Collection manifest ready · ${humanSize(download.size)}`);
+      modal.close();
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      buttons.forEach(control => { control.disabled = false; });
+      modal.classList.remove("busy");
+    }
   });
   modalContent.querySelector("[data-apply-manifest]")?.addEventListener("change", async event => {
     try {
@@ -9125,6 +9192,23 @@ function downloadJson(documentValue, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+async function downloadResponse(response, fallbackFilename) {
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || `Download preparation failed (${response.status})`);
+  }
+  const blob = await response.blob();
+  const disposition = response.headers.get("content-disposition") || "";
+  const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || fallbackFilename;
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return { filename, size: blob.size };
+}
+
 function showImageComparison(index) {
   const pane = panes[index];
   const candidates = panes
@@ -9134,7 +9218,7 @@ function showImageComparison(index) {
   showModal(`<div class="analysis-dialog wide-analysis image-comparison-dialog">
     <header><div><small>FILESYSTEM-AWARE IMAGE COMPARISON</small><h2>Compare ${esc(pane.image.name)}</h2></div></header>
     <label>Compare against<select name="otherImage">${candidates.map(item => `<option value="${esc(item.pane.image.id)}">Pane ${item.index + 1} · ${esc(item.pane.image.name)} · ${esc(paneFormat(item.pane.image))}</option>`).join("")}</select></label>
-    <p class="help-note">Files, directories, MMB slots and ROM banks are matched by their logical location. Content checksums and Acorn metadata are compared separately.</p>
+    <p class="help-note">Files, directories, MMB slots and ROM banks are matched by logical location. Content checksums and Acorn metadata are separated, then bounded raw-byte ranges are reported for each physical image component.</p>
     <div class="image-comparison-results" aria-live="polite"><p>Choose an image and run the comparison.</p></div>
     <div class="modal-actions"><button class="button ghost" value="cancel">Close</button><button class="button" type="button" data-export-comparison disabled>Export JSON</button><button class="button" type="button" data-export-patch disabled>Download patch</button><button class="button primary" type="button" data-run-comparison>Compare images</button></div>
   </div>`);
@@ -9151,12 +9235,29 @@ function showImageComparison(index) {
         body: JSON.stringify({ otherImage: modalContent.querySelector('[name="otherImage"]').value, operationId }),
       }), { abortMode: "read-only" });
       modalContent.querySelector(".image-comparison-dialog")?.classList.add("comparison-complete");
-      const sections = ["added", "removed", "modified", "metadata"];
+      const sections = ["added", "removed", "renamed", "modified", "metadata"];
+      const patchable = change => {
+        const row = change.after || change.before || {};
+        if (!report.sameFormat || report.base.kind === "tape") return false;
+        if (report.base.kind === "mmb") return row.recordType === "slot";
+        if (report.base.kind === "rom") return row.recordType === "rom-bank";
+        return true;
+      };
+      const rawComponents = report.raw?.components || [];
+      const rawMarkup = `<details class="raw-comparison" ${report.summary.total < 40 ? "open" : ""}><summary>Raw image evidence · ${Number(report.raw?.changedBytes || 0).toLocaleString()} changed byte${Number(report.raw?.changedBytes) === 1 ? "" : "s"}</summary>${rawComponents.map(component => `<section><b>${component.component === "descriptor" ? "Companion descriptor" : "Primary image"}</b><small>${Number(component.count).toLocaleString()} changed bytes · ${humanSize(component.sourceSize)} → ${humanSize(component.candidateSize)}${component.truncated ? " · comparison bounded at 1 GiB" : ""}</small>${component.ranges.slice(0, 100).map(range => `<code>+&amp;${Number(range[0]).toString(16).toUpperCase()} to +&amp;${Number(range[1]).toString(16).toUpperCase()} · ${(Number(range[1]) - Number(range[0]) + 1).toLocaleString()} bytes</code>`).join("") || "<em>Byte-identical</em>"}${component.rangesTruncated ? "<em>Additional ranges are retained only in the changed-byte total.</em>" : ""}</section>`).join("") || "<p>No comparable local image components were available.</p>"}</details>`;
       resultHost.innerHTML = `<div class="comparison-summary">${sections.map(name => `<strong><span>${report.summary[name].toLocaleString()}</span>${name}</strong>`).join("")}<strong><span>${report.summary.total.toLocaleString()}</span>total</strong></div>
         ${report.sameFormat ? "" : '<p class="help-warning">These images use different filesystem families. The report is useful for inventory comparison but cannot become a directly applicable patch.</p>'}
-        <div class="comparison-change-list">${sections.map(name => report.changes[name].length ? `<details ${report.summary.total < 40 ? "open" : ""}><summary>${name[0].toUpperCase() + name.slice(1)} (${report.changes[name].length})</summary>${report.changes[name].slice(0, 1000).map(change => `<div><b>${esc(comparisonRecordLabel(change))}</b><small>${change.changedFields?.length ? esc(change.changedFields.join(", ")) : name}</small></div>`).join("")}${report.changes[name].length > 1000 ? `<p>${(report.changes[name].length - 1000).toLocaleString()} more changes are included in the JSON export.</p>` : ""}</details>` : "").join("") || '<p class="help-note">The logical contents and metadata are identical.</p>'}</div>`;
+        <div class="comparison-change-list">${sections.map(name => report.changes[name].length ? `<details ${report.summary.total < 40 ? "open" : ""}><summary>${name[0].toUpperCase() + name.slice(1)} (${report.changes[name].length})</summary>${report.changes[name].slice(0, 1000).map(change => `<div>${patchable(change) ? `<input type="checkbox" data-patch-key="${esc(change.key)}" aria-label="Include ${esc(comparisonRecordLabel(change))} in a selective patch">` : '<span class="patch-choice-placeholder" aria-hidden="true"></span>'}<b>${esc(comparisonRecordLabel(change))}</b><small>${change.changedFields?.length ? esc(change.changedFields.join(", ")) : name}</small></div>`).join("")}${report.changes[name].length > 1000 ? `<p>${(report.changes[name].length - 1000).toLocaleString()} more changes are included in the JSON export.</p>` : ""}</details>` : "").join("") || '<p class="help-note">The logical contents and metadata are identical.</p>'}${rawMarkup}</div>
+        ${report.sameFormat && report.base.kind !== "tape" ? '<p class="help-note patch-selection-note">Download patch includes every change. Tick reviewed items to build a dependency-closed selective patch instead.</p>' : ""}`;
       modalContent.querySelector("[data-export-comparison]").disabled = false;
       modalContent.querySelector("[data-export-patch]").disabled = !report.sameFormat || report.base.kind === "tape";
+      resultHost.querySelectorAll("[data-patch-key]").forEach(input => input.onchange = () => {
+        const count = resultHost.querySelectorAll("[data-patch-key]:checked").length;
+        modalContent.querySelector("[data-export-patch]").textContent = count ? `Download selected patch (${count})` : "Download patch";
+        resultHost.querySelector(".patch-selection-note").textContent = count
+          ? `${count} reviewed change${count === 1 ? "" : "s"} selected. Required parent directories or child removals will be included automatically and listed in preflight.`
+          : "Download patch includes every change. Tick reviewed items to build a dependency-closed selective patch instead.";
+      });
     } catch (error) {
       resultHost.innerHTML = `<p class="help-warning">${esc(error.message)}</p>`;
     } finally { button.disabled = false; modal.classList.remove("busy"); }
@@ -9167,32 +9268,29 @@ function showImageComparison(index) {
   };
   modalContent.querySelector("[data-export-patch]").onclick = event => downloadImagePatch(
     index, pane, modalContent.querySelector('[name="otherImage"]').value, event.currentTarget,
+    [...resultHost.querySelectorAll("[data-patch-key]:checked")].map(input => input.dataset.patchKey),
   );
 }
 
-async function downloadImagePatch(index, pane, candidateId, button) {
+async function downloadImagePatch(index, pane, candidateId, button, selectedKeys = []) {
   const original = button.textContent;
   button.disabled = true;
   button.textContent = "Building patch…";
   modal.classList.add("busy");
   try {
-    const response = await trackedPaneOperation(index, "Building guarded patch", operationId => fetch(
-      `/api/images/${pane.image.id}/patch?${new URLSearchParams({ otherImage: candidateId, operationId })}`,
+    const response = await trackedPaneOperation(index, "Building guarded patch", operationId => (
+      selectedKeys.length
+        ? fetch(`/api/images/${pane.image.id}/patch/build`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ otherImage: candidateId, operationId, selectedKeys }),
+          })
+        : fetch(`/api/images/${pane.image.id}/patch?${new URLSearchParams({ otherImage: candidateId, operationId })}`)
     ), { abortMode: "read-only" });
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(error.error || `Patch creation failed (${response.status})`);
-    }
-    const blob = await response.blob();
-    const disposition = response.headers.get("content-disposition") || "";
-    const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || `${pathNameWithoutExtension(pane.image.name)}.affpatch.zip`;
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = filename;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-    toast(`Guarded patch ready · ${humanSize(blob.size)}`);
+    const download = await downloadResponse(
+      response,
+      `${pathNameWithoutExtension(pane.image.name)}.affpatch.zip`,
+    );
+    toast(`Guarded patch ready · ${humanSize(download.size)}`);
   } catch (error) { toast(error.message, true); }
   finally { button.disabled = false; button.textContent = original; modal.classList.remove("busy"); }
 }
@@ -9237,10 +9335,11 @@ function showApplyImagePatch(index) {
       if (input.files?.[0] !== file) return;
       const report = data.patch;
       const summary = report.summary || {};
-      const categories = ["added", "removed", "modified", "metadata"];
+      const categories = ["added", "removed", "renamed", "modified", "metadata"];
       resultHost.innerHTML = `<div class="patch-preflight-heading"><span><small>BASE</small><b>${esc(report.base?.name || "Unnamed image")}</b></span><i aria-hidden="true">→</i><span><small>CANDIDATE</small><b>${esc(report.candidate?.name || "Unnamed image")}</b></span></div>
         <div class="comparison-summary">${categories.map(name => `<strong><span>${Number(summary[name] || 0).toLocaleString()}</span>${name}</strong>`).join("")}<strong><span>${Number(report.operationCount || 0).toLocaleString()}</span>operations</strong></div>
         <p class="patch-payload-summary">${Number(report.payloadCount || 0).toLocaleString()} verified payload${Number(report.payloadCount) === 1 ? "" : "s"} · ${humanSize(Number(report.payloadBytes || 0))}</p>
+        ${report.selection ? `<p class="help-note">Selective patch · ${report.selection.requestedKeys.length.toLocaleString()} reviewed change${report.selection.requestedKeys.length === 1 ? "" : "s"}${report.selection.automaticallyIncludedKeys.length ? ` · ${report.selection.automaticallyIncludedKeys.length.toLocaleString()} structural dependenc${report.selection.automaticallyIncludedKeys.length === 1 ? "y" : "ies"} included automatically` : ""}</p>` : ""}
         <div class="patch-operation-preview">${report.operations.map(operation => `<div><b>${esc(comparisonRecordLabel(operation))}</b><small>${esc(operation.action)}${operation.changedFields?.length ? ` · ${esc(operation.changedFields.join(", "))}` : ""}</small></div>`).join("") || '<p class="code-empty-message">This patch contains no logical changes.</p>'}${report.truncated ? '<p class="help-note">Only the first 200 operations are shown. Every operation and payload was still verified.</p>' : ""}</div>`;
       applyButton.disabled = false;
     } catch (error) {
@@ -9255,6 +9354,14 @@ async function openWorkspaceSearchResult(result) {
   if (!pane?.image) return toast("That image is no longer open.", true);
   paneWindowManager.restore(result.paneIndex);
   paneWindowManager.bringToFront(result.paneIndex);
+  if (result.romProject) {
+    modal.close();
+    return showRomWorkbench(result.paneIndex, {
+      tab: result.romTab || "project",
+      address: result.address,
+      bank: result.bank,
+    });
+  }
   pane.archivePath = null;
   pane.archiveMember = "";
   if (result.slot != null) pane.slot = Number(result.slot);
@@ -9263,7 +9370,11 @@ async function openWorkspaceSearchResult(result) {
   pane.path = split > 0 ? result.path.slice(0, split) : "$";
   modal.close();
   await loadDirectory(result.paneIndex);
-  await openFileEditor(result.paneIndex, result.name, null, result.path);
+  if (result.virtual && !result.openable) return;
+  const offsetMatch = result.matches?.find(match => match.offset != null);
+  await openFileEditor(
+    result.paneIndex, result.fileName || result.name, null, result.path, offsetMatch?.offset ?? null,
+  );
 }
 
 function showWorkspaceSearch() {
@@ -9274,8 +9385,8 @@ function showWorkspaceSearch() {
   if (!searchable.length) return toast("Open an image before searching the workspace.", true);
   showModal(`<div class="analysis-dialog wide-analysis workspace-search-dialog">
     <header><div><small>ALL OPEN IMAGES</small><h2>Search workspace</h2></div></header>
-    <div class="workspace-search-controls"><input type="search" name="workspaceQuery" placeholder="Filename, command, variable or readable text" required autocomplete="off" autofocus><button class="button primary" type="button" data-run-workspace-search>Search ${searchable.length} image${searchable.length === 1 ? "" : "s"}</button></div>
-    <p class="workspace-search-status" aria-live="polite">Searches each distinct open filesystem, including every populated slot in an MMB image.</p>
+    <div class="workspace-search-controls"><input type="search" name="workspaceQuery" placeholder="Name, metadata, SHA-256 or readable text" required autocomplete="off" autofocus><button class="button primary" type="button" data-run-workspace-search>Search ${searchable.length} image${searchable.length === 1 ? "" : "s"}</button></div>
+    <p class="workspace-search-status" aria-live="polite">Searches catalogues and bounded file content in each distinct open filesystem, including every populated MMB slot. Enter an 8 to 64 digit SHA-256 prefix to identify exact content.</p>
     <div class="editor-image-search-results workspace-search-results"></div>
     <div class="modal-actions"><button class="button ghost" value="cancel">Close</button></div>
   </div>`);
@@ -9293,7 +9404,16 @@ function showWorkspaceSearch() {
       const parameters = new URLSearchParams({ query, root: "$" });
       if (item.pane.image.kind === "mmb") parameters.set("allSlots", "true");
       try {
-        return { ...item, report: await api(`/api/images/${item.pane.image.id}/inspect/search?${parameters}`) };
+        const report = await trackedPaneOperation(
+          item.index,
+          "Searching image catalogue and file content",
+          operationId => {
+            parameters.set("operationId", operationId);
+            return api(`/api/images/${item.pane.image.id}/inspect/search?${parameters}`);
+          },
+          { abortMode: "read-only" },
+        );
+        return { ...item, report };
       } catch (error) { return { ...item, error }; }
     }));
     const matches = reports.flatMap(item => (item.report?.results || []).map(row => ({ ...row, paneIndex: item.index, imageName: item.pane.image.name })));
@@ -9301,7 +9421,15 @@ function showWorkspaceSearch() {
     const skipped = reports.filter(item => item.error);
     modalContent.querySelector(".workspace-search-dialog")?.classList.add("search-complete");
     status.textContent = `${matches.length.toLocaleString()} result${matches.length === 1 ? "" : "s"} · ${filesScanned.toLocaleString()} readable files scanned across ${reports.length - skipped.length} image${reports.length - skipped.length === 1 ? "" : "s"}${skipped.length ? ` · ${skipped.length} unsupported or unreadable image${skipped.length === 1 ? "" : "s"} skipped` : ""}`;
-    results.innerHTML = matches.map((row, resultIndex) => `<button type="button" data-workspace-result="${resultIndex}"><span class="file-kind-icon ${esc(row.kind)}" aria-hidden="true"></span><b><em>Pane ${row.paneIndex + 1} · ${esc(row.imageName)}${row.slot != null ? ` · Slot ${Number(row.slot)}` : ""}</em>${esc(row.path)}</b><small>${row.nameMatch ? "Filename match" : `${row.matches.length} content match${row.matches.length === 1 ? "" : "es"}`} · ${humanSize(row.size)}</small>${row.matches.slice(0, 3).map(match => `<code>Line ${match.line}: ${esc(match.text)}</code>`).join("")}</button>`).join("") || '<p class="code-empty-message">No matching files were found.</p>';
+    results.innerHTML = matches.map((row, resultIndex) => {
+      const reasons = [
+        row.nameMatch ? "Filename" : "",
+        ...(row.metadataMatches || []).map(label => `${label} metadata`),
+        row.hashMatch ? "SHA-256" : "",
+        row.matches?.length ? `${row.matches.length} content match${row.matches.length === 1 ? "" : "es"}` : "",
+      ].filter(Boolean);
+      return `<button type="button" data-workspace-result="${resultIndex}"><span class="file-kind-icon ${esc(row.kind)}" aria-hidden="true"></span><b><em>Pane ${row.paneIndex + 1} · ${esc(row.imageName)}${row.slot != null ? ` · Slot ${Number(row.slot)}` : ""}</em>${esc(row.path)}</b><small>${esc(reasons.join(" · "))} · ${humanSize(row.size)}</small>${row.hashMatch ? `<code>SHA-256 ${esc(row.sha256)}</code>` : ""}${row.matches.slice(0, 3).map(match => `<code>${match.offset != null ? `Offset &amp;${Number(match.offset).toString(16).toUpperCase()}` : `Line ${match.line}`}: ${esc(match.text)}</code>`).join("")}</button>`;
+    }).join("") || '<p class="code-empty-message">No matching files were found.</p>';
     results.querySelectorAll("[data-workspace-result]").forEach(resultButton => resultButton.onclick = () => openWorkspaceSearchResult(matches[Number(resultButton.dataset.workspaceResult)]));
     button.disabled = false;
   };

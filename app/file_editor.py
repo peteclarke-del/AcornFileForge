@@ -15,6 +15,7 @@ from .content_kind import (
 )
 from .disk_service import DiskError, DiskService, ImageSession
 from .hex_service import MAX_HEX_READ, _decode_changes, _search_pattern
+from .operations import OperationCancelled
 from .rom_workbench import RomWorkbenchError, disassemble
 
 
@@ -23,6 +24,36 @@ MAX_DISASSEMBLY_FILE = 1024 * 1024
 MAX_IMAGE_SEARCH_FILES = 5000
 MAX_IMAGE_SEARCH_RESULTS = 500
 MAX_IMAGE_SEARCH_BYTES = 256 * 1024
+
+
+def _catalogue_search_terms(row: dict) -> dict[str, list[str]]:
+    """Return labelled, human-searchable catalogue metadata without inventing values."""
+    terms: dict[str, list[str]] = {}
+    fields = {
+        "disk title": ("diskTitle",),
+        "file type": ("contentKind", "filetype", "type"),
+        "access": ("attr", "access", "attributes"),
+        "load": ("loadHex", "load"),
+        "execute": ("executeHex", "exec", "execute"),
+    }
+    for label, keys in fields.items():
+        value = next((row.get(key) for key in keys if row.get(key) not in (None, "")), None)
+        if value is None:
+            continue
+        values = {str(value)}
+        if label in {"load", "execute"}:
+            try:
+                numeric = int(str(value).removeprefix("&"), 16) if isinstance(value, str) else int(value)
+                values.update({f"{numeric:08X}", f"&{numeric:X}", f"0x{numeric:X}"})
+            except (TypeError, ValueError):
+                pass
+        terms[label] = sorted(values)
+    return terms
+
+
+def _hash_query(query: str) -> str | None:
+    candidate = query.casefold().removeprefix("sha256:").strip()
+    return candidate if re.fullmatch(r"[0-9a-f]{8,64}", candidate) else None
 
 
 def _context(
@@ -121,6 +152,8 @@ def search_image_files(
     side: int | None,
     root: str = "$",
     all_slots: bool = False,
+    progress=None,
+    supplemental: list[dict] | None = None,
 ) -> dict:
     """Search names and readable source across one mounted filesystem context."""
     needle = str(query or "").strip()
@@ -134,12 +167,21 @@ def search_image_files(
     files: list[dict] = []
     if session.kind == "mmb" and all_slots:
         failed_slots = 0
-        for disk in service.list_slots(session):
+        disks = service.list_slots(session)
+        for disk_index, disk in enumerate(disks):
+            if progress:
+                progress(
+                    f"Reading MMB slot {disk['slot']} catalogue",
+                    disk_index,
+                    len(disks),
+                )
             if not disk.get("formatted") or len(files) >= MAX_IMAGE_SEARCH_FILES:
                 continue
             disk_slot = int(disk["slot"])
             try:
                 rows = service.list_dfs_catalogue_files(session, disk_slot, None)
+            except OperationCancelled:
+                raise
             except Exception:
                 failed_slots += 1
                 continue
@@ -153,6 +195,17 @@ def search_image_files(
             {**row, "path": str(row.get("path") or row.get("name") or "")}
             for row in service.list_directory(session, "$", slot, side)["entries"]
             if str(row.get("type") or "file").lower() not in {"dir", "directory"}
+        ]
+    elif session.kind == "rom":
+        files = [
+            {
+                **row,
+                "name": str(row.get("name") or f"Bank {row.get('bank', 0)}"),
+                "path": f"bank:{int(row.get('bank') or 0)}",
+                "length": int(row.get("length") or 0),
+                "contentKind": "rom-bank",
+            }
+            for row in service.list_rom_banks(session)
         ]
     elif session.kind == "adfs":
         pending = [str(root or "$")]
@@ -180,22 +233,34 @@ def search_image_files(
         failed_slots = 0
 
     folded = needle.casefold()
+    digest_query = _hash_query(needle)
     results = []
     scanned = 0
     skipped_large = 0
-    for row in files[:MAX_IMAGE_SEARCH_FILES]:
+    searchable_files = files[:MAX_IMAGE_SEARCH_FILES]
+    for file_index, row in enumerate(searchable_files):
         row_slot = int(row["slot"]) if row.get("slot") is not None else slot
         row_side = int(row["side"]) if row.get("side") is not None else side
         path = str(row.get("path") or row.get("name") or "")
+        if progress:
+            progress(f"Searching {path}", file_index, len(searchable_files))
         name = str(row.get("name") or path.rsplit(".", 1)[-1])
         name_match = folded in path.casefold()
+        catalogue_terms = _catalogue_search_terms(row)
+        metadata_matches = [
+            label for label, values in catalogue_terms.items()
+            if any(folded in value.casefold() for value in values)
+        ]
         length = int(row.get("length") or 0)
         matches = []
         kind = str(row.get("contentKind") or "")
+        digest = ""
         if length <= MAX_IMAGE_SEARCH_BYTES:
             try:
                 data = service.read_file(session, row_slot, path, row_side)
                 scanned += 1
+                if digest_query:
+                    digest = sha256_bytes(data)
                 content_kind, basic, script, printable_ratio = analyse_content(data, path)
                 kind = kind or content_kind
                 if basic:
@@ -209,19 +274,76 @@ def search_image_files(
                         matches.append({"line": line_number, "text": line[:240]})
                         if len(matches) >= 20:
                             break
+                if not text:
+                    for item in _printable_strings(data, 0):
+                        if folded in item["text"].casefold():
+                            matches.append({
+                                "offset": item["offset"],
+                                "address": item["address"],
+                                "text": item["text"][:240],
+                            })
+                            if len(matches) >= 20:
+                                break
+            except OperationCancelled:
+                raise
             except Exception:
                 pass
         else:
             skipped_large += 1
-        if name_match or matches:
+            if digest_query:
+                try:
+                    exported = service.export_file(session, row_slot, path, row_side)
+                    try:
+                        digest = sha256_path(
+                            exported,
+                            (
+                                lambda current, total: progress(
+                                    f"Checksumming {path}", current, total
+                                )
+                            ) if progress else None,
+                        )
+                    finally:
+                        exported.unlink(missing_ok=True)
+                    scanned += 1
+                except OperationCancelled:
+                    raise
+                except Exception:
+                    pass
+        hash_match = bool(digest_query and digest.startswith(digest_query))
+        if name_match or metadata_matches or hash_match or matches:
             results.append({
                 "path": path, "name": name, "kind": kind or "file",
-                "size": length, "nameMatch": name_match, "matches": matches,
+                "size": length, "nameMatch": name_match,
+                "metadataMatches": metadata_matches,
+                "hashMatch": hash_match,
+                **({"sha256": digest} if hash_match else {}),
+                "matches": matches,
                 **({"slot": row_slot, "diskTitle": row.get("diskTitle", "")} if row_slot is not None else {}),
                 **({"side": row_side} if row_side is not None else {}),
             })
             if len(results) >= MAX_IMAGE_SEARCH_RESULTS:
                 break
+    for item in (supplemental or [])[:20_000]:
+        fields = {
+            str(label): str(value)
+            for label, value in dict(item.get("searchFields") or {}).items()
+            if value not in (None, "")
+        }
+        field_matches = [label for label, value in fields.items() if folded in value.casefold()]
+        if not field_matches or len(results) >= MAX_IMAGE_SEARCH_RESULTS:
+            continue
+        offset = item.get("offset")
+        results.append({
+            **{key: value for key, value in item.items() if key != "searchFields"},
+            "size": int(item.get("size") or 0),
+            "nameMatch": False,
+            "metadataMatches": field_matches,
+            "hashMatch": False,
+            "matches": ([{"offset": int(offset), "text": fields[field_matches[0]][:240]}]
+                        if offset is not None else []),
+        })
+    if progress:
+        progress("Workspace search complete", len(searchable_files), len(searchable_files))
     return {
         "query": needle,
         "root": root,
