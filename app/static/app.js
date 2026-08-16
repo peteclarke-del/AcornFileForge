@@ -22,7 +22,6 @@ const {
   uniqueDfsNames,
 } = window.AcornImportPlanning;
 
-const MAX_PANES = 3;
 const panes = [newPaneState()];
 
 const {
@@ -54,7 +53,6 @@ const editorWorkspace = window.AcornEditorWorkspace.create({
   key: EDITOR_DOCUMENTS_STORAGE_KEY,
   maxDocuments: MAX_RETAINED_EDITOR_DOCUMENTS,
   maxDraftBytes: MAX_RETAINED_EDITOR_DRAFT,
-  maxPanes: MAX_PANES,
 });
 const editorDocuments = editorWorkspace.state.documents;
 const persistEditorDocuments = editorWorkspace.persist;
@@ -64,11 +62,11 @@ const workspacePersistence = window.AcornWorkspacePersistence.create({
   panes,
   storage: localStorage,
   storageKey: OPEN_PANES_STORAGE_KEY,
-  maxPanes: MAX_PANES,
   newPaneState,
   restoredDfsPath,
   api,
   rebuildPaneHosts,
+  reconcilePaneWindows: () => paneWindowManager.reconcile(),
   renderPane,
   acceptImage,
   loadDirectory,
@@ -78,6 +76,13 @@ const workspacePersistence = window.AcornWorkspacePersistence.create({
 });
 const rememberOpenPanes = workspacePersistence.remember;
 const restoreOpenPanes = workspacePersistence.restore;
+const paneWindowManager = window.AcornPaneWindowManager.create({
+  container: document.querySelector(".panes"),
+  taskbar: document.querySelector("#paneTaskbar"),
+  panes,
+  paneLabel,
+  onChange: rememberOpenPanes,
+});
 
 function editorDocumentKey(index, pane, path) {
   return [index, pane.image?.id || "", pane.slot ?? "-", pane.side ?? "-", path].join("|");
@@ -216,27 +221,35 @@ async function mmbRecommendedPage(imageId, slot, filename, action) {
 function updateAddPaneButton() {
   const button = document.querySelector("#addPaneButton");
   if (!button) return;
-  button.disabled = panes.length >= MAX_PANES;
-  button.title = button.disabled ? "Maximum of three panes open" : "Add another work pane";
+  button.disabled = false;
+  button.title = "Add another work pane";
   button.setAttribute("aria-label", button.title);
 }
 
 function rebuildPaneHosts() {
   const host = document.querySelector(".panes");
   host.dataset.count = String(panes.length);
-  host.style.setProperty("--pane-count", String(Math.max(1, panes.length)));
-  host.innerHTML = panes.map((_pane, index) =>
-    `<article class="pane" data-pane="${index}"></article>`
-  ).join("");
+  host.querySelectorAll(":scope > .pane").forEach(pane => pane.remove());
+  const fragment = document.createDocumentFragment();
+  panes.forEach((_pane, index) => {
+    const pane = document.createElement("article");
+    pane.className = "pane";
+    pane.dataset.pane = String(index);
+    fragment.append(pane);
+  });
+  host.prepend(fragment);
   panes.forEach((_pane, index) => renderPane(index));
+  paneWindowManager.reconcile();
   updateAddPaneButton();
 }
 
 function addPane() {
-  if (panes.length >= MAX_PANES) return;
   panes.push(newPaneState());
   rebuildPaneHosts();
+  const index = panes.length - 1;
+  paneWindowManager.bringToFront(index);
   rememberOpenPanes();
+  return index;
 }
 
 function otherPaneIndexes(index) {
@@ -343,65 +356,7 @@ function refreshOpenDiskImportMenu(targetIndex, menu) {
 }
 
 function paneDragHandle(index) {
-  return `<button class="pane-drag-handle" type="button" draggable="true" title="Drag to swap, or press Alt+Left / Alt+Right" aria-label="Reorder pane ${index + 1}. Drag it, or press Alt plus Left or Right"><b>⠿</b><small>${index + 1}</small></button>`;
-}
-
-function wirePaneDragHandle(host, index) {
-  const handle = host.querySelector(".pane-drag-handle");
-  if (!handle) return;
-  handle.draggable = !panes[index].loading && !panes[index].actionPending;
-  handle.ondragstart = event => {
-    event.stopPropagation();
-    if (!handle.draggable) return event.preventDefault();
-    event.dataTransfer.effectAllowed = "move";
-    event.dataTransfer.setData("application/x-acorn-pane", String(index));
-    event.dataTransfer.setData("text/plain", `Move pane ${index + 1}`);
-    host.classList.add("pane-moving");
-  };
-  handle.ondragend = () => {
-    document.querySelectorAll(".pane").forEach(pane =>
-      pane.classList.remove("pane-moving", "pane-swap-target")
-    );
-  };
-  handle.onkeydown = event => {
-    if (!event.altKey || !["ArrowLeft", "ArrowRight"].includes(event.key)) return;
-    const targetIndex = index + (event.key === "ArrowLeft" ? -1 : 1);
-    if (targetIndex < 0 || targetIndex >= panes.length) return;
-    event.preventDefault();
-    swapPanes(index, targetIndex);
-    document.querySelector(`.pane[data-pane="${targetIndex}"] .pane-drag-handle`)?.focus();
-    toast(`Pane moved to position ${targetIndex + 1}`);
-  };
-}
-
-function swapPanes(sourceIndex, targetIndex) {
-  if (sourceIndex === targetIndex || !panes[sourceIndex] || !panes[targetIndex]) return;
-  if ([panes[sourceIndex], panes[targetIndex]].some(pane => pane.loading || pane.actionPending)) {
-    return toast("Wait for both pane operations to finish before swapping them.", true);
-  }
-  const sourceScroll = document.querySelector(`.pane[data-pane="${sourceIndex}"] .list-wrap`)?.scrollTop || 0;
-  const targetScroll = document.querySelector(`.pane[data-pane="${targetIndex}"] .list-wrap`)?.scrollTop || 0;
-  captureActiveEditorDocument();
-  const remappedDocuments = new Map();
-  let remappedActive = editorWorkspace.state.active;
-  for (const document of editorDocuments.values()) {
-    const nextIndex = document.index === sourceIndex ? targetIndex : document.index === targetIndex ? sourceIndex : document.index;
-    const nextKey = [nextIndex, document.imageId, document.slot ?? "-", document.side ?? "-", document.path].join("|");
-    if (document.key === editorWorkspace.state.active) remappedActive = nextKey;
-    remappedDocuments.set(nextKey, { ...document, index: nextIndex, key: nextKey });
-  }
-  editorDocuments.clear();
-  remappedDocuments.forEach((document, key) => editorDocuments.set(key, document));
-  editorWorkspace.state.active = remappedActive;
-  persistEditorDocuments();
-  [panes[sourceIndex], panes[targetIndex]] = [panes[targetIndex], panes[sourceIndex]];
-  renderPane(sourceIndex);
-  renderPane(targetIndex);
-  const sourceList = document.querySelector(`.pane[data-pane="${sourceIndex}"] .list-wrap`);
-  const targetList = document.querySelector(`.pane[data-pane="${targetIndex}"] .list-wrap`);
-  if (sourceList) sourceList.scrollTop = targetScroll;
-  if (targetList) targetList.scrollTop = sourceScroll;
-  rememberOpenPanes();
+  return `<button class="pane-drag-handle" type="button" title="Move pane ${index + 1}" aria-label="Move pane ${index + 1}"><b>⠿</b><small>${index + 1}</small></button>`;
 }
 
 function setLoading(index, value, message = "Reading disk…") {
@@ -610,7 +565,7 @@ function renderPane(index, preserveScroll = false) {
       });
     }
     wireDropZone(host, index);
-    wirePaneDragHandle(host, index);
+    paneWindowManager.mount(index, host);
     rememberOpenPanes();
     return;
   }
@@ -890,6 +845,8 @@ function renderPane(index, preserveScroll = false) {
         <button class="icon-button replace-image" title="Load New Image" aria-label="Load New Image">${PANE_ICONS.loadImage}</button>
         <button class="icon-button save-image" title="Save Image" aria-label="Save Image">${PANE_ICONS.saveImage}</button>
         <button class="icon-button refresh-image" title="Refresh View" aria-label="Refresh View">${PANE_ICONS.refreshView}</button>
+        <button class="icon-button minimize-pane" title="Minimise Pane" aria-label="Minimise Pane">${PANE_ICONS.minimizePane}</button>
+        <button class="icon-button maximize-pane" title="Maximise Pane" aria-label="Maximise Pane" aria-pressed="false">${PANE_ICONS.maximizePane}</button>
         <button class="icon-button close-image" title="Close Pane" aria-label="Close Pane">${PANE_ICONS.closePane}</button>
       </div>
     </header>
@@ -996,6 +953,10 @@ function renderPane(index, preserveScroll = false) {
     const header = host.querySelector(".pane-head");
     header.draggable = true;
     header.ondragstart = event => {
+      if (event.target.closest(".pane-drag-handle, .pane-head-actions")) {
+        event.preventDefault();
+        return;
+      }
       event.dataTransfer.effectAllowed = "copy";
       event.dataTransfer.setData("application/x-beeb-disk", JSON.stringify({
         image: pane.image.id, slot: pane.slot, name: pane.slotName || pane.image.name
@@ -1003,7 +964,7 @@ function renderPane(index, preserveScroll = false) {
     };
   }
   wireDropZone(host, index);
-  wirePaneDragHandle(host, index);
+  paneWindowManager.mount(index, host);
   const listWrap = host.querySelector(".list-wrap");
   if (preserveScroll) listWrap.scrollTop = previousScrollTop;
   if (isSlots) {
@@ -1405,27 +1366,16 @@ async function transferMmbSlots(index, startSlot, sources) {
 
 function wireDropZone(host, index) {
   host.ondragover = event => {
-    if (event.dataTransfer.types.includes("application/x-acorn-pane")) {
-      event.preventDefault();
-      event.dataTransfer.dropEffect = "move";
-      host.classList.add("pane-swap-target");
-      return;
-    }
     event.preventDefault();
     host.classList.add("drag-target");
     event.dataTransfer.dropEffect = "copy";
   };
   host.ondragleave = event => {
-    if (!host.contains(event.relatedTarget)) host.classList.remove("drag-target", "pane-swap-target");
+    if (!host.contains(event.relatedTarget)) host.classList.remove("drag-target");
   };
   host.ondrop = async event => {
     event.preventDefault();
-    host.classList.remove("drag-target", "pane-swap-target");
-    const paneSource = event.dataTransfer.getData("application/x-acorn-pane");
-    if (paneSource !== "") {
-      event.stopPropagation();
-      return swapPanes(Number(paneSource), index);
-    }
+    host.classList.remove("drag-target");
     if (panes[index].loading || panes[index].actionPending) {
       return toast("Wait for the current operation to finish.", true);
     }
@@ -2814,6 +2764,7 @@ async function openFiles(index, files, targetHardware = null) {
 
 async function acceptImage(index, image) {
   const currentPane = panes[index];
+  const preservedWindowState = currentPane?.windowState || null;
   const preserveMmbRoot = Boolean(
     currentPane?.image?.id === image.id
     && currentPane.image.kind === "mmb"
@@ -2826,6 +2777,7 @@ async function acceptImage(index, image) {
     : 0;
   panes[index] = newPaneState(image);
   const pane = panes[index];
+  pane.windowState = preservedWindowState;
   if (preserveMmbRoot) pane.mmbScrollTop = preservedScrollTop;
   const requestToken = ++pane.requestToken;
   renderPane(index);
@@ -6794,19 +6746,10 @@ function convertTape(index) {
 
 async function newImageFromFileMenu(index, initialFormat) {
   let targetIndex = panes.findIndex(pane => !pane.image);
-  if (targetIndex < 0 && panes.length < MAX_PANES) {
-    addPane();
-    targetIndex = panes.length - 1;
-  }
+  if (targetIndex < 0) targetIndex = addPane();
   if (targetIndex >= 0) {
     showCreateImageModal(targetIndex, { initialFormat, lockTarget: true });
-    return;
   }
-  const pane = panes[index];
-  if (!confirm(`All three panes are in use. Save ${pane.image.name} and replace this pane with the new image?`)) return;
-  if (!await saveImage(index)) return;
-  if (modal.open) modal.close();
-  showCreateImageModal(index, { initialFormat, lockTarget: true });
 }
 
 function showCreateImageModal(preferredIndex = null, options = {}) {
@@ -9178,13 +9121,13 @@ async function showJobsPanel() {
 function projectDocument() {
   return {
     format: "acorn-file-forge-project",
-    version: 1,
+    version: 2,
     created: new Date().toISOString(),
-    panes: panes.map(pane => pane.image ? {
-      imageId: pane.image.id, imageName: pane.image.name, kind: pane.image.kind,
+    panes: panes.map(pane => ({
+      imageId: pane.image?.id || null, imageName: pane.image?.name || "", kind: pane.image?.kind || "",
       slot: pane.slot, side: pane.side, path: pane.path,
-      hardwareProfile: pane.image.hardwareProfile || {},
-    } : null),
+      hardwareProfile: pane.image?.hardwareProfile || {}, windowState: pane.windowState,
+    })),
     hardwareProfiles: storedHardwareProfiles(),
     importRecipes: storedCollection(RECIPE_STORAGE_KEY, []),
   };
@@ -9195,10 +9138,15 @@ async function importProjectFile(file) {
   if (project.format !== "acorn-file-forge-project" || !Array.isArray(project.panes)) throw new Error("This is not an Acorn File Forge project file.");
   saveCollection(PROFILE_STORAGE_KEY, project.hardwareProfiles || BUILTIN_PROFILES);
   saveCollection(RECIPE_STORAGE_KEY, project.importRecipes || []);
-  const saved = project.panes.slice(0, MAX_PANES);
-  localStorage.setItem(OPEN_PANES_STORAGE_KEY, JSON.stringify(saved.map(item => item ? { imageId: item.imageId, slot: item.slot, side: item.side, path: item.path } : null)));
+  const saved = project.panes;
+  localStorage.setItem(OPEN_PANES_STORAGE_KEY, JSON.stringify(saved.map(item => ({
+    imageId: item?.imageId || null,
+    slot: item?.slot ?? null,
+    side: item?.side ?? null,
+    path: item?.path || "$",
+    windowState: item?.windowState || null,
+  }))));
   panes.splice(0, panes.length, ...Array.from({ length: Math.max(1, saved.length) }, () => newPaneState()));
-  workspacePersistenceReady = false;
   await restoreOpenPanes();
   toast("Project workspace restored");
 }

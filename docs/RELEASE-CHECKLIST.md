@@ -109,8 +109,10 @@ Fault tests must cover:
 
 ## 5. Browser and interface gate
 
-- [ ] Start with one pane, add up to three, reorder and close panes.
-- [ ] Refresh restores the open images, paths and intended selections.
+- [ ] Start with one pane, add more than three, move, resize, overlap, snap,
+      minimise, restore and close panes.
+- [ ] Refresh restores open images, paths, selections and every pane's window
+      geometry, snap, stack and minimised state.
 - [ ] Long open, copy, analysis, menu and save operations show phase, item
       count, elapsed time, throughput, ETA and Abort when safe.
 - [ ] Creative and destructive controls disable while their operation runs.

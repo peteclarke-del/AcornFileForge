@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#c9ba9b">
   <title>Acorn File Forge</title>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/styles.css?v=20260813.27">
+  <link rel="stylesheet" href="/styles.css?v=20260816.1">
   <link rel="stylesheet" href="/theme.css?v=20260813.4">
 </head>
 <body>
@@ -29,6 +29,7 @@
     <section class="workspace" aria-label="Acorn media image workspace">
       <div class="panes">
         <article class="pane" data-pane="0"></article>
+        <div class="pane-taskbar" id="paneTaskbar" role="toolbar" aria-label="Minimised panes" hidden></div>
       </div>
     </section>
   </main>
@@ -63,7 +64,11 @@
 
   <template id="emptyPane">
     <div class="empty-pane">
-      <button class="icon-button close-empty-pane" type="button" title="Close pane" aria-label="Close pane">×</button>
+      <div class="empty-pane-window-actions">
+        <button class="icon-button minimize-pane" type="button" title="Minimise Pane" aria-label="Minimise Pane">−</button>
+        <button class="icon-button maximize-pane" type="button" title="Maximise Pane" aria-label="Maximise Pane" aria-pressed="false">□</button>
+        <button class="icon-button close-empty-pane" type="button" title="Close Pane" aria-label="Close Pane">×</button>
+      </div>
       <div class="disk-illustration"><span></span><b></b></div>
       <h2>Open an image here</h2>
       <p>Choose an existing image, create a blank one, or drop an image here.</p>
@@ -79,22 +84,23 @@
   <script src="/formats.js?v=20260731.19"></script>
   <script src="/identifiers.js?v=20260815.1"></script>
   <script src="/core.js?v=20260814.1"></script>
-  <script src="/workspace.js?v=20260814.1"></script>
+  <script src="/workspace.js?v=20260816.1"></script>
   <script src="/editor-workspace.js?v=20260814.1"></script>
-  <script src="/workspace-persistence.js?v=20260814.1"></script>
+  <script src="/workspace-persistence.js?v=20260816.1"></script>
+  <script src="/pane-window-manager.js?v=20260816.1"></script>
   <script src="/operation-ui.js?v=20260815.1"></script>
-  <script src="/file-visuals.js?v=20260814.1"></script>
+  <script src="/file-visuals.js?v=20260816.1"></script>
   <script src="/import-planning.js?v=20260814.1"></script>
   <script src="/acorn-metadata.js?v=20260815.2"></script>
   <script src="/pane-view.js?v=20260814.1"></script>
   <script src="/transfer-planning.js?v=20260814.1"></script>
   <script src="/safety-dialogs.js?v=20260814.1"></script>
-  <script src="/help.js?v=20260815.5"></script>
+  <script src="/help.js?v=20260816.1"></script>
   <script src="/hex-editor.js?v=20260813.4"></script>
   <script src="/basic-language.js?v=20260812.3"></script>
   <script src="/assembly-language.js?v=20260812.1"></script>
   <script src="/acorn-call-catalogue.js?v=20260813.1"></script>
   <script src="/code-editor.js?v=20260813.34"></script>
-  <script src="/app.js?v=20260816.1"></script>
+  <script src="/app.js?v=20260816.2"></script>
 </body>
 </html>

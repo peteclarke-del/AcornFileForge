@@ -45,9 +45,11 @@ repairing unusual media.
 
 ### Work with several images
 
-The workspace starts with one pane and supports up to three. Each pane owns its
-open image, current directory, selection, progress, undo history and hardware
-profile. Add, close or reorder panes from the header. Dragging between panes
+The workspace starts with one pane and has no fixed pane-count limit. Each pane
+is a movable, resizable window with its own open image, current directory,
+selection, progress, undo history and hardware profile. Panes can overlap,
+snap to workspace sides or corners, minimise to the workspace shelf and restore
+their layout after refresh. Dragging between panes
 uses the same validation as Cut, Copy and Paste, including DFS name limits,
 ADFS directory capacity, MMB slot rules and metadata conversion.
 

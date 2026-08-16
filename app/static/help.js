@@ -42,7 +42,7 @@ function showHelp() {
           <section id="help-start">
             <h3>Open or create an image</h3>
             <p class="help-lead">Edits are made to a private working copy. The file you selected on your computer is never overwritten.</p>
-            <div class="help-note"><strong>Start small:</strong> a new workspace opens with one full-width pane. Select <strong>Add Pane</strong> in the header only when you need another source, destination or scratch image. You can display up to three panes.</div>
+            <div class="help-note"><strong>Start small:</strong> a new workspace opens with one full-workspace pane. Select <strong>Add Pane</strong> whenever you need another source, destination or scratch image. There is no fixed pane-count limit, and extra panes open as cascading windows.</div>
             <div class="help-workflow" aria-label="Typical Acorn File Forge workflow">
               <span><b>1</b><strong>Open or create</strong><small>A private working image</small></span><i>→</i>
               <span><b>2</b><strong>Browse and edit</strong><small>Files, slots and directories</small></span><i>→</i>
@@ -62,7 +62,7 @@ function showHelp() {
               <h4>Create a new image</h4>
               <ol>
                 <li>Open <strong>File → New → New Image (current format)</strong>. The current pane format is preselected.</li>
-                <li>An existing empty pane is used first. If fewer than three panes are displayed, another is added automatically. When all three are occupied, confirm the current-image download before that pane can be replaced; cancelling leaves it open.</li>
+                <li>An existing empty pane is used first. If every pane contains an image, another workspace window is added automatically. Existing work is not replaced.</li>
                 <li>Choose DFS SSD or DSD, an HFE-wrapped DFS/ADFS floppy, ADFS S/M/L/D/E/E+/F/F+/G/G+ floppy, BeebSCSI DAT/DSC hard drive, HDF virtual HDD, RAW physical-drive image, or an MMB bank.</li>
                 <li>Enter a disk title. For DAT, HDF and RAW images, enter a capacity such as <code>20MB</code> or <code>512MB</code>.</li>
                 <li>The size field is read-only for fixed SSD, DSD, ADFS floppy, HFE and MMB formats. It becomes editable for BeebSCSI, HDF and RAW hard drives and remembers the last HDD capacity you entered.</li>
@@ -72,7 +72,7 @@ function showHelp() {
                 <li>Add content, then use the <strong>Save Image</strong> button in the pane heading to download it.</li>
               </ol>
             </div>
-            <div class="help-note"><strong>Pane heading actions:</strong> after the orange changed indicator, the buttons create a New Blank Image, Load New Image, Save Image, Refresh View, and Close Pane. The × close button offers Save and close, Close without saving, or Cancel whenever the image has changes.</div>
+            <div class="help-note"><strong>Pane heading actions:</strong> after the orange changed indicator, the buttons create a New Blank Image, Load New Image, Save Image, Refresh View, Minimise, Maximise or restore, and Close Pane. The × close button offers Save and close, Close without saving, or Cancel whenever the image has changes.</div>
             <h4>Which new format should I choose?</h4>
             <div class="help-table-wrap"><table class="help-table"><caption class="visually-hidden">Supported image formats and their main limits</caption>
               <thead><tr><th>Format</th><th>Best used for</th><th>Important limit</th></tr></thead>
@@ -93,17 +93,20 @@ function showHelp() {
           </section>
           <section id="help-workspace">
             <h3>Workspace, navigation and selection</h3>
-            <figure><img src="/help/workspace.png" alt="Acorn File Forge showing two work panes and the Add Pane control"><figcaption>The workspace begins with one pane. Add a second or third only when needed; every pane has independent navigation, selection, refresh, progress and save controls.</figcaption></figure>
+            <figure><img src="/help/workspace.png" alt="Acorn File Forge showing movable image panes and the Add Pane control"><figcaption>The workspace begins with one pane. Add and arrange as many movable image windows as the computer can comfortably display; each retains independent navigation, selection, refresh, progress and save controls.</figcaption></figure>
             <h4>Add, arrange and close panes</h4>
             <ol>
-              <li>Select <strong>Add Pane</strong> in the header to add an empty pane. It disables at three panes and re-enables when one is closed.</li>
-              <li>Use the numbered grip at the left of a pane heading and drag it onto another pane to swap their positions. With the grip focused, Alt+Left and Alt+Right provide the same operation without dragging.</li>
-              <li>The complete pane moves with its image, current directory or MMB slot, selection and scroll position.</li>
+              <li>Select <strong>Add Pane</strong> in the header to add an empty cascading window. There is no fixed pane-count limit.</li>
+              <li>Use the numbered grip at the left of a pane heading to move it. Windows may overlap, and selecting any part of a window brings it to the front.</li>
+              <li>Drag a pane to the left or right edge to fill that half, to a corner to fill that quarter, or to the top edge to maximise it. The translucent preview shows the result before release.</li>
+              <li>Drag any pane edge or corner to resize it. Double-click the numbered grip or use the square heading button to maximise or restore it.</li>
+              <li>Select the line button to minimise a pane to the shelf at the bottom of the workspace. Select its shelf button to restore and focus it.</li>
+              <li>With the numbered grip focused, use Alt+Left or Alt+Right to snap, Alt+Up to maximise, and Alt+Down to minimise without a pointer. Hold Shift as well to resize in 32-pixel steps.</li>
               <li>An empty pane is a convenient scratch area for creating an SSD, DSD, MMB, ADFS floppy, BeebSCSI DAT/DSC pair or other supported image.</li>
               <li>Select × at the top-right to close that whole pane. Save changed images from the prompt, deliberately close without saving a download, or cancel. The server working copy remains available through Recovery.</li>
-              <li>The current pane count, order and open images are remembered across a normal page refresh. A completely fresh workspace starts with one pane.</li>
+              <li>Open images, positions, sizes, snap layout, stacking order and minimised windows are remembered across a normal page refresh. A completely fresh workspace starts with one pane.</li>
             </ol>
-            <div class="help-note"><strong>Two different drag handles:</strong> drag the numbered grip to rearrange panes. Drag file rows, MMB slots or a supported image heading to transfer content between images.</div>
+            <div class="help-note"><strong>Two different drag operations:</strong> drag the numbered grip to move or snap its window. Drag file rows, MMB slots or a supported image heading to transfer content between images.</div>
             <div class="help-note"><strong>Familiar pane menus:</strong> File and Edit are always first, followed by View, Library, the format-specific Menu when available, Analyse and Tools. File holds open, save, add and create commands. Edit holds Cut, Copy, Paste, Undo and Checkpoints. View holds refresh, DSD side switching and return-to-MMB commands. The heading icons remain quick shortcuts for common image actions.</div>
             <div class="help-note"><strong>Free-space meter:</strong> the lower-right bar uses the image filesystem's real allocation data. Green means under 70% used, orange means 70% or more, and red means 90% or more. Hover over it for used, free and total values. An MMB root counts disk slots; opening one of its disks switches the meter to that slot's DFS bytes. UEF tapes have no fixed free-space capacity and show a neutral striped meter.</div>
             <h4>Navigate an image</h4>
@@ -868,7 +871,7 @@ function showHelp() {
               <li>A profile also records the Library filter, filing system, MMFS build, expected PAGE, validation target, managed emulator, debugger, RAM and startup action. Emulator-driven additions select the closest B-em model, Elkulator configuration, Tube processor, controller or MAME podule. Hardware marked <strong>Validation only</strong> still affects analysis without pretending that the emulator implements it.</li>
               <li>Save retains the profile in this browser. Apply attaches it to an image session. The active profile becomes the default for panes without their own profile and drives Online Library machine filtering.</li>
               <li>Choose <strong>Import recipes</strong> to save naming, group prefix, online metadata, compatibility and menu choices. Saved recipes appear in the MMB-to-ADFS planner.</li>
-              <li>Choose <strong>Portable project</strong> to export the current pane order, session references, paths, profiles and recipes. Import it on the same retained installation to restore that working context. Theme remains a browser preference.</li>
+              <li>Choose <strong>Portable project</strong> to export the current pane windows, their geometry and stack, session references, paths, profiles and recipes. Import it on the same retained installation to restore that working context. Theme remains a browser preference.</li>
             </ol></div>
             <div class="help-task"><h4>Monitor, abort and resume jobs</h4><ol>
               <li>Choose <strong>Jobs</strong> in the header. Running, paused, failed, completed and interrupted work remains visible after its foreground dialog closes.</li>
