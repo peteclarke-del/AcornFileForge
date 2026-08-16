@@ -1,20 +1,27 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
 import tempfile
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path
 
 from .analysis_service import build_manifest
-from .checksum import sha256_bytes
+from .checksum import sha256_path, sha256_stream
 from .disk_service import DiskError
-from .image_diff import compare_manifests, manifest_fingerprint
+from .image_diff import compare_manifests, manifest_fingerprint, record_key
 from .menu_service import delete_adfs_items
 
 
 PATCH_FORMAT = "acorn-file-forge-image-patch"
 PATCH_VERSION = 1
 MAX_OPERATIONS = 100_000
+MAX_PATCH_UNCOMPRESSED_BYTES = 9 * 1024 * 1024 * 1024
+MAX_PATCH_DOCUMENT_BYTES = 64 * 1024 * 1024
+PATCH_ACTIONS = frozenset({"added", "removed", "modified", "metadata"})
+SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
 
 
 def _layout_signature(manifest: dict) -> dict:
@@ -40,21 +47,175 @@ def _patch_changes(kind: str, comparison: dict):
             yield action, change, row
 
 
-def _candidate_bytes(service, session, row: dict) -> bytes:
+def _payload_required(kind: str, operation: dict) -> bool:
+    row = operation.get("after") or operation.get("before") or {}
+    return (
+        operation.get("action") in {"added", "modified"}
+        and row.get("recordType") != "directory"
+        and not (kind == "mmb" and not row.get("formatted"))
+    )
+
+
+def _member_sha256(archive: zipfile.ZipFile, name: str) -> str:
+    with archive.open(name) as source:
+        return sha256_stream(source)
+
+
+def _extract_payload(archive: zipfile.ZipFile, name: str, work_dir: Path) -> Path:
+    """Stream one already-verified member to disk without retaining it in RAM."""
+    with tempfile.NamedTemporaryFile(dir=work_dir, prefix="patch-file-", delete=False) as temporary:
+        with archive.open(name) as source:
+            shutil.copyfileobj(source, temporary, length=8 * 1024 * 1024)
+        return Path(temporary.name)
+
+
+def _read_patch_document(archive: zipfile.ZipFile) -> dict:
+    names = archive.namelist()
+    if len(names) > MAX_OPERATIONS + 1 or "patch.json" not in names:
+        raise DiskError("This is not a valid Acorn File Forge patch archive.")
+    if len(names) != len(set(names)):
+        raise DiskError("The patch archive contains duplicate member names.")
+    if any(name.startswith("/") or ".." in Path(name).parts for name in names):
+        raise DiskError("The patch archive contains an unsafe member path.")
+    if sum(item.file_size for item in archive.infolist()) > MAX_PATCH_UNCOMPRESSED_BYTES:
+        raise DiskError("The expanded patch archive exceeds the 9 GiB safety limit.")
+    if archive.getinfo("patch.json").file_size > MAX_PATCH_DOCUMENT_BYTES:
+        raise DiskError("The patch operation document exceeds the 64 MiB safety limit.")
+    document = json.loads(archive.read("patch.json"))
+    if document.get("format") != PATCH_FORMAT or document.get("version") != PATCH_VERSION:
+        raise DiskError("This patch format or version is not supported.")
+    operations = document.get("operations")
+    if not isinstance(operations, list) or len(operations) > MAX_OPERATIONS:
+        raise DiskError("The patch operation list is invalid or too large.")
+    for field in ("baseFingerprint", "candidateFingerprint"):
+        fingerprint = str(document.get(field) or "").lower()
+        if not SHA256_PATTERN.fullmatch(fingerprint):
+            raise DiskError(f"The patch has an invalid {field}.")
+        document[field] = fingerprint
+    expected_payloads = set()
+    for index, operation in enumerate(operations, start=1):
+        if not isinstance(operation, dict) or operation.get("action") not in PATCH_ACTIONS:
+            raise DiskError(f"Patch operation {index} has an invalid action.")
+        if not isinstance(operation.get("after") or operation.get("before"), dict):
+            raise DiskError(f"Patch operation {index} has no logical record.")
+        if not _payload_required(str(document.get("kind") or ""), operation):
+            continue
+        name = str(operation.get("payload") or "")
+        checksum = str(operation.get("payloadSha256") or "").lower()
+        if not name.startswith("payloads/") or name not in names:
+            raise DiskError(f"Patch operation {index} is missing its payload.")
+        if not SHA256_PATTERN.fullmatch(checksum):
+            raise DiskError(f"Patch operation {index} has an invalid payload checksum.")
+        operation["payloadSha256"] = checksum
+        expected_payloads.add(name)
+    unexpected = set(names) - {"patch.json"} - expected_payloads
+    if unexpected:
+        raise DiskError(f"The patch archive contains an unexpected member: {sorted(unexpected)[0]}.")
+    return document
+
+
+def _validate_operation_plan(kind: str, document: dict, current: dict) -> None:
+    """Prove that the advertised operations are the canonical candidate diff."""
+    candidate_records = document.get("candidateRecords")
+    if not isinstance(candidate_records, list) or not all(
+        isinstance(record, dict) for record in candidate_records
+    ):
+        raise DiskError("The patch has no verifiable candidate manifest.")
+    candidate_keys = [record_key(record) for record in candidate_records]
+    if len(candidate_keys) != len(set(candidate_keys)):
+        raise DiskError("The patch candidate manifest contains duplicate logical records.")
+    candidate = {"image": document.get("candidate", {}), "records": candidate_records}
+    if manifest_fingerprint(candidate) != document["candidateFingerprint"]:
+        raise DiskError("The patch candidate manifest does not match its fingerprint.")
+    comparison = compare_manifests(current, candidate)
+    expected = [
+        {
+            "action": action,
+            "key": change["key"],
+            "before": change.get("before"),
+            "after": change.get("after"),
+            "changedFields": change.get("changedFields", []),
+        }
+        for action, change, _row in _patch_changes(kind, comparison)
+    ]
+    actual = [
+        {
+            "action": operation.get("action"),
+            "key": operation.get("key"),
+            "before": operation.get("before"),
+            "after": operation.get("after"),
+            "changedFields": operation.get("changedFields", []),
+        }
+        for operation in document["operations"]
+    ]
+    if actual != expected:
+        raise DiskError("The patch operation plan does not match its base and candidate manifests.")
+    if document.get("summary") != comparison["summary"]:
+        raise DiskError("The patch change summary does not match its operation plan.")
+
+
+def _preflight_patch(service, session, archive: zipfile.ZipFile) -> tuple[dict, dict]:
+    document = _read_patch_document(archive)
+    if document.get("kind") != session.kind:
+        raise DiskError(f"This patch targets {document.get('kind')}, not the open {session.kind} image.")
+    current = build_manifest(service, session)
+    if document.get("layout") and _layout_signature(current) != document.get("layout"):
+        raise DiskError("This patch targets a different DFS side layout or ROM bank size.")
+    if manifest_fingerprint(current) != document.get("baseFingerprint"):
+        raise DiskError("The open image does not match this patch's exact base revision.")
+    _validate_operation_plan(session.kind, document, current)
+    for index, operation in enumerate(document["operations"], start=1):
+        if not _payload_required(session.kind, operation):
+            continue
+        if _member_sha256(archive, operation["payload"]) != operation["payloadSha256"]:
+            raise DiskError(f"Patch payload for operation {index} failed its SHA-256 check.")
+    return document, current
+
+
+def inspect_patch_archive(service, session, archive_path: Path) -> dict:
+    """Verify a patch completely without changing the open image."""
+    try:
+        with zipfile.ZipFile(archive_path) as archive:
+            document, _current = _preflight_patch(service, session, archive)
+            payload_names = {
+                operation["payload"]
+                for operation in document["operations"]
+                if _payload_required(session.kind, operation)
+            }
+            payload_bytes = sum(archive.getinfo(name).file_size for name in payload_names)
+    except zipfile.BadZipFile as exc:
+        raise DiskError("The selected patch is not a readable ZIP archive.") from exc
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise DiskError(f"The patch document is incomplete or invalid: {exc}") from exc
+    return {
+        "compatible": True,
+        "base": document.get("base", {}),
+        "candidate": document.get("candidate", {}),
+        "summary": document.get("summary", {}),
+        "operationCount": len(document["operations"]),
+        "payloadCount": len(payload_names),
+        "payloadBytes": payload_bytes,
+        "operations": document["operations"][:200],
+        "truncated": len(document["operations"]) > 200,
+    }
+
+
+@contextmanager
+def _candidate_payload_path(service, session, row: dict):
+    """Expose one candidate payload as a path and clean generated exports."""
     if session.kind == "mmb":
-        return service._slot_path(session, int(row["slot"])).read_bytes()
-    if session.kind == "rom":
-        exported = service.export_file(session, None, str(row["path"]))
-        try:
-            return exported.read_bytes()
-        finally:
-            exported.unlink(missing_ok=True)
-    return service.read_file(
+        yield service._slot_path(session, int(row["slot"]))
+        return
+    exported = service.export_file(
         session,
         int(row["slot"]) if row.get("slot") is not None else None,
         str(row["path"]),
         int(row["side"]) if row.get("side") is not None else None,
     )
+    try:
+        yield exported
+    finally:
+        exported.unlink(missing_ok=True)
 
 
 def write_patch_archive(service, base_session, candidate_session, destination: Path) -> dict:
@@ -68,48 +229,49 @@ def write_patch_archive(service, base_session, candidate_session, destination: P
     if base_session.kind == "tape":
         raise DiskError("UEF tape images are read-only and cannot receive patch sets.")
 
-    operations = []
-    payloads: list[tuple[str, bytes]] = []
-    for action, change, row in _patch_changes(base_session.kind, comparison):
-        operation = {
-            "action": action,
-            "key": change["key"],
-            "before": change.get("before"),
-            "after": change.get("after"),
-            "changedFields": change.get("changedFields", []),
-        }
-        needs_payload = (
-            action in {"added", "modified"}
-            and row.get("recordType") != "directory"
-            and not (base_session.kind == "mmb" and not row.get("formatted"))
-        )
-        if needs_payload:
-            content = _candidate_bytes(service, candidate_session, row)
-            payload_name = f"payloads/{len(payloads):08d}.bin"
-            operation["payload"] = payload_name
-            operation["payloadSha256"] = sha256_bytes(content)
-            payloads.append((payload_name, content))
-        operations.append(operation)
-    if len(operations) > MAX_OPERATIONS:
+    operation_count = sum(1 for _item in _patch_changes(base_session.kind, comparison))
+    if operation_count > MAX_OPERATIONS:
         raise DiskError(f"Patch sets are limited to {MAX_OPERATIONS:,} logical operations.")
-
-    document = {
-        "format": PATCH_FORMAT,
-        "version": PATCH_VERSION,
-        "kind": base_session.kind,
-        "base": comparison["base"],
-        "candidate": comparison["candidate"],
-        "baseFingerprint": comparison["baseFingerprint"],
-        "candidateFingerprint": comparison["candidateFingerprint"],
-        "layout": _layout_signature(base),
-        "candidateRecords": candidate.get("records", []),
-        "summary": comparison["summary"],
-        "operations": operations,
-    }
+    operations = []
     with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as archive:
+        payload_count = 0
+        for action, change, row in _patch_changes(base_session.kind, comparison):
+            operation = {
+                "action": action,
+                "key": change["key"],
+                "before": change.get("before"),
+                "after": change.get("after"),
+                "changedFields": change.get("changedFields", []),
+            }
+            if _payload_required(base_session.kind, operation):
+                payload_name = f"payloads/{payload_count:08d}.bin"
+                with _candidate_payload_path(service, candidate_session, row) as source:
+                    checksum = sha256_path(source)
+                    expected = str(row.get("sha256") or "").lower()
+                    if SHA256_PATTERN.fullmatch(expected) and checksum != expected:
+                        raise DiskError(
+                            f"{row.get('path') or row.get('diskTitle') or operation['key']} "
+                            "changed while the patch was being built. Compare the images again."
+                        )
+                    archive.write(source, payload_name)
+                operation["payload"] = payload_name
+                operation["payloadSha256"] = checksum
+                payload_count += 1
+            operations.append(operation)
+        document = {
+            "format": PATCH_FORMAT,
+            "version": PATCH_VERSION,
+            "kind": base_session.kind,
+            "base": comparison["base"],
+            "candidate": comparison["candidate"],
+            "baseFingerprint": comparison["baseFingerprint"],
+            "candidateFingerprint": comparison["candidateFingerprint"],
+            "layout": _layout_signature(base),
+            "candidateRecords": candidate.get("records", []),
+            "summary": comparison["summary"],
+            "operations": operations,
+        }
         archive.writestr("patch.json", json.dumps(document, indent=2, ensure_ascii=False))
-        for name, content in payloads:
-            archive.writestr(name, content)
     return document
 
 
@@ -180,12 +342,7 @@ def _apply_normal_patch(service, session, operations: list[dict], archive: zipfi
             service.make_directory(session, str(row["path"]))
             _apply_access(service, session, row)
             continue
-        content = archive.read(operation["payload"])
-        if sha256_bytes(content) != operation["payloadSha256"]:
-            raise DiskError(f"Patch payload {operation['payload']} failed its SHA-256 check.")
-        with tempfile.NamedTemporaryFile(dir=service.work_dir, prefix="patch-file-", delete=False) as temporary:
-            temporary.write(content)
-            temporary_path = Path(temporary.name)
+        temporary_path = _extract_payload(archive, operation["payload"], service.work_dir)
         try:
             service.put(
                 session,
@@ -219,8 +376,6 @@ def _apply_mmb_patch(service, session, operations: list[dict], archive: zipfile.
                 service.clear_slot(session, slot)
                 continue
             content = archive.read(operation["payload"])
-            if sha256_bytes(content) != operation["payloadSha256"]:
-                raise DiskError(f"Patch payload {operation['payload']} failed its SHA-256 check.")
             service.insert_slot_bytes(session, slot, content, "patch.ssd", str(row.get("diskTitle") or ""))
         if row.get("formatted"):
             service.rename_slot(session, slot, str(row.get("diskTitle") or "UNTITLED"))
@@ -242,8 +397,6 @@ def _apply_rom_patch(service, session, operations: list[dict], archive: zipfile.
             removed_banks.append(bank)
         elif operation["action"] in {"added", "modified"}:
             content = archive.read(operation["payload"])
-            if sha256_bytes(content) != operation["payloadSha256"]:
-                raise DiskError(f"Patch payload {operation['payload']} failed its SHA-256 check.")
             service.put_rom_bank(session, content, bank)
     if removed_banks:
         current_count = session.path.stat().st_size // session.rom_bank_size
@@ -259,24 +412,8 @@ def _apply_rom_patch(service, session, operations: list[dict], archive: zipfile.
 def apply_patch_archive(service, session, archive_path: Path) -> dict:
     try:
         with zipfile.ZipFile(archive_path) as archive:
-            names = archive.namelist()
-            if len(names) > MAX_OPERATIONS + 1 or "patch.json" not in names:
-                raise DiskError("This is not a valid Acorn File Forge patch archive.")
-            if any(name.startswith("/") or ".." in Path(name).parts for name in names):
-                raise DiskError("The patch archive contains an unsafe member path.")
-            document = json.loads(archive.read("patch.json"))
-            if document.get("format") != PATCH_FORMAT or document.get("version") != PATCH_VERSION:
-                raise DiskError("This patch format or version is not supported.")
-            if document.get("kind") != session.kind:
-                raise DiskError(f"This patch targets {document.get('kind')}, not the open {session.kind} image.")
-            operations = document.get("operations")
-            if not isinstance(operations, list) or len(operations) > MAX_OPERATIONS:
-                raise DiskError("The patch operation list is invalid or too large.")
-            current = build_manifest(service, session)
-            if document.get("layout") and _layout_signature(current) != document.get("layout"):
-                raise DiskError("This patch targets a different DFS side layout or ROM bank size.")
-            if manifest_fingerprint(current) != document.get("baseFingerprint"):
-                raise DiskError("The open image does not match this patch's exact base revision.")
+            document, _current = _preflight_patch(service, session, archive)
+            operations = document["operations"]
             if session.kind == "mmb":
                 _apply_mmb_patch(service, session, operations, archive)
             elif session.kind == "rom":

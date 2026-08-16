@@ -1017,14 +1017,19 @@ marked as unsuitable for a directly applicable patch.
 
 When two images use the same filesystem family, compatible DFS side layout and
 ROM bank size, the comparison can also create an `.affpatch.zip`. It contains a
-readable patch plan plus only the added or changed payload bytes. Applying it
+readable patch plan plus only the added or changed payload bytes. Payloads are
+checksummed and streamed straight into the ZIP, so a large FileCore batch does
+not accumulate every changed file in application memory. Applying it
 through **Analyse → Apply guarded patch**
-requires the open image to match the patch's exact base fingerprint. The app
-checks every embedded payload, creates an automatic checkpoint, applies the
-operations and verifies the complete candidate fingerprint. A stale, damaged
-or wrong-format patch is rejected. A failed final verification reports the
-first mismatched logical object and the mutation wrapper restores the
-checkpoint rather than leaving a half-applied image.
+first performs a read-only preflight. The dialog checks the format, physical
+layout, exact base fingerprint and SHA-256 of every embedded payload, then shows
+the source and candidate names, change counts and an itemised operation preview.
+The Apply button remains disabled until that inspection succeeds. Applying the
+verified archive creates an automatic checkpoint, repeats the validation before
+the first write, performs the operations and verifies the complete candidate
+fingerprint. A stale, damaged or wrong-format patch is rejected. A failed final
+verification reports the first mismatched logical object and the mutation
+wrapper restores the checkpoint rather than leaving a half-applied image.
 
 **Find duplicates / variants** uses full SHA-256 hashes for byte-identical
 content and a conservative normalised-title comparison for likely release or
