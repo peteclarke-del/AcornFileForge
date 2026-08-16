@@ -6,11 +6,11 @@
       panes,
       storage,
       storageKey,
-      maxPanes,
       newPaneState,
       restoredDfsPath,
       api,
       rebuildPaneHosts,
+      reconcilePaneWindows = () => {},
       renderPane,
       acceptImage,
       loadDirectory,
@@ -22,16 +22,17 @@
 
     function remember() {
       if (!ready) return;
-      const snapshot = panes.map(pane => pane.image ? {
-        imageId: pane.image.id,
+      const snapshot = panes.map(pane => ({
+        imageId: pane.image?.id || null,
         slot: pane.slot,
         side: pane.side,
         path: pane.path,
         archivePath: pane.archivePath,
         archiveName: pane.archiveName,
         archiveMember: pane.archiveMember,
-        pathModel: pane.image.kind === "dfs" ? "dfs-prefixes" : "hierarchical",
-      } : null);
+        pathModel: pane.image?.kind === "dfs" ? "dfs-prefixes" : "hierarchical",
+        windowState: pane.windowState,
+      }));
       try {
         storage.setItem(storageKey, JSON.stringify(snapshot));
       } catch (_error) {
@@ -42,7 +43,7 @@
     function stored() {
       try {
         const saved = JSON.parse(storage.getItem(storageKey) || "[]");
-        return Array.isArray(saved) ? saved.slice(0, maxPanes) : [];
+        return Array.isArray(saved) ? saved : [];
       } catch (_error) {
         return [];
       }
@@ -67,10 +68,12 @@
           // Leave the empty workspace available if server recovery is unavailable.
         }
       }
-      const paneCount = Math.max(1, Math.min(maxPanes, savedPanes.length || 1));
+      const paneCount = Math.max(1, savedPanes.length || 1);
       while (panes.length < paneCount) panes.push(newPaneState());
       rebuildPaneHosts();
       for (const [index, saved] of savedPanes.entries()) {
+        if (saved && typeof saved.windowState === "object") panes[index].windowState = saved.windowState;
+        if (!saved?.imageId) continue;
         if (!saved || !/^[0-9a-f]{32}$/.test(String(saved.imageId || ""))) continue;
         panes[index].loading = true;
         panes[index].loadingMessage = "Restoring your open image…";
@@ -115,6 +118,7 @@
       ready = true;
       remember();
       panes.forEach((_pane, index) => renderPane(index));
+      reconcilePaneWindows();
       if (editorWorkspace.state.restoreCandidate) {
         const key = editorWorkspace.state.restoreCandidate;
         editorWorkspace.state.restoreCandidate = null;

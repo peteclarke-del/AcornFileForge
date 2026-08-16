@@ -4,8 +4,9 @@ Acorn File Forge is a browser-based workshop for Acorn disk, hard-drive, tape
 and ROM images. It covers BBC Micro, BBC Master, Electron, Archimedes and
 compatible RISC OS media.
 
-Open up to three images together, browse their real filing systems and drag
-files between them. You can add, export, rename, move, delete, lock, compact and
+Open as many image panes as the browser and computer can comfortably handle,
+browse their real filing systems and drag files between them. You can add,
+export, rename, move, delete, lock, compact and
 validate files without touching the original image on your computer. MMB and
 ADFS menu tools, private session recovery, undo points, health checks and
 format-aware imports are built in rather than left to separate utilities.
@@ -324,23 +325,32 @@ rather than cancelling a multi-source search. Availability in a catalogue does
 not change a program's licence, so use the source page for permissions, payment
 and release notes.
 
-Drag the numbered grip at the left of a pane heading onto another pane to swap
-their positions. The image, current directory or MMB slot, selection, and scroll
-position all move together. This grip only arranges the workspace; dragging a
-file row, MMB slot, or supported image heading still transfers content. Pane
-order is restored after a normal refresh.
+Drag an empty part of a pane heading, or its numbered grip, to place that window
+anywhere in the workspace. Windows can overlap and the one selected most
+recently moves to the front. Drag against an edge for a half-workspace layout,
+against a corner for a quarter-workspace layout, or against the top edge to
+maximise. Drag any edge or corner to resize. Double-click the grip to maximise
+or restore it. A snapped pane begins resizing from its visible rectangle, and
+free panes scale proportionally when the browser workspace changes size. With
+the grip focused, Alt+Left and Alt+Right snap to either
+side, Alt+Up maximises, and Alt+Down minimises.
+Hold Shift with Alt and an arrow key to resize the focused pane in 32-pixel
+steps.
 
-**Add Pane** disables while three panes are displayed and becomes available
-again as soon as one is closed. Each open pane heading contains, in order, the
+There is no fixed pane-count limit. **Add Pane** creates another cascading
+window whenever it is selected. Each open pane heading contains, in order, the
 orange changed indicator and buttons for **New Blank Image**, **Load New
-Image**, **Save Image**, **Refresh View**, and **Close Pane**. Save is no longer
-duplicated in the file toolbar. The × closes the whole pane, not merely the
-image inside it. A changed image prompts for **Save and close**, **Close without
-saving**, or **Cancel**. Closing never deletes its private working copy: use
-**Recover previous session** in another pane to reopen it.
+Image**, **Save Image**, **Refresh View**, **Minimise**, **Maximise/Restore** and
+**Close Pane**. A minimised pane is kept on the workspace shelf and restores
+with one click. Save is no longer duplicated in the file toolbar. The × closes
+the whole pane, not merely the image inside it. A changed image prompts for
+**Save and close**, **Close without saving**, or **Cancel**. Closing never
+deletes its private working copy: use **Recover previous session** in another
+pane to reopen it.
 Empty panes also have a top-right ×. If every pane is closed, **Add Pane**
 remains available in the header; a fresh browser workspace always begins with
-one pane.
+one pane. Window positions, sizes, snap state, stack order and minimised state
+are restored after a normal refresh and are included in project JSON exports.
 
 After image validation, Save starts a native timestamped ZIP download and
 opens a small confirmation dialog containing a direct **Download ZIP** link.
@@ -1131,10 +1141,9 @@ The file extension is only a hint. Generic names such as `HardDisc4`,
 
 Use **File → New → New Image (current format)** to start with the format that
 matches the current pane. An unused pane is selected automatically, and a new
-pane is added when the three-pane limit has not been reached. If all three panes
-are occupied, the app asks to save the current image first. Cancelling that
-save question leaves the workspace unchanged. The familiar image-creation
-dialog then offers:
+pane is added when every existing pane contains an image. It opens as another
+cascading workspace window, without replacing or prompting to save an existing
+image. The familiar image-creation dialog then offers:
 
 - DFS SSD, 200 KiB
 - DFS DSD, 400 KiB
@@ -2192,7 +2201,7 @@ and every snapshot beneath it.
 ## Built-in help
 
 Use **Help** in the top-right corner for the illustrated handbook. It covers
-the expandable one-to-three-pane workflow and pane rearranging, undo and named
+the expandable freeform pane workspace, window snapping, undo and named
 checkpoints, all supported formats, MMB blank disks and protection,
 drag and drop, directory traversal, Universal Menus, UEF conversion,
 HFE safety and conversion, BeebSCSI pairing, long-operation recovery, keyboard

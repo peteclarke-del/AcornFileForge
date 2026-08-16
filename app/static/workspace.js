@@ -19,6 +19,7 @@ window.AcornWorkspace = (() => {
       requestToken: 0,
       menuDetected: false,
       fileKinds: {},
+      windowState: null,
       menuDetectionPending: Boolean(image?.kind === "mmb")
     };
   }
