@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -53,11 +55,43 @@ class ImageDiffTests(unittest.TestCase):
         report = compare_manifests(base, candidate)
 
         self.assertEqual(report["summary"], {
-            "added": 1, "removed": 1, "modified": 1, "metadata": 1, "total": 4,
+            "added": 1, "removed": 1, "renamed": 0,
+            "modified": 1, "metadata": 1, "total": 4,
         })
         self.assertEqual(report["changes"]["modified"][0]["changedFields"], ["sha256"])
         self.assertEqual(report["changes"]["metadata"][0]["changedFields"], ["execute"])
         self.assertTrue(report["sameFormat"])
+
+    def test_compare_classifies_a_unique_same_content_file_as_renamed(self) -> None:
+        base = manifest("old", "adfs", [
+            {"recordType": "file", "path": "$.OLD", "sha256": "same", "size": 10, "load": "1900"},
+        ])
+        candidate = manifest("new", "adfs", [
+            {"recordType": "file", "path": "$.NEW", "sha256": "same", "size": 10, "load": "1900"},
+        ])
+
+        report = compare_manifests(base, candidate)
+
+        self.assertEqual(report["summary"]["renamed"], 1)
+        self.assertEqual(report["summary"]["added"], 0)
+        self.assertEqual(report["summary"]["removed"], 0)
+        self.assertEqual(report["changes"]["renamed"][0]["changedFields"], ["path"])
+
+    def test_compare_does_not_guess_between_duplicate_rename_candidates(self) -> None:
+        base = manifest("old", "adfs", [
+            {"recordType": "file", "path": "$.ONE", "sha256": "same", "size": 10},
+            {"recordType": "file", "path": "$.TWO", "sha256": "same", "size": 10},
+        ])
+        candidate = manifest("new", "adfs", [
+            {"recordType": "file", "path": "$.THREE", "sha256": "same", "size": 10},
+            {"recordType": "file", "path": "$.FOUR", "sha256": "same", "size": 10},
+        ])
+
+        report = compare_manifests(base, candidate)
+
+        self.assertEqual(report["summary"]["renamed"], 0)
+        self.assertEqual(report["summary"]["added"], 2)
+        self.assertEqual(report["summary"]["removed"], 2)
 
     def test_directory_allocation_changes_are_derived_not_logical_changes(self) -> None:
         base = manifest("old", "adfs", [
@@ -84,7 +118,27 @@ class ImageDiffTests(unittest.TestCase):
         self.assertEqual(report["summary"]["total"], 0)
         self.assertEqual(builder.call_count, 2)
         self.assertTrue(all(call.args[2] is not None for call in builder.call_args_list))
-        self.assertEqual(updates[-1], ("Comparing logical contents and metadata", 2, 2))
+        self.assertEqual(report["raw"]["components"], [])
+        self.assertEqual(updates[-1], ("Image comparison complete", 3, 3))
+
+    def test_image_comparison_joins_raw_component_ranges_to_logical_changes(self) -> None:
+        base = manifest("old", "dfs", [])
+        candidate = manifest("new", "dfs", [])
+        with tempfile.TemporaryDirectory() as folder:
+            left = Path(folder) / "left.ssd"
+            right = Path(folder) / "right.ssd"
+            left.write_bytes(b"CATALOGUE-A")
+            right.write_bytes(b"CATALOGUE-B")
+            sessions = [
+                SimpleNamespace(kind="dfs", name=left.name, path=left, descriptor_path=None),
+                SimpleNamespace(kind="dfs", name=right.name, path=right, descriptor_path=None),
+            ]
+            with patch("app.image_diff.build_manifest", side_effect=[base, candidate]):
+                report = compare_images(None, *sessions)
+
+        self.assertEqual(report["raw"]["changedBytes"], 1)
+        self.assertEqual(report["raw"]["components"][0]["component"], "image")
+        self.assertEqual(report["raw"]["components"][0]["ranges"], [[10, 10]])
 
 
 if __name__ == "__main__":
