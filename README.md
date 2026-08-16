@@ -85,7 +85,7 @@ they will not be committed or packaged.
 ## Current status
 
 The current release candidate is `1.0.0-rc.1`. It supports the editing and transfer workflows described in
-this guide, including one to three rearrangeable panes, undo and named
+this guide, including movable, resizable and stackable panes, undo and named
 checkpoints, browser-private recovery, background job tracking, MMB and ADFS
 menu maintenance, HFE handling, UEF extraction, an Online Library and
 hardware-aware ADFS checks.
@@ -432,6 +432,17 @@ finished image.
 Every open pane has an **Analyse** menu. These tools are read-only unless a
 repair or reviewed edit is explicitly selected, and normal automatic
 checkpoints still protect every write.
+
+The header **Search** command searches every distinct image currently open in
+the workspace. One query covers filenames and bounded readable BASIC, command
+script and text content. MMB searches include every populated slot; ADFS
+searches traverse the complete directory tree; DFS, ROMFS and UEF searches use
+their visible filing-system catalogues. Results identify the pane, image, MMB
+slot and path. Selecting a result restores a minimised pane, brings it to the
+front, navigates to the containing directory, slot or side, and opens the file
+in the appropriate editor. Raw ROM banks are omitted because they are not a
+filing system and already have structure, string and byte search in the ROM
+Workbench and Hex editor.
 
 ![Workbench hardware profiles](docs/images/workbench-analysis.png)
 
@@ -994,6 +1005,27 @@ menu records are writable through this path. The current database must still
 match the exported baseline, preventing an old manifest from replacing newer
 menu work.
 
+**Compare with open image** builds the same complete logical manifest for two
+open images and matches records by filesystem location, MMB slot, DFS side or
+ROM bank. Added and removed objects are separated from changed content and
+metadata-only changes. Full file and slot SHA-256 values distinguish a real
+payload change from allocation or directory movement. Each report includes
+deterministic base and candidate fingerprints and can be exported as JSON for
+review, automation or later patch planning. Comparing different filesystem
+families is allowed as an inventory exercise, but the result is explicitly
+marked as unsuitable for a directly applicable patch.
+
+When two images use the same filesystem family, compatible DFS side layout and
+ROM bank size, the comparison can also create an `.affpatch.zip`. It contains a
+readable patch plan plus only the added or changed payload bytes. Applying it
+through **Analyse → Apply guarded patch**
+requires the open image to match the patch's exact base fingerprint. The app
+checks every embedded payload, creates an automatic checkpoint, applies the
+operations and verifies the complete candidate fingerprint. A stale, damaged
+or wrong-format patch is rejected. A failed final verification reports the
+first mismatched logical object and the mutation wrapper restores the
+checkpoint rather than leaving a half-applied image.
+
 **Find duplicates / variants** uses full SHA-256 hashes for byte-identical
 content and a conservative normalised-title comparison for likely release or
 side variants. It reports candidates rather than deleting anything.
@@ -1101,8 +1133,8 @@ program which understands ADFS directory records.
 
 ### Portable projects
 
-Workbench can export an `.aff-project.json` description containing one to
-three pane positions, image names and private session references, current MMB
+Workbench can export an `.aff-project.json` description containing all open
+pane positions, image names and private session references, current MMB
 slots or ADFS paths, hardware profiles, and import recipes. Importing it on the
 same retained installation restores that working context. Theme remains a
 browser preference rather than part of the imported project. The project is
@@ -2375,6 +2407,9 @@ Backend routes are split by responsibility:
   timestamped ZIP downloads with progress reporting.
 - `app/analysis_service.py` builds health, manifest, duplicate, inspection, and
   loader-dependency reports.
+- `app/image_diff.py` assigns filesystem-aware manifest identities, produces
+  deterministic logical fingerprints and classifies cross-image content and
+  metadata changes without coupling that work to HTTP or browser state.
 - `app/content_kind.py` owns bounded content classification and BASIC, script,
   text, binary and UEF recognition.
 - `app/archive_browser.py` owns safe read-only UEF and compressed archive
@@ -2467,10 +2502,14 @@ npm run test:browser
 
 Set `ACORN_FILE_FORGE_URL` when the service is listening elsewhere. The browser
 suite checks editor menu transfer, command selection and outside-click
-dismissal. It also verifies the one-to-three pane lifecycle, the maximum-pane
+dismissal. It also verifies the dynamic pane lifecycle, pane window management
 guard and close/re-enable behaviour in a real Chromium page. Its generated
 image flow creates an MMB, inserts a blank SSD, verifies the automatic
 checkpoint, performs undo, prepares a timestamped save and downloads the ZIP.
+The workspace analysis flow opens two generated filesystems, checks the compact
+empty search and comparison layouts, searches both, compares their logical
+manifests, applies a guarded patch, rejects its stale reuse, enables JSON export
+and checks that populated result dialogs remain within the browser viewport.
 No private sample media is required.
 
 `.github/workflows/ci.yml` runs the Python, JavaScript and Chromium suites on
