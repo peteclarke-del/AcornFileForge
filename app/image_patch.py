@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import tempfile
 import zipfile
 from contextlib import contextmanager
 from pathlib import Path
 
 from .analysis_service import build_manifest
-from .checksum import sha256_path, sha256_stream
+from .checksum import sha256_copy, sha256_stream
 from .disk_service import DiskError
 from .image_diff import compare_manifests, manifest_fingerprint, record_key
 from .menu_service import delete_adfs_items
@@ -22,6 +21,17 @@ MAX_PATCH_UNCOMPRESSED_BYTES = 9 * 1024 * 1024 * 1024
 MAX_PATCH_DOCUMENT_BYTES = 64 * 1024 * 1024
 PATCH_ACTIONS = frozenset({"added", "removed", "modified", "metadata"})
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
+
+
+def _session_label(session) -> str:
+    """Return a stable human-readable label for real and lightweight sessions."""
+    name = getattr(session, "name", None)
+    if name:
+        return str(name)
+    path = getattr(session, "path", None)
+    if path:
+        return Path(path).name
+    return f"{str(getattr(session, 'kind', 'image')).upper()} image"
 
 
 def _layout_signature(manifest: dict) -> dict:
@@ -56,17 +66,33 @@ def _payload_required(kind: str, operation: dict) -> bool:
     )
 
 
-def _member_sha256(archive: zipfile.ZipFile, name: str) -> str:
+def _member_sha256(archive: zipfile.ZipFile, name: str, progress=None) -> str:
     with archive.open(name) as source:
-        return sha256_stream(source)
+        return sha256_stream(source, progress)
 
 
-def _extract_payload(archive: zipfile.ZipFile, name: str, work_dir: Path) -> Path:
+def _extract_payload(
+    archive: zipfile.ZipFile,
+    name: str,
+    work_dir: Path,
+    progress=None,
+) -> Path:
     """Stream one already-verified member to disk without retaining it in RAM."""
     with tempfile.NamedTemporaryFile(dir=work_dir, prefix="patch-file-", delete=False) as temporary:
-        with archive.open(name) as source:
-            shutil.copyfileobj(source, temporary, length=8 * 1024 * 1024)
-        return Path(temporary.name)
+        temporary_path = Path(temporary.name)
+        try:
+            with archive.open(name) as source:
+                processed = 0
+                total = archive.getinfo(name).file_size
+                for chunk in iter(lambda: source.read(8 * 1024 * 1024), b""):
+                    temporary.write(chunk)
+                    processed += len(chunk)
+                    if progress:
+                        progress(processed, total)
+        except Exception:
+            temporary_path.unlink(missing_ok=True)
+            raise
+    return temporary_path
 
 
 def _read_patch_document(archive: zipfile.ZipFile) -> dict:
@@ -154,29 +180,48 @@ def _validate_operation_plan(kind: str, document: dict, current: dict) -> None:
         raise DiskError("The patch change summary does not match its operation plan.")
 
 
-def _preflight_patch(service, session, archive: zipfile.ZipFile) -> tuple[dict, dict]:
+def _preflight_patch(service, session, archive: zipfile.ZipFile, progress=None) -> tuple[dict, dict]:
+    report = progress or (lambda _message, _current=None, _total=None: None)
+    report("Reading and validating the patch plan", 0, None)
     document = _read_patch_document(archive)
     if document.get("kind") != session.kind:
         raise DiskError(f"This patch targets {document.get('kind')}, not the open {session.kind} image.")
-    current = build_manifest(service, session)
+    report(f"Cataloguing the open {session.kind.upper()} image", 0, None)
+    current = build_manifest(service, session, report)
     if document.get("layout") and _layout_signature(current) != document.get("layout"):
         raise DiskError("This patch targets a different DFS side layout or ROM bank size.")
     if manifest_fingerprint(current) != document.get("baseFingerprint"):
         raise DiskError("The open image does not match this patch's exact base revision.")
+    report("Checking the canonical operation plan", 0, None)
     _validate_operation_plan(session.kind, document, current)
-    for index, operation in enumerate(document["operations"], start=1):
-        if not _payload_required(session.kind, operation):
-            continue
-        if _member_sha256(archive, operation["payload"]) != operation["payloadSha256"]:
+    payloads = [
+        operation for operation in document["operations"]
+        if _payload_required(session.kind, operation)
+    ]
+    total_bytes = sum(archive.getinfo(operation["payload"]).file_size for operation in payloads)
+    verified_bytes = 0
+    for index, operation in enumerate(payloads, start=1):
+        name = operation["payload"]
+        size = archive.getinfo(name).file_size
+        message = f"Verifying patch payload {index} of {len(payloads)}"
+        report(message, verified_bytes, total_bytes)
+        checksum = _member_sha256(
+            archive,
+            name,
+            lambda current: report(message, verified_bytes + current, total_bytes),
+        )
+        if checksum != operation["payloadSha256"]:
             raise DiskError(f"Patch payload for operation {index} failed its SHA-256 check.")
+        verified_bytes += size
+    report("Patch preflight complete", total_bytes, total_bytes)
     return document, current
 
 
-def inspect_patch_archive(service, session, archive_path: Path) -> dict:
+def inspect_patch_archive(service, session, archive_path: Path, progress=None) -> dict:
     """Verify a patch completely without changing the open image."""
     try:
         with zipfile.ZipFile(archive_path) as archive:
-            document, _current = _preflight_patch(service, session, archive)
+            document, _current = _preflight_patch(service, session, archive, progress)
             payload_names = {
                 operation["payload"]
                 for operation in document["operations"]
@@ -218,9 +263,19 @@ def _candidate_payload_path(service, session, row: dict):
         exported.unlink(missing_ok=True)
 
 
-def write_patch_archive(service, base_session, candidate_session, destination: Path) -> dict:
-    base = build_manifest(service, base_session)
-    candidate = build_manifest(service, candidate_session)
+def write_patch_archive(
+    service,
+    base_session,
+    candidate_session,
+    destination: Path,
+    progress=None,
+) -> dict:
+    report = progress or (lambda _message, _current=None, _total=None: None)
+    report(f"Cataloguing base image {_session_label(base_session)}", 0, None)
+    base = build_manifest(service, base_session, report)
+    report(f"Cataloguing candidate image {_session_label(candidate_session)}", 0, None)
+    candidate = build_manifest(service, candidate_session, report)
+    report("Comparing logical contents and metadata", 0, None)
     comparison = compare_manifests(base, candidate)
     if not comparison["sameFormat"]:
         raise DiskError("Patch sets require two images from the same filesystem family.")
@@ -235,7 +290,16 @@ def write_patch_archive(service, base_session, candidate_session, destination: P
     operations = []
     with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED, allowZip64=True) as archive:
         payload_count = 0
-        for action, change, row in _patch_changes(base_session.kind, comparison):
+        for operation_index, (action, change, row) in enumerate(
+            _patch_changes(base_session.kind, comparison),
+            start=1,
+        ):
+            label = row.get("path") or row.get("diskTitle") or change["key"]
+            report(
+                f"Writing patch operation {operation_index} of {operation_count} · {label}",
+                operation_index - 1,
+                operation_count,
+            )
             operation = {
                 "action": action,
                 "key": change["key"],
@@ -246,14 +310,27 @@ def write_patch_archive(service, base_session, candidate_session, destination: P
             if _payload_required(base_session.kind, operation):
                 payload_name = f"payloads/{payload_count:08d}.bin"
                 with _candidate_payload_path(service, candidate_session, row) as source:
-                    checksum = sha256_path(source)
+                    size = source.stat().st_size
+                    with source.open("rb") as payload_source, archive.open(
+                        payload_name,
+                        "w",
+                        force_zip64=True,
+                    ) as payload_target:
+                        checksum = sha256_copy(
+                            payload_source,
+                            payload_target,
+                            lambda current: report(
+                                f"Compressing {label}",
+                                current,
+                                size,
+                            ),
+                        )
                     expected = str(row.get("sha256") or "").lower()
                     if SHA256_PATTERN.fullmatch(expected) and checksum != expected:
                         raise DiskError(
                             f"{row.get('path') or row.get('diskTitle') or operation['key']} "
                             "changed while the patch was being built. Compare the images again."
                         )
-                    archive.write(source, payload_name)
                 operation["payload"] = payload_name
                 operation["payloadSha256"] = checksum
                 payload_count += 1
@@ -272,6 +349,7 @@ def write_patch_archive(service, base_session, candidate_session, destination: P
             "operations": operations,
         }
         archive.writestr("patch.json", json.dumps(document, indent=2, ensure_ascii=False))
+    report("Guarded patch archive is ready", operation_count, operation_count)
     return document
 
 
@@ -325,24 +403,47 @@ def _apply_metadata(service, session, row: dict) -> None:
     _apply_access(service, session, row)
 
 
-def _apply_normal_patch(service, session, operations: list[dict], archive: zipfile.ZipFile) -> None:
+def _apply_normal_patch(
+    service,
+    session,
+    operations: list[dict],
+    archive: zipfile.ZipFile,
+    progress=None,
+) -> None:
+    report = progress or (lambda _message, _current=None, _total=None: None)
     removal_actions = {"removed", "modified"} if session.kind == "dfs" else {"removed"}
     removals = [item for item in operations if item["action"] in removal_actions]
     removals.sort(key=lambda item: (item["before"].get("recordType") == "directory", -str(item["before"].get("path") or "").count(".")))
+    metadata = [item for item in operations if item["action"] == "metadata"]
+    additions = [
+        item for item in operations if item["action"] in {"added", "modified"}
+    ]
+    total_steps = len(removals) + len(additions) + len(metadata)
+    completed = 0
     for operation in removals:
+        report(f"Removing {operation['before'].get('path')}", completed, total_steps)
         _remove_filesystem_record(service, session, operation["before"])
+        completed += 1
 
-    additions = [item for item in operations if item["action"] in {"added", "modified"}]
     additions.sort(key=lambda item: (item["after"].get("recordType") != "directory", str(item["after"].get("path") or "").count(".")))
     for operation in additions:
         row = operation["after"]
+        report(f"Writing {row.get('path')}", completed, total_steps)
         if row.get("recordType") == "directory":
             if session.kind != "adfs":
                 raise DiskError("This patch contains a directory for a flat filesystem.")
             service.make_directory(session, str(row["path"]))
             _apply_access(service, session, row)
+            completed += 1
             continue
-        temporary_path = _extract_payload(archive, operation["payload"], service.work_dir)
+        temporary_path = _extract_payload(
+            archive,
+            operation["payload"],
+            service.work_dir,
+            lambda current, total: report(
+                f"Extracting {row.get('path')}", current, total
+            ),
+        )
         try:
             service.put(
                 session,
@@ -359,15 +460,21 @@ def _apply_normal_patch(service, session, operations: list[dict], archive: zipfi
         # second metadata pass is both redundant and ambiguous for numeric DFS
         # manifest values, so only reproduce the access bits here.
         _apply_access(service, session, row)
+        completed += 1
 
-    for operation in (item for item in operations if item["action"] == "metadata"):
+    for operation in metadata:
+        report(f"Updating metadata for {operation['after'].get('path')}", completed, total_steps)
         _apply_metadata(service, session, operation["after"])
+        completed += 1
+    report("Patch operations written", total_steps, total_steps)
 
 
-def _apply_mmb_patch(service, session, operations: list[dict], archive: zipfile.ZipFile) -> None:
-    for operation in operations:
+def _apply_mmb_patch(service, session, operations: list[dict], archive: zipfile.ZipFile, progress=None) -> None:
+    report = progress or (lambda _message, _current=None, _total=None: None)
+    for index, operation in enumerate(operations):
         row = operation.get("after") or operation.get("before") or {}
         slot = int(row["slot"])
+        report(f"Updating MMB slot {slot}", index, len(operations))
         if operation["action"] == "removed":
             service.clear_slot(session, slot)
             continue
@@ -386,13 +493,16 @@ def _apply_mmb_patch(service, session, operations: list[dict], archive: zipfile.
             else:
                 session.slot_source_names.pop(slot, None)
                 service._persist_session(session)
+    report("MMB patch operations written", len(operations), len(operations))
 
 
-def _apply_rom_patch(service, session, operations: list[dict], archive: zipfile.ZipFile) -> None:
+def _apply_rom_patch(service, session, operations: list[dict], archive: zipfile.ZipFile, progress=None) -> None:
+    report = progress or (lambda _message, _current=None, _total=None: None)
     removed_banks = []
-    for operation in operations:
+    for index, operation in enumerate(operations):
         row = operation.get("after") or operation.get("before") or {}
         bank = int(row["bank"])
+        report(f"Updating ROM bank {bank}", index, len(operations))
         if operation["action"] == "removed":
             removed_banks.append(bank)
         elif operation["action"] in {"added", "modified"}:
@@ -407,27 +517,30 @@ def _apply_rom_patch(service, session, operations: list[dict], archive: zipfile.
             image.truncate((current_count - len(removed_banks)) * session.rom_bank_size)
         session.dirty = True
         service._persist_session(session)
+    report("ROM patch operations written", len(operations), len(operations))
 
 
-def apply_patch_archive(service, session, archive_path: Path) -> dict:
+def apply_patch_archive(service, session, archive_path: Path, progress=None) -> dict:
+    report = progress or (lambda _message, _current=None, _total=None: None)
     try:
         with zipfile.ZipFile(archive_path) as archive:
-            document, _current = _preflight_patch(service, session, archive)
+            document, _current = _preflight_patch(service, session, archive, report)
             operations = document["operations"]
             if session.kind == "mmb":
-                _apply_mmb_patch(service, session, operations, archive)
+                _apply_mmb_patch(service, session, operations, archive, report)
             elif session.kind == "rom":
-                _apply_rom_patch(service, session, operations, archive)
+                _apply_rom_patch(service, session, operations, archive, report)
             elif session.kind == "tape":
                 raise DiskError("UEF tape images are read-only and cannot receive patch sets.")
             else:
-                _apply_normal_patch(service, session, operations, archive)
+                _apply_normal_patch(service, session, operations, archive, report)
     except zipfile.BadZipFile as exc:
         raise DiskError("The selected patch is not a readable ZIP archive.") from exc
     except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise DiskError(f"The patch document is incomplete or invalid: {exc}") from exc
 
-    result = build_manifest(service, session)
+    report("Verifying the completed candidate image", 0, None)
+    result = build_manifest(service, session, report)
     actual = manifest_fingerprint(result)
     if actual != document.get("candidateFingerprint"):
         expected_records = document.get("candidateRecords")
@@ -450,4 +563,5 @@ def apply_patch_archive(service, session, archive_path: Path) -> dict:
             "The patch operations completed, but the resulting logical fingerprint did not match the candidate image."
             + detail
         )
+    report("Guarded patch applied and verified", len(operations), len(operations))
     return {"operations": len(operations), "fingerprint": actual, "summary": document.get("summary", {})}

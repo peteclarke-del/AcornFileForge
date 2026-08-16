@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from app.analysis_service import (
+    build_manifest,
     duplicate_report,
     health_report,
     inspect_file,
@@ -112,6 +113,32 @@ class AnalysisServiceTests(unittest.TestCase):
 
         with self.assertRaises(OperationCancelled):
             health_report(service, session, abort)
+
+    @patch("app.analysis_service.sha256_path")
+    def test_manifest_checksum_does_not_swallow_cancellation(self, checksum) -> None:
+        service = Mock()
+        service.list_directory.return_value = {
+            "entries": [{"name": "GAME", "type": "file", "length": 1}],
+        }
+        temporary = tempfile.NamedTemporaryFile(delete=False)
+        temporary.write(b"x")
+        temporary.close()
+        service.export_file.return_value = Path(temporary.name)
+        session = Mock(kind="adfs")
+
+        def cancel_during_checksum(_path, progress):
+            progress(1, 1)
+
+        def progress(message, _current, _total):
+            if message.startswith("Checksumming"):
+                raise OperationCancelled("Stopped safely")
+
+        checksum.side_effect = cancel_during_checksum
+        try:
+            with self.assertRaises(OperationCancelled):
+                build_manifest(service, session, progress)
+        finally:
+            Path(temporary.name).unlink(missing_ok=True)
 
     @patch("app.analysis_service.menu_test_report")
     def test_mmb_health_itemises_failed_menu_records(self, menu_report) -> None:
