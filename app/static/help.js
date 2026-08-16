@@ -97,16 +97,16 @@ function showHelp() {
             <h4>Add, arrange and close panes</h4>
             <ol>
               <li>Select <strong>Add Pane</strong> in the header to add an empty cascading window. There is no fixed pane-count limit.</li>
-              <li>Use the numbered grip at the left of a pane heading to move it. Windows may overlap, and selecting any part of a window brings it to the front.</li>
+              <li>Drag an empty part of a pane heading, or use the numbered grip at its left, to move it. Windows may overlap, and selecting any part of a window brings it to the front.</li>
               <li>Drag a pane to the left or right edge to fill that half, to a corner to fill that quarter, or to the top edge to maximise it. The translucent preview shows the result before release.</li>
-              <li>Drag any pane edge or corner to resize it. Double-click the numbered grip or use the square heading button to maximise or restore it.</li>
+              <li>Drag any pane edge or corner to resize it. The lower-right corner has a visible resize mark. Double-click the numbered grip or use the square heading button to maximise or restore it.</li>
               <li>Select the line button to minimise a pane to the shelf at the bottom of the workspace. Select its shelf button to restore and focus it.</li>
               <li>With the numbered grip focused, use Alt+Left or Alt+Right to snap, Alt+Up to maximise, and Alt+Down to minimise without a pointer. Hold Shift as well to resize in 32-pixel steps.</li>
               <li>An empty pane is a convenient scratch area for creating an SSD, DSD, MMB, ADFS floppy, BeebSCSI DAT/DSC pair or other supported image.</li>
               <li>Select × at the top-right to close that whole pane. Save changed images from the prompt, deliberately close without saving a download, or cancel. The server working copy remains available through Recovery.</li>
               <li>Open images, positions, sizes, snap layout, stacking order and minimised windows are remembered across a normal page refresh. A completely fresh workspace starts with one pane.</li>
             </ol>
-            <div class="help-note"><strong>Two different drag operations:</strong> drag the numbered grip to move or snap its window. Drag file rows, MMB slots or a supported image heading to transfer content between images.</div>
+            <div class="help-note"><strong>Two different drag operations:</strong> drag a heading or its numbered grip to move or snap the window. Drag file rows, MMB slots, or the coloured format badge on a supported disk image to transfer content between images.</div>
             <div class="help-note"><strong>Familiar pane menus:</strong> File and Edit are always first, followed by View, Library, the format-specific Menu when available, Analyse and Tools. File holds open, save, add and create commands. Edit holds Cut, Copy, Paste, Undo and Checkpoints. View holds refresh, DSD side switching and return-to-MMB commands. The heading icons remain quick shortcuts for common image actions.</div>
             <div class="help-note"><strong>Free-space meter:</strong> the lower-right bar uses the image filesystem's real allocation data. Green means under 70% used, orange means 70% or more, and red means 90% or more. Hover over it for used, free and total values. An MMB root counts disk slots; opening one of its disks switches the meter to that slot's DFS bytes. UEF tapes have no fixed free-space capacity and show a neutral striped meter.</div>
             <h4>Navigate an image</h4>

@@ -325,7 +325,7 @@ rather than cancelling a multi-source search. Availability in a catalogue does
 not change a program's licence, so use the source page for permissions, payment
 and release notes.
 
-Drag the numbered grip at the left of a pane heading to place that window
+Drag an empty part of a pane heading, or its numbered grip, to place that window
 anywhere in the workspace. Windows can overlap and the one selected most
 recently moves to the front. Drag against an edge for a half-workspace layout,
 against a corner for a quarter-workspace layout, or against the top edge to
