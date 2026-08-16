@@ -18,11 +18,35 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def sha256_stream(source: BinaryIO) -> str:
+def sha256_stream(
+    source: BinaryIO,
+    progress: Callable[[int], None] | None = None,
+) -> str:
     """Return the SHA-256 digest for a readable binary stream."""
     digest = hashlib.sha256()
+    processed = 0
     for chunk in iter(lambda: source.read(_CHUNK_SIZE), b""):
         digest.update(chunk)
+        processed += len(chunk)
+        if progress:
+            progress(processed)
+    return digest.hexdigest()
+
+
+def sha256_copy(
+    source: BinaryIO,
+    target: BinaryIO,
+    progress: Callable[[int], None] | None = None,
+) -> str:
+    """Copy a binary stream while returning its SHA-256 digest."""
+    digest = hashlib.sha256()
+    processed = 0
+    for chunk in iter(lambda: source.read(_CHUNK_SIZE), b""):
+        target.write(chunk)
+        digest.update(chunk)
+        processed += len(chunk)
+        if progress:
+            progress(processed)
     return digest.hexdigest()
 
 

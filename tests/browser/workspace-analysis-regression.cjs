@@ -72,6 +72,14 @@ const target = process.env.ACORN_FILE_FORGE_URL || "http://127.0.0.1:8666";
     const total = (await page.locator(".comparison-summary strong").last().locator("span").textContent()).trim();
     if (total !== "0") throw new Error(`Identical blank filesystems reported ${total} changes`);
     if (await page.locator("[data-export-comparison]").isDisabled()) throw new Error("Comparison export stayed disabled");
+    const comparisonJob = await page.evaluate(async () => {
+      const response = await fetch("/api/operations");
+      const data = await response.json();
+      return data.operations.find(item => item.message === "Image comparison complete");
+    });
+    if (!comparisonJob || comparisonJob.state !== "complete" || comparisonJob.current !== 2 || comparisonJob.total !== 2) {
+      throw new Error(`Comparison did not retain useful operation progress: ${JSON.stringify(comparisonJob)}`);
+    }
     const dialogBox = await page.locator("#modal").boundingBox();
     const contentBox = await page.locator(".image-comparison-dialog").boundingBox();
     if (!dialogBox || !contentBox || contentBox.x < dialogBox.x || contentBox.x + contentBox.width > dialogBox.x + dialogBox.width + 1) {
@@ -107,6 +115,15 @@ const target = process.env.ACORN_FILE_FORGE_URL || "http://127.0.0.1:8666";
     const preflight = await page.locator(".patch-preflight-results").textContent();
     if (!preflight.includes("BASEblank.ssd") || !preflight.includes("CANDIDATEblank.ssd") || !preflight.includes("1operations") || !preflight.includes("$.PATCHEDadded")) {
       throw new Error(`Patch preflight did not describe the exact change: ${preflight}`);
+    }
+    const preflightJob = await page.evaluate(async () => {
+      const response = await fetch("/api/operations");
+      const data = await response.json();
+      return data.operations.find(item => item.message === "Patch preflight complete");
+    });
+    if (!preflightJob || preflightJob.state !== "complete"
+      || typeof preflightJob.current !== "number" || preflightJob.current !== preflightJob.total) {
+      throw new Error(`Patch preflight did not retain byte progress: ${JSON.stringify(preflightJob)}`);
     }
     const preflightBox = await page.locator("#modal").boundingBox();
     if (!preflightBox || preflightBox.width > 790 || preflightBox.height > 760) {
