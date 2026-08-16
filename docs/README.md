@@ -18,7 +18,7 @@ that match the running frontend.
 | Inspect, compare, build, patch or program ROM and ROMFS images | [ROM image handbook](ROM-GUIDE.md) |
 | Build and validate a release | [Release checklist](RELEASE-CHECKLIST.md) |
 | Audit the emulator firmware shipped in the image | [Firmware notes](../firmware/README.md) |
-| Review or propose Oaknut FileCore new-map work | [Oaknut classic E/F implementation patch](OAKNUT-NEW-MAP-PROPOSAL.md) |
+| Review the Oaknut FileCore integration and format limits | [Oaknut FileCore support](OAKNUT-FILECORE-SUPPORT.md) |
 | Complete a task while the application is open | Select **Help** in the application header |
 
 ## Capability map

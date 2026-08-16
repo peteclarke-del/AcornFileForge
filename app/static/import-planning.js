@@ -12,7 +12,7 @@
       };
     }
     const isDfs = pane.image?.kind === "dfs" || (pane.image?.kind === "mmb" && pane.slot !== null);
-    const limit = isDfs ? 7 : 10;
+    const limit = isDfs ? 7 : Number(pane.image?.filesystemCapabilities?.nameLimit || 10);
     const label = isDfs ? "DFS" : "ADFS";
     const raw = String(original || "").split(/[/:]/).pop();
     let suggested = raw.normalize("NFKD").replace(/[^\x20-\x7e]/g, "").replace(/[.:*#/]/g, "_").slice(0, limit);

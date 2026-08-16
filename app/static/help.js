@@ -63,7 +63,7 @@ function showHelp() {
               <ol>
                 <li>Open <strong>File → New → New Image (current format)</strong>. The current pane format is preselected.</li>
                 <li>An existing empty pane is used first. If fewer than three panes are displayed, another is added automatically. When all three are occupied, confirm the current-image download before that pane can be replaced; cancelling leaves it open.</li>
-                <li>Choose DFS SSD or DSD, an HFE-wrapped DFS/ADFS floppy, ADFS S/M/L floppy, BeebSCSI DAT/DSC hard drive, HDF virtual HDD, RAW physical-drive image, or an MMB bank.</li>
+                <li>Choose DFS SSD or DSD, an HFE-wrapped DFS/ADFS floppy, ADFS S/M/L/D/E/E+/F/F+/G/G+ floppy, BeebSCSI DAT/DSC hard drive, HDF virtual HDD, RAW physical-drive image, or an MMB bank.</li>
                 <li>Enter a disk title. For DAT, HDF and RAW images, enter a capacity such as <code>20MB</code> or <code>512MB</code>.</li>
                 <li>The size field is read-only for fixed SSD, DSD, ADFS floppy, HFE and MMB formats. It becomes editable for BeebSCSI, HDF and RAW hard drives and remembers the last HDD capacity you entered.</li>
                 <li>The target is disabled when it does not apply, fixed to BeebSCSI for DAT/DSC, and fixed to Archimedes / RISC OS for HDF or RAW. Normal ADFS S/M/L floppies retain a target choice because their geometry can be used by several Acorn systems.</li>
@@ -81,6 +81,8 @@ function showHelp() {
                 <tr><td>DSD</td><td>Two-sided BBC DFS disk</td><td>Two independent 200 KiB sides</td></tr>
                 <tr><td>HFE</td><td>HxC, Gotek and flux-style floppy workflows</td><td>Advanced/protected layouts open read-only</td></tr>
                 <tr><td>ADFS S/M/L</td><td>BBC Master or compact hierarchical media</td><td>Old-format directory and capacity limits</td></tr>
+                <tr><td>ADFS D/E/F/G</td><td>Arthur, Archimedes and RISC OS FileCore floppies</td><td>77 entries and 10-character names per directory</td></tr>
+                <tr><td>ADFS E+/F+/G+</td><td>RISC OS media with Big directories</td><td>Names up to 255 characters; entry count is capacity-dependent</td></tr>
                 <tr><td>DAT + DSC</td><td>BeebSCSI ADFS hard drives</td><td>Downloads as a ZIP containing the required pair</td></tr>
                 <tr><td>HDF / RAW</td><td>Archimedes, RISC OS or emulated hard drives</td><td>Choose enough capacity before creating</td></tr>
                 <tr><td>MMB</td><td>A library of BBC DFS disks</td><td>511 SSD-sized physical slots</td></tr>
@@ -467,7 +469,7 @@ function showHelp() {
             <div class="help-task">
               <h4>Create and organise an ADFS volume</h4>
               <ol>
-                <li>Create an ADFS S/M/L floppy or an HDF/RAW hard-drive image, or open a supported existing image.</li>
+                <li>Create any supported ADFS S through G+ floppy or an HDF/RAW hard-drive image, or open a supported existing image.</li>
                 <li>Double-click directories to enter them. Double-click <strong>..</strong> or use the breadcrumbs to move back through the hierarchy.</li>
                 <li>Use <strong>File → New → New folder</strong> to create a validated ADFS directory at the current location.</li>
                 <li>Use <strong>File → New → New file</strong> for an empty, correctly named file with explicit load and execution addresses. This is also available inside writable DFS catalogue groups and MMB disks.</li>
@@ -508,7 +510,7 @@ function showHelp() {
               </ol>
             </div>
             <p>Where both formats support it, Acorn File Forge preserves load/execute addresses, RISC OS filetypes, datestamps and access flags. Old ADFS names are normally limited to ten characters.</p>
-            <div class="help-note"><strong>Very large imports:</strong> old ADFS directories hold at most 47 entries. A large MMB selection is divided into parent groups. Names such as <code>DISCS1</code> and <code>DISCS2</code> are editable suggestions; choose names appropriate to your volume before copying.</div>
+            <div class="help-note"><strong>Very large imports:</strong> the planner reads the mounted format instead of assuming an old directory. Old directories hold 47 entries, New directories hold 77, and Big directories are capacity-dependent. A large MMB selection is divided into parent groups only when required. Names such as <code>DISCS1</code> and <code>DISCS2</code> remain editable suggestions.</div>
           </section>
           <section id="help-beebscsi">
             <h3>BeebSCSI DAT and DSC: open, edit and save</h3>
@@ -958,8 +960,9 @@ function showHelp() {
             <h3>Compatibility, limits and troubleshooting</h3>
             <h4>Important compatibility limits</h4>
             <ul>
-              <li>The filesystem engine safely edits DFS, ADFS S/M/L, classic FileCore new-map E/F, supported old-map D/hard-drive layouts and BeebSCSI DAT with its matching DSC.</li>
-              <li>Classic 800 KiB E and 1.6 MiB F images support files, nested directories, metadata, map validation and fresh-image creation. F+, E+, big-directory and later large FileCore variants remain outside this support and are never guessed from the <code>.adf</code> extension.</li>
+              <li>The released Oaknut 12.14.1 engine safely creates and edits ADFS S/M/L/D/E/E+/F/F+/G/G+, old-map and new-map FileCore hard disks, and BeebSCSI old-map DAT with its matching DSC.</li>
+              <li>D/E/F/G New directories allow 77 entries with 10-character names. E+/F+/G+ Big directories allow names up to 255 characters and a capacity-dependent number of entries. The pane and bulk planner use those detected limits.</li>
+              <li>RPCEmu and Arculator HDF/HD4 images whose logical FileCore disc begins at the 0x200-byte emulator offset are content-detected and retain that layout.</li>
               <li>“Physical HDD” means a byte-for-byte RAW image. The browser and container do not access devices such as <code>/dev/sdb</code> directly.</li>
               <li>UEF tape catalogues are read-only; convert or copy their reconstructed files into writable media.</li>
               <li>HFE v2/v3, bad-sector and advanced track images open read-only. Clean sector-based HFE v1 images can be edited and are verified again when saved.</li>
@@ -968,15 +971,15 @@ function showHelp() {
             <h4>When something does not work</h4>
             <dl>
               <dt>Button is disabled</dt><dd>Select a suitable item first, or wait for the current pane operation to finish. Blank-disk creation requires an empty MMB slot.</dd>
-              <dt>Invalid filename</dt><dd>Use the prompted replacement. DFS leaf names are seven characters; supported old ADFS formats commonly allow ten.</dd>
+              <dt>Invalid filename</dt><dd>Use the prompted replacement. DFS leaf names are seven characters; normal ADFS directories allow ten and FileCore Big directories allow up to 255.</dd>
               <dt>Not enough space</dt><dd>Delete unwanted data, compact the filesystem, or create a larger destination. DFS also has a 31-file catalogue limit.</dd>
               <dt>DSD will not insert</dt><dd>Choose a starting position with two adjacent empty MMB slots.</dd>
               <dt>HFE is read-only</dt><dd>The image uses HFE v2/v3, reports bad sectors, or contains track features the sector editor cannot reproduce safely. Export its files or copy its readable sectors to another image.</dd>
-              <dt>ADFS E or F is detected but cannot be opened</dt><dd>This normally means a source installation is using an unpatched system copy of Oaknut. Use the Docker build, or apply the implementation patch in <code>docs/patches/oaknut</code>. Images containing defect objects or unexplained allocated objects can be opened but are deliberately not rewritten.</dd>
+              <dt>A FileCore image cannot be opened</dt><dd>Confirm it is a raw ADFS/FileCore image or a supported HDF/HD4 layout rather than a compressed archive or track dump. The Docker build pins Oaknut 12.14.1 and needs no local patch. The detailed error distinguishes an unrecognised filesystem from a corrupt map or directory.</dd>
               <dt>Name collision found</dt><dd>Use the default DISC-0000 naming strategy, or review every highlighted name. The check is case-insensitive and scoped to each destination parent.</dd>
               <dt>Empty disk found</dt><dd>Choose Skip and continue or Abort. Blank disks can be stored in MMB, but do not become empty ADFS directories.</dd>
               <dt>Destination exists</dt><dd>An empty directory is reused silently. A populated directory offers Keep, Replace or Abort; a file is never overwritten as though it were an empty directory.</dd>
-              <dt>DAT geometry error</dt><dd>Close the session and reopen the original DAT with its exact matching DSC file.</dd>
+              <dt>DAT geometry error</dt><dd>An old-map BeebSCSI DAT needs its exact matching DSC file. New-map FileCore DAT images describe their filesystem geometry on-disc and do not need that sidecar.</dd>
               <dt>Network error</dt><dd>Keep the dialog open, inspect its detailed stage, refresh the destination pane if necessary, then use retry. Online metadata can be entered manually.</dd>
               <dt>Menu entry is wrong</dt><dd>Preview the installed menu, correct launch choices during an update, or regenerate the complete database.</dd>
               <dt>View appears stale</dt><dd>Select ↻ in that pane. In an MMB disk use All disks, not the root breadcrumb, to return to the slot index.</dd>
