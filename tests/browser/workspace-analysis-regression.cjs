@@ -86,6 +86,34 @@ const target = process.env.ACORN_FILE_FORGE_URL || "http://127.0.0.1:8666";
       });
       if (!response.ok) throw new Error((await response.json()).error || "Could not prepare patch candidate");
     }, ids[1]);
+
+    await page.locator("#modal .modal-close").click();
+    await firstPane.locator("summary", { hasText: "Analyse" }).click();
+    await firstPane.locator(".apply-image-patch").click();
+    if (!(await page.locator("[data-apply-patch]").isDisabled())) {
+      throw new Error("Patch apply was enabled before preflight verification");
+    }
+    await page.evaluate(async imageIds => {
+      const response = await fetch(`/api/images/${imageIds[0]}/patch?otherImage=${imageIds[1]}`);
+      if (!response.ok) throw new Error((await response.json()).error || "Could not create patch for preflight");
+      const file = new File([await response.blob()], "browser.affpatch.zip", { type: "application/zip" });
+      const transfer = new DataTransfer();
+      transfer.items.add(file);
+      const input = document.querySelector('[name="patch"]');
+      input.files = transfer.files;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }, ids);
+    await page.waitForFunction(() => !document.querySelector("[data-apply-patch]")?.disabled);
+    const preflight = await page.locator(".patch-preflight-results").textContent();
+    if (!preflight.includes("BASEblank.ssd") || !preflight.includes("CANDIDATEblank.ssd") || !preflight.includes("1operations") || !preflight.includes("$.PATCHEDadded")) {
+      throw new Error(`Patch preflight did not describe the exact change: ${preflight}`);
+    }
+    const preflightBox = await page.locator("#modal").boundingBox();
+    if (!preflightBox || preflightBox.width > 790 || preflightBox.height > 760) {
+      throw new Error(`Patch preflight dialog is oversized: ${JSON.stringify(preflightBox)}`);
+    }
+    await page.locator("#modal .modal-close").click();
+
     const patchResult = await page.evaluate(async imageIds => {
       const patchResponse = await fetch(`/api/images/${imageIds[0]}/patch?otherImage=${imageIds[1]}`);
       if (!patchResponse.ok) throw new Error((await patchResponse.json()).error || "Could not create patch");
@@ -118,7 +146,7 @@ const target = process.env.ACORN_FILE_FORGE_URL || "http://127.0.0.1:8666";
     if (patchResult.staleStatus !== 400 || !patchResult.staleError.includes("exact base revision")) {
       throw new Error(`A stale patch was not rejected explicitly: ${JSON.stringify(patchResult)}`);
     }
-    console.log("Workspace search, image comparison and guarded patch browser regression passed");
+    console.log("Workspace search, image comparison and guarded patch preflight browser regression passed");
   } finally {
     for (const id of created) {
       await page.evaluate(async imageId => fetch(`/api/images/${imageId}`, { method: "DELETE" }), id).catch(() => {});

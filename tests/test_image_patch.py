@@ -10,7 +10,13 @@ from unittest.mock import patch
 
 from app.errors import DiskError
 from app.image_diff import manifest_fingerprint
-from app.image_patch import PATCH_FORMAT, _catalogue_address, apply_patch_archive, write_patch_archive
+from app.image_patch import (
+    PATCH_FORMAT,
+    _catalogue_address,
+    apply_patch_archive,
+    inspect_patch_archive,
+    write_patch_archive,
+)
 
 
 def manifest(identity: str, records: list[dict]) -> dict:
@@ -25,9 +31,10 @@ class PatchService:
     def __init__(self, work_dir: Path):
         self.work_dir = work_dir
 
-    @staticmethod
-    def read_file(_session, _slot, path, _side):
-        return {"$.NEW": b"new bytes", "$.CHANGED": b"changed bytes"}[path]
+    def export_file(self, _session, _slot, path, _side=None):
+        target = self.work_dir / f"export-{path.rsplit('.', 1)[-1]}"
+        target.write_bytes({"$.NEW": b"new bytes", "$.CHANGED": b"changed bytes"}[path])
+        return target
 
 
 class ImagePatchTests(unittest.TestCase):
@@ -95,6 +102,66 @@ class ImagePatchTests(unittest.TestCase):
                         SimpleNamespace(kind="dfs"),
                         Path(folder) / "wrong-layout.zip",
                     )
+
+    def test_patch_inspection_verifies_payloads_without_mutating(self) -> None:
+        base = manifest("base", [])
+        candidate = manifest("candidate", [
+            {"recordType": "file", "path": "$.NEW", "size": 9, "sha256": "candidate"},
+        ])
+        with tempfile.TemporaryDirectory() as folder:
+            destination = Path(folder) / "inspect.affpatch.zip"
+            service = PatchService(Path(folder))
+            sessions = [SimpleNamespace(kind="dfs"), SimpleNamespace(kind="dfs")]
+            with patch("app.image_patch.build_manifest", side_effect=[base, candidate]):
+                write_patch_archive(service, *sessions, destination)
+            with patch("app.image_patch.build_manifest", return_value=base):
+                report = inspect_patch_archive(service, sessions[0], destination)
+            self.assertTrue(report["compatible"])
+            self.assertEqual(report["operationCount"], 1)
+            self.assertEqual(report["payloadCount"], 1)
+            self.assertEqual(report["payloadBytes"], len(b"new bytes"))
+
+    def test_patch_inspection_rejects_a_corrupt_payload(self) -> None:
+        base = manifest("base", [])
+        candidate = manifest("candidate", [
+            {"recordType": "file", "path": "$.NEW", "size": 9, "sha256": "candidate"},
+        ])
+        with tempfile.TemporaryDirectory() as folder:
+            original = Path(folder) / "original.affpatch.zip"
+            corrupt = Path(folder) / "corrupt.affpatch.zip"
+            service = PatchService(Path(folder))
+            sessions = [SimpleNamespace(kind="dfs"), SimpleNamespace(kind="dfs")]
+            with patch("app.image_patch.build_manifest", side_effect=[base, candidate]):
+                write_patch_archive(service, *sessions, original)
+            with zipfile.ZipFile(original) as source, zipfile.ZipFile(corrupt, "w") as target:
+                for item in source.infolist():
+                    content = b"damaged" if item.filename.startswith("payloads/") else source.read(item)
+                    target.writestr(item.filename, content)
+            with patch("app.image_patch.build_manifest", return_value=base):
+                with self.assertRaisesRegex(DiskError, "failed its SHA-256 check"):
+                    inspect_patch_archive(service, sessions[0], corrupt)
+
+    def test_patch_inspection_rejects_an_operation_that_does_not_match_the_candidate(self) -> None:
+        base = manifest("base", [])
+        candidate = manifest("candidate", [
+            {"recordType": "file", "path": "$.NEW", "size": 9, "sha256": "candidate"},
+        ])
+        with tempfile.TemporaryDirectory() as folder:
+            original = Path(folder) / "original.affpatch.zip"
+            altered = Path(folder) / "altered.affpatch.zip"
+            service = PatchService(Path(folder))
+            sessions = [SimpleNamespace(kind="dfs"), SimpleNamespace(kind="dfs")]
+            with patch("app.image_patch.build_manifest", side_effect=[base, candidate]):
+                write_patch_archive(service, *sessions, original)
+            with zipfile.ZipFile(original) as source, zipfile.ZipFile(altered, "w") as target:
+                document = json.loads(source.read("patch.json"))
+                document["operations"][0]["after"]["path"] = "$.MISLEADING"
+                for item in source.infolist():
+                    content = json.dumps(document) if item.filename == "patch.json" else source.read(item)
+                    target.writestr(item.filename, content)
+            with patch("app.image_patch.build_manifest", return_value=base):
+                with self.assertRaisesRegex(DiskError, "operation plan"):
+                    inspect_patch_archive(service, sessions[0], altered)
 
 
 if __name__ == "__main__":

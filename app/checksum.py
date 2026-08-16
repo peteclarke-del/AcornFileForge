@@ -6,7 +6,7 @@ import errno
 import hashlib
 import os
 from pathlib import Path
-from typing import Callable
+from typing import BinaryIO, Callable
 
 
 _CHUNK_SIZE = 8 * 1024 * 1024
@@ -16,6 +16,14 @@ _ZERO_CHUNK = bytes(_CHUNK_SIZE)
 def sha256_bytes(data: bytes) -> str:
     """Return the SHA-256 digest for an in-memory payload."""
     return hashlib.sha256(data).hexdigest()
+
+
+def sha256_stream(source: BinaryIO) -> str:
+    """Return the SHA-256 digest for a readable binary stream."""
+    digest = hashlib.sha256()
+    for chunk in iter(lambda: source.read(_CHUNK_SIZE), b""):
+        digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _update_zeros(digest, length: int, advanced: Callable[[int], None] | None = None) -> None:
