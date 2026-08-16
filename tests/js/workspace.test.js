@@ -26,6 +26,7 @@ const editorWorkspace = load("app/static/editor-workspace.js", "AcornEditorWorks
 const identifiers = load("app/static/identifiers.js", "AcornIdentifiers");
 const operationUI = load("app/static/operation-ui.js", "AcornOperationUI");
 const workspacePersistence = load("app/static/workspace-persistence.js", "AcornWorkspacePersistence");
+const paneWindows = load("app/static/pane-window-manager.js", "AcornPaneWindowManager");
 const paneView = load("app/static/pane-view.js", "AcornPaneView");
 const transferPlanning = load("app/static/transfer-planning.js", "AcornTransferPlanning");
 
@@ -34,6 +35,19 @@ test("workspace pane state has one canonical initial shape", () => {
   assert.equal(pane.path, "$");
   assert.equal(pane.menuDetectionPending, true);
   assert.deepEqual(Array.from(pane.selection), []);
+  assert.equal(pane.windowState, null);
+});
+
+test("pane window geometry supports sides, corners and constrained free placement", () => {
+  const bounds = { width: 1200, height: 800 };
+  assert.deepEqual({ ...paneWindows.snapGeometry("left", bounds) }, { x: 0, y: 0, width: 600, height: 800 });
+  assert.deepEqual({ ...paneWindows.snapGeometry("bottom-right", bounds) }, { x: 600, y: 400, width: 600, height: 400 });
+  assert.equal(paneWindows.snapTarget({ x: 4, y: 5 }, bounds), "top-left");
+  assert.equal(paneWindows.snapTarget({ x: 1198, y: 410 }, bounds), "right");
+  assert.deepEqual(
+    { ...paneWindows.constrainGeometry({ x: 1100, y: -20, width: 800, height: 900 }, bounds) },
+    { x: 400, y: 0, width: 800, height: 800 },
+  );
 });
 
 test("workspace selection helpers preserve unique stable keys", () => {
@@ -147,7 +161,7 @@ test("operation identifiers fail explicitly on obsolete browsers without Web Cry
 test("workspace recovery is isolated behind an injected persistence controller", () => {
   const controller = workspacePersistence.create({
     panes: [], storage: { getItem() { return null; }, setItem() {} },
-    storageKey: "workspace", maxPanes: 3, newPaneState() { return {}; },
+    storageKey: "workspace", newPaneState() { return {}; },
     restoredDfsPath() { return "$"; }, api() {}, rebuildPaneHosts() {},
     renderPane() {}, acceptImage() {}, loadDirectory() {},
     editorWorkspace: { state: {} }, activateEditorDocument() {}, toast() {},
