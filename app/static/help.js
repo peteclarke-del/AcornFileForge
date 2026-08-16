@@ -99,7 +99,8 @@ function showHelp() {
               <li>Select <strong>Add Pane</strong> in the header to add an empty cascading window. There is no fixed pane-count limit.</li>
               <li>Drag an empty part of a pane heading, or use the numbered grip at its left, to move it. Windows may overlap, and selecting any part of a window brings it to the front.</li>
               <li>Drag a pane to the left or right edge to fill that half, to a corner to fill that quarter, or to the top edge to maximise it. The translucent preview shows the result before release.</li>
-              <li>Drag any pane edge or corner to resize it. The lower-right corner has a visible resize mark. Double-click the numbered grip or use the square heading button to maximise or restore it.</li>
+              <li>Drag any pane edge or corner to resize it. A snapped pane begins resizing from its visible snapped rectangle rather than jumping back to its earlier size. The lower-right corner has a visible resize mark. Double-click the numbered grip or use the square heading button to maximise or restore it.</li>
+              <li>When the browser or workspace changes size, free panes scale proportionally to remain useful and visible. Snapped panes continue to follow their selected side or corner.</li>
               <li>Select the line button to minimise a pane to the shelf at the bottom of the workspace. Select its shelf button to restore and focus it.</li>
               <li>With the numbered grip focused, use Alt+Left or Alt+Right to snap, Alt+Up to maximise, and Alt+Down to minimise without a pointer. Hold Shift as well to resize in 32-pixel steps.</li>
               <li>An empty pane is a convenient scratch area for creating an SSD, DSD, MMB, ADFS floppy, BeebSCSI DAT/DSC pair or other supported image.</li>

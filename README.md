@@ -330,7 +330,9 @@ anywhere in the workspace. Windows can overlap and the one selected most
 recently moves to the front. Drag against an edge for a half-workspace layout,
 against a corner for a quarter-workspace layout, or against the top edge to
 maximise. Drag any edge or corner to resize. Double-click the grip to maximise
-or restore it. With the grip focused, Alt+Left and Alt+Right snap to either
+or restore it. A snapped pane begins resizing from its visible rectangle, and
+free panes scale proportionally when the browser workspace changes size. With
+the grip focused, Alt+Left and Alt+Right snap to either
 side, Alt+Up maximises, and Alt+Down minimises.
 Hold Shift with Alt and an arrow key to resize the focused pane in 32-pixel
 steps.

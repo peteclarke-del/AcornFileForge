@@ -41,6 +41,18 @@ const target = process.env.ACORN_FILE_FORGE_URL || "http://127.0.0.1:8666";
       throw new Error(`The lower-right resize handle did not resize the pane (${JSON.stringify({ firstMoved, firstResized })})`);
     }
 
+    const workspaceBeforeViewportResize = await page.locator(".panes").boundingBox();
+    await page.setViewportSize({ width: 1080, height: 680 });
+    await page.waitForTimeout(100);
+    const workspaceAfterViewportResize = await page.locator(".panes").boundingBox();
+    const firstScaled = await firstPane.boundingBox();
+    const expectedScaledWidth = firstResized.width * workspaceAfterViewportResize.width / workspaceBeforeViewportResize.width;
+    if (Math.abs(firstScaled.width - expectedScaledWidth) > 5 || firstScaled.width >= firstResized.width) {
+      throw new Error(`A free pane did not scale with its workspace (${JSON.stringify({ firstResized, firstScaled })})`);
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.waitForTimeout(100);
+
     for (let count = 0; count < 4; count += 1) await page.locator("#addPaneButton").click();
     if (await panes.count() !== 5) throw new Error("Workspace still limits the number of panes");
     if (await page.locator("#addPaneButton").isDisabled()) throw new Error("Add Pane became disabled");
@@ -55,6 +67,17 @@ const target = process.env.ACORN_FILE_FORGE_URL || "http://127.0.0.1:8666";
       throw new Error("Dragging to a workspace corner did not snap the pane");
     }
     if (initial.width === snapped.width && initial.height === snapped.height) throw new Error("Pane geometry did not change");
+
+    const snappedResizeHandle = await fifth.locator(".resize-se").boundingBox();
+    await page.mouse.move(snappedResizeHandle.x + snappedResizeHandle.width / 2, snappedResizeHandle.y + snappedResizeHandle.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(snappedResizeHandle.x - 50, snappedResizeHandle.y - 40, { steps: 6 });
+    await page.mouse.up();
+    const resizedFromSnap = await fifth.boundingBox();
+    if (Math.abs(resizedFromSnap.x - snapped.x) > 3 || Math.abs(resizedFromSnap.y - snapped.y) > 3
+        || resizedFromSnap.width >= snapped.width || resizedFromSnap.height >= snapped.height) {
+      throw new Error(`Resizing a snapped pane restored its old geometry (${JSON.stringify({ snapped, resizedFromSnap })})`);
+    }
 
     await fifth.locator(".minimize-pane").click();
     if (!await fifth.isHidden()) throw new Error("Minimising a pane did not hide its window");

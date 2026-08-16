@@ -122,6 +122,7 @@
 
     const bounds = () => availableBounds(container, taskbar);
     const paneHost = index => container.querySelector(`.pane[data-pane="${index}"]`);
+    let lastBounds = bounds();
 
     function ensureState(index) {
       const pane = panes[index];
@@ -211,6 +212,14 @@
       apply(index);
       renderTaskbar();
       changed();
+    }
+
+    function detachSnap(index) {
+      const state = ensureState(index);
+      if (!state?.snap) return state;
+      Object.assign(state, snapGeometry(state.snap, bounds()), { snap: "", restore: null });
+      apply(index);
+      return state;
     }
 
     function toggleMaximize(index) {
@@ -325,8 +334,7 @@
         if (!event.altKey || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
         event.preventDefault();
         if (event.shiftKey) {
-          const state = ensureState(index);
-          if (state.snap) restoreGeometry(index);
+          const state = detachSnap(index);
           const widthDelta = event.key === "ArrowRight" ? 32 : event.key === "ArrowLeft" ? -32 : 0;
           const heightDelta = event.key === "ArrowDown" ? 32 : event.key === "ArrowUp" ? -32 : 0;
           Object.assign(state, constrainGeometry({
@@ -374,7 +382,7 @@
           event.preventDefault();
           event.stopPropagation();
           handle.setPointerCapture?.(event.pointerId);
-          if (ensureState(index).snap) restoreGeometry(index);
+          detachSnap(index);
           bringToFront(index, false);
           const state = ensureState(index);
           const start = { x: state.x, y: state.y, width: state.width, height: state.height, pointerX: event.clientX, pointerY: event.clientY };
@@ -439,8 +447,36 @@
     }
 
     function resizeWorkspace() {
+      const nextBounds = bounds();
+      const previousBounds = lastBounds;
+      lastBounds = nextBounds;
+      const changedSize = previousBounds.width !== nextBounds.width || previousBounds.height !== nextBounds.height;
+      if (changedSize && previousBounds.width > 1 && previousBounds.height > 1) {
+        const scaleX = nextBounds.width / previousBounds.width;
+        const scaleY = nextBounds.height / previousBounds.height;
+        panes.forEach((_pane, index) => {
+          const state = ensureState(index);
+          if (!state) return;
+          if (state.restore) {
+            state.restore = constrainGeometry({
+              x: state.restore.x * scaleX,
+              y: state.restore.y * scaleY,
+              width: state.restore.width * scaleX,
+              height: state.restore.height * scaleY,
+            }, nextBounds, { width: minWidth, height: minHeight });
+          }
+          if (state.snap) return;
+          Object.assign(state, constrainGeometry({
+            x: state.x * scaleX,
+            y: state.y * scaleY,
+            width: state.width * scaleX,
+            height: state.height * scaleY,
+          }, nextBounds, { width: minWidth, height: minHeight }));
+        });
+      }
       panes.forEach((_pane, index) => apply(index));
       if (!preview.hidden && previewTarget) showPreview(previewTarget);
+      if (changedSize) changed();
     }
 
     const resizeObserver = typeof ResizeObserver === "function" ? new ResizeObserver(resizeWorkspace) : null;
