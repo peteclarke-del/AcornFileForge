@@ -9193,18 +9193,48 @@ async function downloadImagePatch(pane, candidateId, button) {
 
 function showApplyImagePatch(index) {
   const pane = panes[index];
-  showModal(`<div class="analysis-dialog">
+  showModal(`<div class="analysis-dialog patch-preflight-dialog">
     <small>EXACT-REVISION PATCH</small><h2>Apply patch to ${esc(pane.image.name)}</h2>
-    <p>Select an <code>.affpatch.zip</code> created from this exact base revision. The logical fingerprint, filesystem family and every embedded payload checksum are verified before the result is accepted.</p>
+    <p>Select an <code>.affpatch.zip</code> to inspect. Nothing is written until its format, physical layout, exact base fingerprint and every embedded payload have passed verification.</p>
     <label class="field"><span>Patch archive</span><input type="file" name="patch" accept=".zip,.affpatch.zip,application/zip" required></label>
+    <div class="patch-preflight-results" aria-live="polite"><p class="help-note">Choose a patch to see its source, candidate and complete operation summary.</p></div>
     <div class="help-warning"><strong>This changes image contents.</strong> An automatic undo checkpoint is created first. A stale, corrupt or wrong-format patch is rejected and rolled back.</div>
-    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="apply">Verify and apply patch</button></div>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="apply" data-apply-patch disabled>Apply verified patch</button></div>
   </div>`, async form => {
     const data = await api(`/api/images/${pane.image.id}/patch`, { method: "POST", body: form });
     pane.image = data.image;
     await refreshCurrentView(index);
     toast(`${data.patch.operations.toLocaleString()} guarded patch operation${data.patch.operations === 1 ? "" : "s"} applied`);
   });
+  const input = modalContent.querySelector('[name="patch"]');
+  const applyButton = modalContent.querySelector("[data-apply-patch]");
+  const resultHost = modalContent.querySelector(".patch-preflight-results");
+  input.onchange = async () => {
+    const file = input.files?.[0];
+    applyButton.disabled = true;
+    if (!file) {
+      resultHost.innerHTML = '<p class="help-note">Choose a patch to see its source, candidate and complete operation summary.</p>';
+      return;
+    }
+    resultHost.innerHTML = `<div class="analysis-loading compact"><span class="modal-progress-icon" aria-hidden="true">↻</span><p>Verifying ${esc(file.name)}…</p></div>`;
+    const form = new FormData();
+    form.append("patch", file, file.name);
+    try {
+      const data = await api(`/api/images/${pane.image.id}/patch/inspect`, { method: "POST", body: form });
+      if (input.files?.[0] !== file) return;
+      const report = data.patch;
+      const summary = report.summary || {};
+      const categories = ["added", "removed", "modified", "metadata"];
+      resultHost.innerHTML = `<div class="patch-preflight-heading"><span><small>BASE</small><b>${esc(report.base?.name || "Unnamed image")}</b></span><i aria-hidden="true">→</i><span><small>CANDIDATE</small><b>${esc(report.candidate?.name || "Unnamed image")}</b></span></div>
+        <div class="comparison-summary">${categories.map(name => `<strong><span>${Number(summary[name] || 0).toLocaleString()}</span>${name}</strong>`).join("")}<strong><span>${Number(report.operationCount || 0).toLocaleString()}</span>operations</strong></div>
+        <p class="patch-payload-summary">${Number(report.payloadCount || 0).toLocaleString()} verified payload${Number(report.payloadCount) === 1 ? "" : "s"} · ${humanSize(Number(report.payloadBytes || 0))}</p>
+        <div class="patch-operation-preview">${report.operations.map(operation => `<div><b>${esc(comparisonRecordLabel(operation))}</b><small>${esc(operation.action)}${operation.changedFields?.length ? ` · ${esc(operation.changedFields.join(", "))}` : ""}</small></div>`).join("") || '<p class="code-empty-message">This patch contains no logical changes.</p>'}${report.truncated ? '<p class="help-note">Only the first 200 operations are shown. Every operation and payload was still verified.</p>' : ""}</div>`;
+      applyButton.disabled = false;
+    } catch (error) {
+      if (input.files?.[0] !== file) return;
+      resultHost.innerHTML = `<p class="help-warning"><strong>Patch verification failed.</strong> ${esc(error.message)}</p>`;
+    }
+  };
 }
 
 async function openWorkspaceSearchResult(result) {

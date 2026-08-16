@@ -29,7 +29,7 @@ from ..disk_service import DiskError, DiskService
 from ..emulator_config import configured_emulator, emulator_command, emulator_status
 from ..hardware_profiles import normalise_hardware_profile
 from ..image_diff import compare_images
-from ..image_patch import apply_patch_archive, write_patch_archive
+from ..image_patch import apply_patch_archive, inspect_patch_archive, write_patch_archive
 from ..file_editor import (
     disassemble_file,
     inspect_editable_file,
@@ -73,6 +73,23 @@ def clean_emulator_output(output: str) -> str:
         line for line in str(output or "").splitlines()
         if not line.startswith(ignored_prefixes)
     ).strip()
+
+
+@contextmanager
+def uploaded_patch_path(work_dir: Path):
+    """Retain one uploaded patch only for the duration of its request."""
+    upload = request.files.get("patch")
+    if not upload or not upload.filename:
+        raise DiskError("Choose an Acorn File Forge patch ZIP.")
+    with tempfile.NamedTemporaryFile(
+        dir=work_dir, prefix="uploaded-patch-", suffix=".zip", delete=False,
+    ) as temporary:
+        upload.save(temporary)
+        patch_path = Path(temporary.name)
+    try:
+        yield patch_path
+    finally:
+        patch_path.unlink(missing_ok=True)
 
 
 class InteractiveEmulator:
@@ -434,19 +451,16 @@ def create_tools_blueprint(
     @blueprint.post("/api/images/<image_id>/patch")
     @image_mutation("applying a guarded image patch")
     def apply_image_patch(image_id):
-        upload = request.files.get("patch")
-        if not upload or not upload.filename:
-            raise DiskError("Choose an Acorn File Forge patch ZIP to apply.")
-        with tempfile.NamedTemporaryFile(
-            dir=service.work_dir, prefix="uploaded-patch-", suffix=".zip", delete=False,
-        ) as temporary:
-            upload.save(temporary)
-            patch_path = Path(temporary.name)
-        try:
+        with uploaded_patch_path(service.work_dir) as patch_path:
             result = apply_patch_archive(service, service.get(image_id), patch_path)
-        finally:
-            patch_path.unlink(missing_ok=True)
         return jsonify(image=service.summary(service.get(image_id)), patch=result)
+
+    @blueprint.post("/api/images/<image_id>/patch/inspect")
+    @request_effect("read-only", "inspecting a guarded image patch")
+    def inspect_image_patch(image_id):
+        with uploaded_patch_path(service.work_dir) as patch_path:
+            result = inspect_patch_archive(service, service.get(image_id), patch_path)
+        return jsonify(patch=result)
 
     @blueprint.post("/api/images/<image_id>/manifest/apply")
     @image_mutation("applying reviewed menu metadata")
