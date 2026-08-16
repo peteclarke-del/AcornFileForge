@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import BinaryIO, Callable
 
 from .adfs_install_service import ADFSInstallMixin
-from .adfs_format import probe_new_map_adfs
 from .acorn_metadata import canonical_dfs_address, parse_address as parse_catalogue_address
 from .beebscsi_geometry import (
     MAX_SIZE as BEEBSCSI_MAX_SIZE,
@@ -139,24 +138,13 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
         result = self._run_json(["identify", "--as", "json", str(path)])
         rows = result.get("reports", {}).get("candidates", {}).get("rows", [])
         if not rows:
-            # Preserve a precise diagnostic when Acorn File Forge is run
-            # outside its Docker image with an unpatched Oaknut release.
-            new_map = probe_new_map_adfs(path)
-            if new_map is not None:
-                title = f' titled “{new_map.disc_name}”' if new_map.disc_name else ""
-                raise DiskError(
-                    f"This is a valid {new_map.description}{title}. "
-                    "This installation is using an Oaknut build without writable "
-                    "FileCore E/F support. Install the bundled Oaknut patch or use "
-                    "the Docker image. The source image has not been changed."
-                )
             raise DiskError(
                 "No supported Acorn filesystem was found in the uploaded bytes. "
                 "The filename extension is only a hint. Supply the raw, uncompressed "
                 "image rather than an emulator wrapper, archive member or interleaved "
-                "track dump. This build recognises DFS, supported old-map ADFS, classic "
-                "FileCore E/F and Acorn ROMFS; F+, E+, big-directory and later FileCore "
-                "variants are not yet supported. The source image has not been changed."
+                "track dump. This build recognises DFS, ADFS S/M/L/D/E/E+/F/F+/G/G+, "
+                "FileCore hard disks and Acorn ROMFS. The source image "
+                "has not been changed."
             )
         filesystem = str(rows[0].get("filesystem", "")).lower()
         if filesystem in {"acorn-dfs", "watford-dfs"}:
@@ -184,7 +172,7 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
             return name
         name = name.strip()
         is_dfs = session.kind == "dfs" or (session.kind == "mmb" and slot is not None)
-        limit = 7 if is_dfs else 10
+        limit = 7 if is_dfs else int(session.adfs_capabilities.get("nameLimit") or 10)
         label = "DFS" if is_dfs else "ADFS"
         if not name:
             raise DiskError(f"Enter a {label} filename.")
@@ -221,10 +209,13 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
             session.kind == "adfs"
             and session.path.suffix.lower() == ".dat"
             and session.descriptor_path is None
+            and session.adfs_capabilities.get("map") != "new"
         ):
             raise DiskError(
-                "This BeebSCSI DAT image was opened without its matching DSC geometry file. "
-                "Reopen the original DAT and DSC together before making changes."
+                "This old-map BeebSCSI DAT image was opened without its matching DSC "
+                "geometry file. Reopen the original DAT and DSC together before making "
+                "changes. New-map FileCore DAT images carry their filesystem geometry "
+                "in the disc record and do not require this sidecar."
             )
 
     def create_from_stream(
@@ -327,6 +318,8 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
             hfe_layout=hfe_layout,
             warnings=hfe_warnings,
         )
+        if kind == "adfs":
+            self.refresh_adfs_capabilities(session)
         if kind == "mmb":
             self.list_slots(session)
         elif kind == "tape":
@@ -1039,13 +1032,33 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
             "adfs-s": ("blank.ads", []),
             "adfs-m": ("blank.adm", []),
             "adfs-l": ("blank.adl", []),
+            "adfs-d": (
+                "blank.adf",
+                ["--filesystem", "adfs", "--geometry", "d"],
+            ),
             "adfs-e": (
                 "blank.adf",
                 ["--filesystem", "adfs", "--geometry", "e"],
             ),
+            "adfs-e-plus": (
+                "blank.adf",
+                ["--filesystem", "adfs", "--geometry", "e+"],
+            ),
             "adfs-f": (
                 "blank.adf",
                 ["--filesystem", "adfs", "--geometry", "f"],
+            ),
+            "adfs-f-plus": (
+                "blank.adf",
+                ["--filesystem", "adfs", "--geometry", "f+"],
+            ),
+            "adfs-g": (
+                "blank.adf",
+                ["--filesystem", "adfs", "--geometry", "g"],
+            ),
+            "adfs-g-plus": (
+                "blank.adf",
+                ["--filesystem", "adfs", "--geometry", "g+"],
             ),
             "beebscsi": (
                 "scsi0.dat",
@@ -1235,6 +1248,8 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
             except Exception:
                 shutil.rmtree(folder, ignore_errors=True)
                 raise
+        if session.kind == "adfs":
+            self.refresh_adfs_capabilities(session)
         with self._lock:
             self.sessions[session.id] = session
         self._persist_session(session)
@@ -1248,8 +1263,13 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
         """Apply only target profiles that are meaningful for a new format."""
         forced = {
             "beebscsi": "beebscsi",
+            "adfs-d": "risc-os",
             "adfs-e": "risc-os",
+            "adfs-e-plus": "risc-os",
             "adfs-f": "risc-os",
+            "adfs-f-plus": "risc-os",
+            "adfs-g": "risc-os",
+            "adfs-g-plus": "risc-os",
             "adfs-hard": "risc-os",
             "adfs-physical": "risc-os",
         }
@@ -1259,8 +1279,13 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
             "adfs-s",
             "adfs-m",
             "adfs-l",
+            "adfs-d",
             "adfs-e",
+            "adfs-e-plus",
             "adfs-f",
+            "adfs-f-plus",
+            "adfs-g",
+            "adfs-g-plus",
             "hfe-adfs-s",
             "hfe-adfs-m",
             "hfe-adfs-l",

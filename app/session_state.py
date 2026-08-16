@@ -57,6 +57,7 @@ def session_metadata(session: ImageSession) -> dict:
         "distributionName": session.distribution_name,
         "targetHardware": session.target_hardware,
         "hardwareProfile": session.hardware_profile,
+        "adfsCapabilities": session.adfs_capabilities,
         "workingFile": session.path.name,
         "hfeOriginalFile": session.hfe_original_path.name if session.hfe_original_path else None,
         "hfeVersion": session.hfe_version,

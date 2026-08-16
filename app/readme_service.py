@@ -215,6 +215,17 @@ def build_download_readme(
             "- Hardware additions: " + (", ".join(profile.get("addons") or []) or "stock machine"),
             f"- Managed emulator: {profile.get('emulator') or 'automatic'}",
         ))
+    capabilities = session.adfs_capabilities
+    if capabilities:
+        entry_limit = capabilities.get("directoryEntryLimit")
+        lines.extend((
+            f"- FileCore format: ADFS {capabilities.get('format', 'unknown')}",
+            f"- Allocation map / directories: {capabilities.get('map', 'unknown')} / {capabilities.get('directories', 'unknown')}",
+            f"- Filename limit: {capabilities.get('nameLimit', 10)} characters",
+            "- Directory entry limit: " + (
+                str(entry_limit) if entry_limit is not None else "capacity-dependent Big directory"
+            ),
+        ))
     if session.descriptor_path:
         lines.extend(
             (
