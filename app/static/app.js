@@ -794,6 +794,8 @@ function renderPane(index, preserveScroll = false) {
           : ["!BOOT", "GAMDATA", "GAMINDX", "PUBDATA", "PUBINDX", "UNIMENU"].every(name => pane.entries.some(entry => String(entry.name).toUpperCase() === name))
       ) ? "" : "disabled"}><b>▶</b><span>Test menu entries</span></button>` : ""}
       <button class="menu-command find-duplicates"><b>≡</b><span>${isSlots ? "Check for duplicate games" : "Find duplicates / variants"}</span></button>
+      <button class="menu-command compare-image" ${panes.some((other, otherIndex) => otherIndex !== index && other.image?.id && other.image.id !== pane.image.id) ? "" : 'disabled title="Open another image to compare."'}><b>⇄</b><span>Compare with open image…</span></button>
+      <button class="menu-command apply-image-patch" ${pane.image.readOnly || isTape ? "disabled" : ""}><b>⇥</b><span>Apply guarded patch…</span></button>
       <button class="menu-command export-manifest"><b>⇩</b><span>Export collection manifest</span></button>
     </div>
   </details>`;
@@ -933,6 +935,8 @@ function renderPane(index, preserveScroll = false) {
       : showDuplicateReport(index)
   )));
   host.querySelector(".export-manifest")?.addEventListener("click", () => showManifestExport(index));
+  host.querySelector(".compare-image")?.addEventListener("click", () => showImageComparison(index));
+  host.querySelector(".apply-image-patch")?.addEventListener("click", () => showApplyImagePatch(index));
   host.querySelector(".save-image").onclick = () => guardedPaneAction(index, () => saveImage(index));
   host.querySelectorAll(".tool-menu").forEach(menu => {
     menu.addEventListener("toggle", () => {
@@ -972,7 +976,20 @@ function renderPane(index, preserveScroll = false) {
       pane.mmbScrollTop = listWrap.scrollTop;
     }, { passive: true });
   }
+  refreshImageComparisonActions();
   rememberOpenPanes();
+}
+
+function refreshImageComparisonActions() {
+  panes.forEach((pane, index) => {
+    const button = document.querySelector(`.pane[data-pane="${index}"] .compare-image`);
+    if (!button || !pane.image) return;
+    const available = panes.some((other, otherIndex) =>
+      otherIndex !== index && other.image?.id && other.image.id !== pane.image.id
+    );
+    button.disabled = !available;
+    button.title = available ? "" : "Open another image to compare.";
+  });
 }
 
 function wireRow(row, index) {
@@ -9090,6 +9107,165 @@ function showManifestExport(index) {
   });
 }
 
+function comparisonRecordLabel(change) {
+  const row = change.after || change.before || {};
+  if (row.recordType === "slot") return `Slot ${row.slot} · ${row.diskTitle || "Untitled"}`;
+  const context = row.slot != null ? `Slot ${row.slot} · ` : row.bank != null ? `Bank ${row.bank} · ` : row.side != null ? `Side ${row.side} · ` : "";
+  return `${context}${row.path || change.key}`;
+}
+
+function downloadJson(documentValue, filename) {
+  const url = URL.createObjectURL(new Blob([JSON.stringify(documentValue, null, 2)], { type: "application/json" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function showImageComparison(index) {
+  const pane = panes[index];
+  const candidates = panes
+    .map((other, otherIndex) => ({ pane: other, index: otherIndex }))
+    .filter(item => item.index !== index && item.pane.image?.id && item.pane.image.id !== pane.image.id);
+  if (!candidates.length) return toast("Open another image before comparing.", true);
+  showModal(`<div class="analysis-dialog wide-analysis image-comparison-dialog">
+    <header><div><small>FILESYSTEM-AWARE IMAGE COMPARISON</small><h2>Compare ${esc(pane.image.name)}</h2></div></header>
+    <label>Compare against<select name="otherImage">${candidates.map(item => `<option value="${esc(item.pane.image.id)}">Pane ${item.index + 1} · ${esc(item.pane.image.name)} · ${esc(paneFormat(item.pane.image))}</option>`).join("")}</select></label>
+    <p class="help-note">Files, directories, MMB slots and ROM banks are matched by their logical location. Content checksums and Acorn metadata are compared separately.</p>
+    <div class="image-comparison-results" aria-live="polite"><p>Choose an image and run the comparison.</p></div>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Close</button><button class="button" type="button" data-export-comparison disabled>Export JSON</button><button class="button" type="button" data-export-patch disabled>Download patch</button><button class="button primary" type="button" data-run-comparison>Compare images</button></div>
+  </div>`);
+  let report = null;
+  const resultHost = modalContent.querySelector(".image-comparison-results");
+  modalContent.querySelector("[data-run-comparison]").onclick = async event => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    resultHost.innerHTML = "<p>Building manifests and comparing image contents…</p>";
+    try {
+      report = await api(`/api/images/${pane.image.id}/compare`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ otherImage: modalContent.querySelector('[name="otherImage"]').value }),
+      });
+      modalContent.querySelector(".image-comparison-dialog")?.classList.add("comparison-complete");
+      const sections = ["added", "removed", "modified", "metadata"];
+      resultHost.innerHTML = `<div class="comparison-summary">${sections.map(name => `<strong><span>${report.summary[name].toLocaleString()}</span>${name}</strong>`).join("")}<strong><span>${report.summary.total.toLocaleString()}</span>total</strong></div>
+        ${report.sameFormat ? "" : '<p class="help-warning">These images use different filesystem families. The report is useful for inventory comparison but cannot become a directly applicable patch.</p>'}
+        <div class="comparison-change-list">${sections.map(name => report.changes[name].length ? `<details ${report.summary.total < 40 ? "open" : ""}><summary>${name[0].toUpperCase() + name.slice(1)} (${report.changes[name].length})</summary>${report.changes[name].slice(0, 1000).map(change => `<div><b>${esc(comparisonRecordLabel(change))}</b><small>${change.changedFields?.length ? esc(change.changedFields.join(", ")) : name}</small></div>`).join("")}${report.changes[name].length > 1000 ? `<p>${(report.changes[name].length - 1000).toLocaleString()} more changes are included in the JSON export.</p>` : ""}</details>` : "").join("") || '<p class="help-note">The logical contents and metadata are identical.</p>'}</div>`;
+      modalContent.querySelector("[data-export-comparison]").disabled = false;
+      modalContent.querySelector("[data-export-patch]").disabled = !report.sameFormat || report.base.kind === "tape";
+    } catch (error) {
+      resultHost.innerHTML = `<p class="help-warning">${esc(error.message)}</p>`;
+    } finally { button.disabled = false; }
+  };
+  modalContent.querySelector("[data-export-comparison]").onclick = () => {
+    if (!report) return;
+    downloadJson(report, `${pathNameWithoutExtension(pane.image.name)}-comparison.json`);
+  };
+  modalContent.querySelector("[data-export-patch]").onclick = event => downloadImagePatch(
+    pane, modalContent.querySelector('[name="otherImage"]').value, event.currentTarget,
+  );
+}
+
+async function downloadImagePatch(pane, candidateId, button) {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "Building patch…";
+  try {
+    const response = await fetch(`/api/images/${pane.image.id}/patch?${new URLSearchParams({ otherImage: candidateId })}`);
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || `Patch creation failed (${response.status})`);
+    }
+    const blob = await response.blob();
+    const disposition = response.headers.get("content-disposition") || "";
+    const filename = disposition.match(/filename="?([^";]+)"?/i)?.[1] || `${pathNameWithoutExtension(pane.image.name)}.affpatch.zip`;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    toast(`Guarded patch ready · ${humanSize(blob.size)}`);
+  } catch (error) { toast(error.message, true); }
+  finally { button.disabled = false; button.textContent = original; }
+}
+
+function showApplyImagePatch(index) {
+  const pane = panes[index];
+  showModal(`<div class="analysis-dialog">
+    <small>EXACT-REVISION PATCH</small><h2>Apply patch to ${esc(pane.image.name)}</h2>
+    <p>Select an <code>.affpatch.zip</code> created from this exact base revision. The logical fingerprint, filesystem family and every embedded payload checksum are verified before the result is accepted.</p>
+    <label class="field"><span>Patch archive</span><input type="file" name="patch" accept=".zip,.affpatch.zip,application/zip" required></label>
+    <div class="help-warning"><strong>This changes image contents.</strong> An automatic undo checkpoint is created first. A stale, corrupt or wrong-format patch is rejected and rolled back.</div>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="apply">Verify and apply patch</button></div>
+  </div>`, async form => {
+    const data = await api(`/api/images/${pane.image.id}/patch`, { method: "POST", body: form });
+    pane.image = data.image;
+    await refreshCurrentView(index);
+    toast(`${data.patch.operations.toLocaleString()} guarded patch operation${data.patch.operations === 1 ? "" : "s"} applied`);
+  });
+}
+
+async function openWorkspaceSearchResult(result) {
+  const pane = panes[result.paneIndex];
+  if (!pane?.image) return toast("That image is no longer open.", true);
+  paneWindowManager.restore(result.paneIndex);
+  paneWindowManager.bringToFront(result.paneIndex);
+  pane.archivePath = null;
+  pane.archiveMember = "";
+  if (result.slot != null) pane.slot = Number(result.slot);
+  if (result.side != null) pane.side = Number(result.side);
+  const split = result.path.lastIndexOf(".");
+  pane.path = split > 0 ? result.path.slice(0, split) : "$";
+  modal.close();
+  await loadDirectory(result.paneIndex);
+  await openFileEditor(result.paneIndex, result.name, null, result.path);
+}
+
+function showWorkspaceSearch() {
+  const searchable = panes
+    .map((pane, index) => ({ pane, index }))
+    .filter(item => item.pane.image)
+    .filter((item, position, all) => all.findIndex(candidate => candidate.pane.image.id === item.pane.image.id) === position);
+  if (!searchable.length) return toast("Open an image before searching the workspace.", true);
+  showModal(`<div class="analysis-dialog wide-analysis workspace-search-dialog">
+    <header><div><small>ALL OPEN IMAGES</small><h2>Search workspace</h2></div></header>
+    <div class="workspace-search-controls"><input type="search" name="workspaceQuery" placeholder="Filename, command, variable or readable text" required autocomplete="off" autofocus><button class="button primary" type="button" data-run-workspace-search>Search ${searchable.length} image${searchable.length === 1 ? "" : "s"}</button></div>
+    <p class="workspace-search-status" aria-live="polite">Searches each distinct open filesystem, including every populated slot in an MMB image.</p>
+    <div class="editor-image-search-results workspace-search-results"></div>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Close</button></div>
+  </div>`);
+  const input = modalContent.querySelector('[name="workspaceQuery"]');
+  const status = modalContent.querySelector(".workspace-search-status");
+  const results = modalContent.querySelector(".workspace-search-results");
+  const run = async () => {
+    const query = input.value.trim();
+    if (!query) return input.focus();
+    const button = modalContent.querySelector("[data-run-workspace-search]");
+    button.disabled = true;
+    status.textContent = `Searching ${searchable.length} open image${searchable.length === 1 ? "" : "s"}…`;
+    results.replaceChildren();
+    const reports = await Promise.all(searchable.map(async item => {
+      const parameters = new URLSearchParams({ query, root: "$" });
+      if (item.pane.image.kind === "mmb") parameters.set("allSlots", "true");
+      try {
+        return { ...item, report: await api(`/api/images/${item.pane.image.id}/inspect/search?${parameters}`) };
+      } catch (error) { return { ...item, error }; }
+    }));
+    const matches = reports.flatMap(item => (item.report?.results || []).map(row => ({ ...row, paneIndex: item.index, imageName: item.pane.image.name })));
+    const filesScanned = reports.reduce((total, item) => total + Number(item.report?.filesScanned || 0), 0);
+    const skipped = reports.filter(item => item.error);
+    modalContent.querySelector(".workspace-search-dialog")?.classList.add("search-complete");
+    status.textContent = `${matches.length.toLocaleString()} result${matches.length === 1 ? "" : "s"} · ${filesScanned.toLocaleString()} readable files scanned across ${reports.length - skipped.length} image${reports.length - skipped.length === 1 ? "" : "s"}${skipped.length ? ` · ${skipped.length} unsupported or unreadable image${skipped.length === 1 ? "" : "s"} skipped` : ""}`;
+    results.innerHTML = matches.map((row, resultIndex) => `<button type="button" data-workspace-result="${resultIndex}"><span class="file-kind-icon ${esc(row.kind)}" aria-hidden="true"></span><b><em>Pane ${row.paneIndex + 1} · ${esc(row.imageName)}${row.slot != null ? ` · Slot ${Number(row.slot)}` : ""}</em>${esc(row.path)}</b><small>${row.nameMatch ? "Filename match" : `${row.matches.length} content match${row.matches.length === 1 ? "" : "es"}`} · ${humanSize(row.size)}</small>${row.matches.slice(0, 3).map(match => `<code>Line ${match.line}: ${esc(match.text)}</code>`).join("")}</button>`).join("") || '<p class="code-empty-message">No matching files were found.</p>';
+    results.querySelectorAll("[data-workspace-result]").forEach(resultButton => resultButton.onclick = () => openWorkspaceSearchResult(matches[Number(resultButton.dataset.workspaceResult)]));
+    button.disabled = false;
+  };
+  modalContent.querySelector("[data-run-workspace-search]").onclick = run;
+  input.onkeydown = event => { if (event.key === "Enter") { event.preventDefault(); run(); } };
+}
+
 async function showJobsPanel() {
   showModal(`<div class="analysis-dialog"><small>PERSISTENT JOB HISTORY</small><h2>Operations</h2><div class="jobs-list"><p>Loading…</p></div><div class="modal-actions"><button class="button ghost" data-clear-jobs type="button">Clear finished</button><button class="button primary" value="cancel">Close</button></div></div>`);
   try {
@@ -9388,6 +9564,7 @@ document.querySelector("#addPaneButton").onclick = addPane;
 document.querySelector("#helpButton").onclick = showHelp;
 document.querySelector("#workbenchButton").onclick = () => renderWorkbench();
 document.querySelector("#jobsButton").onclick = showJobsPanel;
+document.querySelector("#workspaceSearchButton").onclick = showWorkspaceSearch;
 document.addEventListener("keydown", event => {
   const editing = event.target.closest("input, textarea, select, [contenteditable=true]");
   if (editing || modal.open) return;

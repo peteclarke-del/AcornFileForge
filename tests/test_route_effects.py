@@ -55,6 +55,7 @@ class RouteEffectTests(unittest.TestCase):
             "mmb.paste_slots", "mmb.protect_many_slots", "mmb.protect_slot",
             "rom_tools.rom_build", "rom_tools.rom_patch", "rom_tools.rom_project",
             "rom_tools.rom_repair", "tools.apply_manifest",
+            "tools.apply_image_patch",
             "tools.repair_adfs_installations", "tools.repair_health",
             "tools.save_editor_project", "tools.save_inspected_properties",
             "tools.save_inspected_text",
