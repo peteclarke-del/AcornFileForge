@@ -647,7 +647,9 @@ function renderPane(index, preserveScroll = false) {
           ? `DFS side ${pane.side === 2 ? 2 : 0}${isDfsRoot ? " · catalogues" : ` · ${pane.path}`}`
           : isDfs
             ? isDfsRoot ? "DFS catalogues" : `DFS catalogue ${pane.path}`
-            : "Root filing system";
+            : pane.image.filesystemCapabilities
+              ? `ADFS ${pane.image.filesystemCapabilities.format} · ${pane.image.filesystemCapabilities.directories} directories`
+              : "Root filing system";
   const hasParentEntry = isArchive || (!isSlots && !isTape && !isRom && (
     pane.slot !== null || (isDfs ? pane.path !== "" : pane.path !== "$")
   ));
@@ -1495,7 +1497,7 @@ function adfsMenuRoot(choice, fallback) {
 
 async function copyMmbSlotToAdfs(index, source, afterCopy = null) {
   const target = panes[index];
-  if (target.image.name.toLowerCase().endsWith(".dat") && !target.image.hasDescriptor) {
+  if (target.image.name.toLowerCase().endsWith(".dat") && !target.image.hasDescriptor && target.image.filesystemCapabilities?.map !== "new") {
     return toast("Reopen this BeebSCSI DAT with its matching DSC file before copying disks into it.", true);
   }
   const menuChoices = await adfsInstalledMenuChoices(index);
@@ -1532,13 +1534,16 @@ async function copyMmbSlotsToAdfs(index, sources, afterCopy = null) {
   const savedRecipes = storedCollection(RECIPE_STORAGE_KEY, []);
   const initialRecipe = savedRecipes[0] || { naming: "source", groupPrefix: "DISCS", addMenu: false, online: true, compatibility: true };
   let chosenRecipe = initialRecipe;
-  if (target.image.name.toLowerCase().endsWith(".dat") && !target.image.hasDescriptor) {
+  if (target.image.name.toLowerCase().endsWith(".dat") && !target.image.hasDescriptor && target.image.filesystemCapabilities?.map !== "new") {
     return toast("Reopen this BeebSCSI DAT with its matching DSC file before copying disks into it.", true);
   }
   const menuChoices = await adfsInstalledMenuChoices(index);
-  const adfsDirectoryLimit = 47;
-  const availableEntries = Math.max(0, adfsDirectoryLimit - target.entries.length);
-  const grouped = sources.length > availableEntries;
+  const configuredDirectoryLimit = target.image.filesystemCapabilities?.directoryEntryLimit;
+  const adfsDirectoryLimit = Number.isInteger(configuredDirectoryLimit) ? configuredDirectoryLimit : null;
+  const availableEntries = adfsDirectoryLimit === null
+    ? Number.POSITIVE_INFINITY
+    : Math.max(0, adfsDirectoryLimit - target.entries.length);
+  const grouped = adfsDirectoryLimit !== null && sources.length > availableEntries;
   const groupCount = grouped ? Math.ceil(sources.length / adfsDirectoryLimit) : 0;
   if (groupCount > availableEntries) {
     return toast(
@@ -1552,7 +1557,10 @@ async function copyMmbSlotsToAdfs(index, sources, afterCopy = null) {
     let suffix = offset;
     let candidate;
     do {
-      candidate = `${initialRecipe.groupPrefix || "DISCS"}${suffix}`.slice(0, 10);
+      candidate = `${initialRecipe.groupPrefix || "DISCS"}${suffix}`.slice(
+        0,
+        Number(target.image.filesystemCapabilities?.nameLimit || 10)
+      );
       suffix += groupCount;
     } while (usedNames.has(candidate.toLowerCase()));
     usedNames.add(candidate.toLowerCase());
@@ -1642,7 +1650,7 @@ async function copyMmbSlotsToAdfs(index, sources, afterCopy = null) {
           </section>
           ${grouped ? `<section>
             <small>2 · PARENT GROUPS</small>
-            <p>Old ADFS directories hold ${adfsDirectoryLimit} entries. Rename these containers if required.</p>
+            <p>This ${esc(target.image.filesystemCapabilities?.format || "ADFS")} directory holds ${adfsDirectoryLimit} entries. Rename these containers if required.</p>
             <div class="bulk-group-fields">
               ${groupNames.map((name, offset) => `<label>
                 <span>Group ${offset + 1}</span>
@@ -6827,8 +6835,13 @@ function showCreateImageModal(preferredIndex = null, options = {}) {
       <option value="adfs-s">ADFS S floppy · 160 KiB</option>
       <option value="adfs-m">ADFS M floppy · 320 KiB</option>
       <option value="adfs-l">ADFS L floppy · 640 KiB</option>
+      <option value="adfs-d">FileCore ADFS D floppy · 800 KiB · New directory</option>
       <option value="adfs-e">FileCore ADFS E floppy · 800 KiB</option>
+      <option value="adfs-e-plus">FileCore ADFS E+ floppy · 800 KiB · Big directories</option>
       <option value="adfs-f">FileCore ADFS F floppy · 1.6 MiB</option>
+      <option value="adfs-f-plus">FileCore ADFS F+ floppy · 1.6 MiB · Big directories</option>
+      <option value="adfs-g">FileCore ADFS G floppy · 3.2 MiB</option>
+      <option value="adfs-g-plus">FileCore ADFS G+ floppy · 3.2 MiB · Big directories</option>
       <option value="beebscsi">BeebSCSI ADFS HDD · DAT + DSC</option>
       <option value="adfs-hard">Archimedes / RISC OS virtual HDD · HDF</option>
       <option value="adfs-physical">Raw physical HDD image · RAW</option>
@@ -6934,8 +6947,13 @@ function showCreateImageModal(preferredIndex = null, options = {}) {
     "adfs-s": { size: "160 KiB", hardware: "auto", chooseHardware: true },
     "adfs-m": { size: "320 KiB", hardware: "auto", chooseHardware: true },
     "adfs-l": { size: "640 KiB", hardware: "auto", chooseHardware: true },
+    "adfs-d": { size: "800 KiB", hardware: "risc-os", chooseHardware: false },
     "adfs-e": { size: "800 KiB", hardware: "risc-os", chooseHardware: false },
+    "adfs-e-plus": { size: "800 KiB", hardware: "risc-os", chooseHardware: false },
     "adfs-f": { size: "1.6 MiB", hardware: "risc-os", chooseHardware: false },
+    "adfs-f-plus": { size: "1.6 MiB", hardware: "risc-os", chooseHardware: false },
+    "adfs-g": { size: "3.2 MiB", hardware: "risc-os", chooseHardware: false },
+    "adfs-g-plus": { size: "3.2 MiB", hardware: "risc-os", chooseHardware: false },
     "hfe-adfs-s": { size: "160 KiB", hardware: "auto", chooseHardware: true },
     "hfe-adfs-m": { size: "320 KiB", hardware: "auto", chooseHardware: true },
     "hfe-adfs-l": { size: "640 KiB", hardware: "auto", chooseHardware: true },
@@ -6968,7 +6986,7 @@ function showCreateImageModal(preferredIndex = null, options = {}) {
       ? "ROM filename and title"
       : format.value === "mmb"
         ? "Image title"
-        : ["adfs-s", "adfs-m", "adfs-l", "adfs-e", "adfs-f", "hfe-adfs-s", "hfe-adfs-m", "hfe-adfs-l", "beebscsi", "adfs-hard", "adfs-physical"].includes(format.value)
+        : ["adfs-s", "adfs-m", "adfs-l", "adfs-d", "adfs-e", "adfs-e-plus", "adfs-f", "adfs-f-plus", "adfs-g", "adfs-g-plus", "hfe-adfs-s", "hfe-adfs-m", "hfe-adfs-l", "beebscsi", "adfs-hard", "adfs-physical"].includes(format.value)
           ? "Volume title"
           : "Disk title";
     titleHelp.textContent = hasTitle

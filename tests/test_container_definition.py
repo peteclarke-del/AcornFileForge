@@ -14,6 +14,7 @@ class ContainerDefinitionTests(unittest.TestCase):
         self.assertIn("build-essential", dockerfile[builder:runtime])
         self.assertIn("--root=/python-install", dockerfile[builder:runtime])
         self.assertIn("Staged Capstone ARM, M68K and MOS65XX support is available", dockerfile[builder:runtime])
+        self.assertIn("released writable FileCore D/E/E+/F/F+/G/G+ support is available", dockerfile[builder:runtime])
         runtime_definition = dockerfile[runtime:]
         self.assertIn("COPY --from=python-deps /python-install/usr/local /usr/local", runtime_definition)
         self.assertNotIn("/wheels", runtime_definition)

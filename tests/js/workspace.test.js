@@ -54,6 +54,11 @@ test("import planning applies filesystem limits without UI state", () => {
   const dfsRule = imports.targetNameRule({ image: { kind: "dfs" } }, "LONG.NAME");
   assert.equal(dfsRule.suggested, "LONG_NA");
   assert.equal(dfsRule.limit, 7);
+  const bigRule = imports.targetNameRule({
+    image: { kind: "adfs", filesystemCapabilities: { nameLimit: 255 } },
+  }, "A descriptive FileCore filename");
+  assert.equal(bigRule.suggested, "A descriptive FileCore filename");
+  assert.equal(bigRule.limit, 255);
   const disks = imports.allocateFilesToDfsDisks([
     { name: "ONE", length: 100 },
     { name: "TWO", length: 798 * 256 },

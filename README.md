@@ -1115,8 +1115,8 @@ still stops only at a safe filesystem boundary.
 |---|---|---|
 | Acorn DFS | SSD, DSD | Browse catalogue prefixes, add, export, rename, delete, lock, compact, validate, and copy files |
 | MMB | MMB | Browse all slots, create or insert disks, set read-only/read-write access, edit embedded DFS disks, drag to cut and paste slot blocks, and maintain Universal or SPI game menus |
-| ADFS floppy | ADS, ADM, ADL, ADF, DSK | Traverse and edit old-map S/M/L and classic new-map E/F directories, files and metadata |
-| Acorn hard drive | DAT with matching DSC, HDF, HDD | Browse and edit hierarchical ADFS volumes, including virtual hard-drive images |
+| ADFS and FileCore floppy | ADS, ADM, ADL, ADF, DSK | Create, traverse and edit S/M/L/D/E/E+/F/F+/G/G+ directories, files and metadata |
+| Acorn hard drive | DAT with DSC for old-map BeebSCSI, HDF, HD4, HDD | Browse and edit hierarchical old-map and new-map FileCore volumes, including HDF images with the emulator header offset |
 | Raw drive dump | IMG, RAW, BIN, extensionless images | Identify the filesystem from its contents, then open it as DFS or ADFS |
 | Acorn cassette | UEF and compressed UEF | Reconstruct ordinary tape files, export them, drag them to disks, or convert them to SSD or DSD |
 | HxC floppy container | HFE v1, v2 and v3 | Decode DFS or ADFS sectors for browsing and extraction; safely edit ordinary HFE v1 disks and save them back with their original track layout |
@@ -1141,8 +1141,13 @@ dialog then offers:
 - ADFS S floppy, 160 KiB
 - ADFS M floppy, 320 KiB
 - ADFS L floppy, 640 KiB
+- FileCore ADFS D floppy, 800 KiB
 - FileCore ADFS E floppy, 800 KiB
+- FileCore ADFS E+ floppy, 800 KiB with Big directories
 - FileCore ADFS F floppy, 1.6 MiB
+- FileCore ADFS F+ floppy, 1.6 MiB with Big directories
+- FileCore ADFS G floppy, 3.2 MiB
+- FileCore ADFS G+ floppy, 3.2 MiB with Big directories
 - HFE-wrapped DFS SSD/DSD and ADFS S/M/L floppies
 - BeebSCSI ADFS hard drive as a matched DAT and DSC pair
 - Archimedes or RISC OS virtual hard drive in HDF form
@@ -1349,9 +1354,10 @@ DAT saves continue to include the required matching DSC geometry file.
   disks with launchers in `A`, `B`, `C`, `D`, and other directory letters keep
   every file. Existing MMB menu records can then resolve those complete paths
   without unnecessary launch prompts.
-- Multiple selected MMB slots can be copied together. Old-format ADFS
-  directories hold at most 47 entries, so larger batches are automatically
-  divided among editable group directories such as `DISCS1` and `DISCS2`.
+- Multiple selected MMB slots can be copied together. The planner uses the
+  mounted directory layout: Old directories hold 47 entries, New directories
+  hold 77, and Big directories are capacity-dependent. Batches are divided
+  among editable groups such as `DISCS1` only when the detected limit requires it.
   Interrupted batches remember completed slots while their dialog remains
   open, allowing **Copy** to continue with only the remaining disks.
 - The bulk preflight is a wide, fixed-height planner. Naming strategy,
@@ -1392,8 +1398,8 @@ When that would happen, the dialog offers two choices:
 
 The generic leaf name affects only the ADFS directory. The original MMB slot
 number and title remain available to metadata detection and menu generation.
-If grouping is required by the 47-entry old-ADFS limit, every suggested parent
-group name is editable before the operation starts.
+If grouping is required by the detected directory-entry limit, every suggested
+parent group name is editable before the operation starts.
 
 Generic names prevent collisions between the outer disk directories. DFS also
 allows a literal dot inside a seven-character filename, while ADFS uses the dot
@@ -1928,7 +1934,7 @@ image.
 
 ADFS volumes can have a similar menu. Pick a root directory and each software
 directory beneath it is treated like the contents of one disk. Structural
-group directories created to satisfy the old ADFS 47-entry limit, such as
+group directories created to satisfy the mounted directory-entry limit, such as
 `GAMES1` through `GAMES5`, are detected and kept off-menu. Their contained
 `DISC-####` directories become the entries instead. Internal DFS-derived paths
 such as `eE` and `eT` are not mistaken for group holders.
@@ -2019,19 +2025,22 @@ verify the target device carefully.
 
 ### FileCore compatibility note
 
-The installed Oaknut engine safely edits:
+The released Oaknut 12.14.1 engine safely edits ADFS S, M, L and D, New-map E,
+F and G, and the E+, F+ and G+ Big-directory variants. The app creates all ten
+standard floppy formats, detects their on-disc structures, preserves Acorn
+metadata, compacts allocation and runs the filesystem validator. Standard New
+directories allow 77 entries. Big directories allow names up to 255 characters
+and have a capacity-dependent entry count, so the UI does not impose the old
+10-character and 47-entry limits on them.
 
-- ADFS S, M, and L floppy layouts
-- classic FileCore new-map E and F floppy layouts
-- Old-map D and old-map hard-drive layouts that it can identify
-- BeebSCSI DAT images, with a matching DSC carried alongside the DAT
-
-The DSC is mandatory when editing a BeebSCSI DAT. It contains the physical
+The DSC is mandatory when editing an old-map BeebSCSI DAT. It contains the physical
 drive geometry that is not safely recoverable from the DAT alone. If only one
 half of the pair is selected, Acorn File Forge retains and prefills it in a
 paired upload dialog, leaving only the missing companion to choose.
-Descriptor-less DAT sessions remain browseable but all writes are blocked.
-Reopen the original DAT and DSC together to edit it.
+Descriptor-less old-map DAT sessions remain browseable but all writes are blocked.
+Reopen the original DAT and DSC together to edit it. New-map DAT images carry
+the filesystem geometry in their FileCore disc record and can be edited without
+a DSC sidecar.
 
 The DAT length follows the old-format ADFS map, while the DSC describes the
 slightly larger device geometry presented by BeebSCSI. This distinction matters
@@ -2043,29 +2052,17 @@ Data beyond the map is never removed when any byte in that area is non-zero.
 Likewise, a DAT shorter than its ADFS extent is not padded because real
 filesystem data may be missing.
 
-Acorn File Forge's Docker build applies the bundled Oaknut implementation for
-classic E and F media. It validates both allocation-map copies, translates
-fragmented object addresses, traverses 2 KiB directories and performs changes
-through a transactional compacting writer. Files, nested directories, Acorn
-metadata, titles, access flags and boot options can be edited, and fresh E/F
-images can be created. An image with defect objects or unexplained allocated
-objects remains readable but is not rewritten.
-
-F+, E+, big-directory, format-version and later large FileCore variants remain
-outside this support. An `.adf` suffix is therefore still only a hint. A source
-installation using an unpatched Oaknut release reports the detected classic E
-or F geometry and explains how to install the bundled patch instead of falling
-back to a generic unrecognised-filesystem message. See the
-[Oaknut E/F implementation notes](docs/OAKNUT-NEW-MAP-PROPOSAL.md).
+Acorn File Forge no longer carries an Oaknut patch. The Docker build imports and
+checks the released D/E/E+/F/F+/G/G+ API before producing the runtime image. An
+`.adf` suffix remains only a hint: recognition comes from the allocation map,
+disc record and directory structures. See the
+[Oaknut FileCore integration notes](docs/OAKNUT-FILECORE-SUPPORT.md).
 
 ### HDF and RAW creation detail
 
-Oaknut currently chooses hard-drive geometry correctly for its native DAT
-creation path, but it does not infer that same geometry from a new `.hdf` or
-`.raw` filename. Acorn File Forge works around that quirk by creating the
-filesystem through a temporary DAT path, then giving the completed working
-image its requested HDF or RAW name. The bytes are the same raw FileCore disk
-image; no container header is added.
+New HDF and RAW images are created from an explicit capacity. Existing RPCEmu
+and Arculator HDF/HD4 images with logical disc address zero at offset `0x200`
+are detected from their FileCore structures and retain that layout while edited.
 
 ## UEF tapes
 
@@ -2492,8 +2489,8 @@ A healthy response looks like:
 - Python 3.12
 - Flask 3.1
 - Gunicorn 23
-- Oaknut Disc 12.13.1 with Oaknut ADFS 12.14.0 for native writable FileCore
-  E/F support
+- Oaknut Disc, ADFS and ROMFS 12.14.1, including writable FileCore
+  S/M/L/D/E/E+/F/F+/G/G+ and hard-disk support
 - HxC Floppy Emulator command-line engine 2.16.15.2, compiled from a pinned
   upstream revision during the Docker build
 - Docker or Docker Compose

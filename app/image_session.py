@@ -41,6 +41,7 @@ class ImageSession:
     target_hardware: str = "auto"
     hardware_profile: dict = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    adfs_capabilities: dict = field(default_factory=dict)
     finalised_mtime_ns: int | None = None
     hfe_original_path: Path | None = None
     hfe_version: str | None = None
