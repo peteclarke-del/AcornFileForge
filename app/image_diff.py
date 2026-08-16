@@ -95,8 +95,21 @@ def compare_manifests(base: dict, candidate: dict) -> dict:
     }
 
 
-def compare_images(service, base_session, candidate_session) -> dict:
-    return compare_manifests(
-        build_manifest(service, base_session),
-        build_manifest(service, candidate_session),
-    )
+def compare_images(service, base_session, candidate_session, progress=None) -> dict:
+    if progress:
+        progress(
+            f"Cataloguing base image {getattr(base_session, 'name', 'base image')}",
+            0,
+            2,
+        )
+    base = build_manifest(service, base_session, progress)
+    if progress:
+        progress(
+            f"Cataloguing candidate image {getattr(candidate_session, 'name', 'candidate image')}",
+            1,
+            2,
+        )
+    candidate = build_manifest(service, candidate_session, progress)
+    if progress:
+        progress("Comparing logical contents and metadata", 2, 2)
+    return compare_manifests(base, candidate)

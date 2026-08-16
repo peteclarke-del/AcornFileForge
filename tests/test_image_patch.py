@@ -69,6 +69,29 @@ class ImagePatchTests(unittest.TestCase):
                 self.assertEqual(stored["candidateRecords"], candidate["records"])
                 self.assertEqual(stored["layout"], {"kind": "dfs", "doubleSided": False})
 
+    def test_patch_creation_reports_catalogue_payload_and_completion_progress(self) -> None:
+        base = manifest("base", [])
+        candidate = manifest("candidate", [
+            {"recordType": "file", "path": "$.NEW", "size": 9, "sha256": "candidate"},
+        ])
+        updates = []
+        with tempfile.TemporaryDirectory() as folder:
+            destination = Path(folder) / "progress.affpatch.zip"
+            service = PatchService(Path(folder))
+            sessions = [SimpleNamespace(kind="dfs"), SimpleNamespace(kind="dfs")]
+            with patch("app.image_patch.build_manifest", side_effect=[base, candidate]):
+                write_patch_archive(
+                    service,
+                    *sessions,
+                    destination,
+                    lambda *values: updates.append(values),
+                )
+
+        messages = [update[0] for update in updates]
+        self.assertTrue(any(message.startswith("Cataloguing base image") for message in messages))
+        self.assertIn("Compressing $.NEW", messages)
+        self.assertEqual(updates[-1], ("Guarded patch archive is ready", 1, 1))
+
     def test_wrong_base_fingerprint_is_rejected_before_mutation(self) -> None:
         current = manifest("current", [{"recordType": "file", "path": "$.A", "sha256": "a", "size": 1}])
         document = {
