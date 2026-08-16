@@ -117,7 +117,7 @@ The build performs the following platform-sensitive work:
    including `liballegro4.4t64`.
 5. Verifies that Capstone exposes ARM, M68K and MOS 65xx support.
 6. Reconstructs and checks the bundled RH Plus support ROM.
-7. Applies and import-checks the bundled Oaknut classic FileCore E/F patch.
+7. Import-checks Oaknut's released writable FileCore D/E/E+/F/F+/G/G+ API.
 
 Do not cancel a build merely because another independent builder is still
 running. BuildKit may show a stage as `CANCELED` after a different stage fails;

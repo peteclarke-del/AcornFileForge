@@ -105,6 +105,11 @@ class SessionDiskMixin:
                 warnings=self._normalise_warnings(
                     [str(warning) for warning in metadata.get("warnings", [])]
                 ),
+                adfs_capabilities=(
+                    dict(metadata.get("adfsCapabilities") or {})
+                    if isinstance(metadata.get("adfsCapabilities"), dict)
+                    else {}
+                ),
             )
             if session.hfe_original_path and not session.hfe_original_path.is_file():
                 raise ValueError
@@ -112,6 +117,8 @@ class SessionDiskMixin:
                 session.hfe_export_path = None
             if session.kind == "tape":
                 session.tape = parse_uef(path.read_bytes())
+            elif session.kind == "adfs" and not session.adfs_capabilities:
+                self.refresh_adfs_capabilities(session)
             self._normalise_beebscsi_dat_size(session)
             if session.descriptor_path and session.path.suffix.lower() == ".dat":
                 self._optimise_sparse_file(session.path)
@@ -372,6 +379,7 @@ class SessionDiskMixin:
                 "project": session.rom_project,
             } if session.kind == "rom" else None),
             "romfs": romfs,
+            "filesystemCapabilities": session.adfs_capabilities or None,
             "targetHardware": session.target_hardware,
             "hardwareProfile": session.hardware_profile,
             "warnings": [

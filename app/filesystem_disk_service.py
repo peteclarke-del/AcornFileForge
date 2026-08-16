@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 
+from .adfs_capabilities import capabilities_from_mount
 from .errors import DiskError
 from .image_session import ImageSession
 
@@ -46,6 +47,22 @@ class FilesystemDiskMixin:
                         if callable(close_disc):
                             close_disc()
                 reader.close()
+
+    def refresh_adfs_capabilities(self, session: ImageSession) -> dict:
+        """Cache the mounted FileCore format and its real directory limits."""
+        if session.kind != "adfs":
+            session.adfs_capabilities = {}
+            return {}
+        with self.adfs_mount(session) as mount:
+            capabilities = capabilities_from_mount(mount).to_dict()
+        session.adfs_capabilities = {
+            "format": capabilities["format"],
+            "map": capabilities["map"],
+            "directories": capabilities["directories"],
+            "nameLimit": capabilities["name_limit"],
+            "directoryEntryLimit": capabilities["directory_entry_limit"],
+        }
+        return session.adfs_capabilities
 
     @contextmanager
     def romfs_mount(self, session: ImageSession, *, writable: bool = False):
