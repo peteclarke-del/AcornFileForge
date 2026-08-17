@@ -72,6 +72,10 @@ For each target:
 - [ ] `npm run test:browser` passes against the built service.
 - [ ] A generated BASIC file and a generated machine-code file produce bounded,
       read-only cheat-candidate reports; plain text is rejected explicitly.
+- [ ] Guarded cheat preparation refuses BASIC and archive members, changing
+      source hashes, mismatched original bytes and fewer than two distinct
+      tester-supplied emulator observations. A valid apply creates a checkpoint,
+      while the private library matches the exact file hash and original bytes.
 - [ ] `git diff --check` passes.
 
 When a build fails, retain the first Docker `ERROR` block. Later `CANCELED`
@@ -85,7 +89,8 @@ The generated-media test matrix must create and reopen:
 - [ ] ADFS S, M and L images;
 - [ ] BeebSCSI DAT with matching DSC;
 - [ ] MMB with all 511 slots represented;
-- [ ] UEF content used as a read-only source;
+- [ ] UEF with one proof-editable standard member and one deliberately
+      ambiguous read-only recording;
 - [ ] clean writable HFE v1 and guarded read-only HFE variants;
 - [ ] raw and banked ROM images;
 - [ ] editable ROMFS data images;
@@ -153,7 +158,8 @@ For a broad release, cover all of these:
 - [ ] ADFS directory traversal, same-image move, installed-disk audit, global
       menu generation and large DAT/DSC save.
 - [ ] HFE capability detection and guarded save.
-- [ ] UEF hierarchy and extraction into writable media.
+- [ ] UEF hierarchy, same-length structural rebuild, read-only ambiguity gate
+      and extraction into writable media.
 - [ ] ROM banking, command and help discovery, Workbench, compare, build,
       programmer export and project persistence.
 - [ ] ROMFS create, edit, capacity handling and save.
@@ -190,6 +196,12 @@ For a broad release, cover all of these:
       media capabilities.
 - [ ] noVNC on port `8668` displays the launched emulator and errors are visible
       above the invoking editor or pane.
+- [ ] An Electron MMFS profile mounts a complete MMB through the isolated FAT16
+      Pi1MHz card, while BBC and Master profiles retain their explicit adapter
+      limitation.
+- [ ] Two installed-menu sandbox runs reproduce the same frame hashes, respond
+      visibly to navigation and appear against the exact current revision in
+      Image Health.
 
 ## 8. Performance record
 

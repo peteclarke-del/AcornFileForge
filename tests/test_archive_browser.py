@@ -1,5 +1,6 @@
 import gzip
 import io
+import struct
 import tarfile
 import unittest
 import zipfile
@@ -10,11 +11,13 @@ from app.archive_browser import (
     ArchiveError,
     archive_member_editable,
     list_archive,
+    preview_archive_member_replacement,
     read_archive_member,
     read_archive_member_details,
     replace_archive_member,
 )
 from tests.uef_fixture import minimal_uef
+from app.uef import uef_project
 
 try:
     from flask import Flask, jsonify
@@ -99,11 +102,53 @@ class ArchiveBrowserTests(unittest.TestCase):
         rebuilt = replace_archive_member(compressed, "README.gz", "README", b"After")
         self.assertEqual(gzip.decompress(rebuilt), b"After")
 
-    def test_uef_member_replacement_is_refused_without_rebuilding_tape_timing(self):
+    def test_uef_member_replacement_requires_same_length_and_preserves_tape_structure(self):
         data = minimal_uef()
-        self.assertFalse(archive_member_editable(data, "tape.uef"))
-        with self.assertRaisesRegex(ArchiveError, "UEF members remain read-only"):
+        self.assertTrue(archive_member_editable(data, "tape.uef", "THRUST"))
+        with self.assertRaisesRegex(ArchiveError, "requires exactly 18 bytes"):
             replace_archive_member(data, "tape.uef", "THRUST", b"replacement")
+        replacement = b'10 PRINT "REPTON"\r'
+        self.assertEqual(len(replacement), len(b'10 PRINT "THRUST"\r'))
+        preview = preview_archive_member_replacement(data, "tape.uef", "THRUST", replacement)
+        self.assertTrue(preview["sameLength"])
+        self.assertTrue(preview["chunkOrderPreserved"])
+        self.assertEqual(len(preview["changedBlocks"]), 1)
+        rebuilt = replace_archive_member(data, "tape.uef", "THRUST", replacement)
+        self.assertEqual(read_archive_member(rebuilt, "tape.uef", "THRUST"), replacement)
+
+    def test_uef_rebuild_preserves_unknown_chunks_and_split_standard_data(self):
+        source = minimal_uef()
+        chunk_id, length = struct.unpack_from("<HI", source, 12)
+        body = source[18:18 + length]
+        unknown = b"private control bytes"
+        split = 17
+        data = (
+            source[:12]
+            + struct.pack("<HI", 0x0F10, len(unknown)) + unknown
+            + struct.pack("<HI", chunk_id, split) + body[:split]
+            + struct.pack("<HI", chunk_id, len(body) - split) + body[split:]
+        )
+        replacement = b'10 PRINT "REPTON"\r'
+        preview = preview_archive_member_replacement(data, "split.uef", "THRUST", replacement)
+        self.assertEqual([row["id"] for row in preview["chunks"]], ["&0F10", "&0100", "&0100"])
+        self.assertFalse(preview["chunks"][0]["changed"])
+        rebuilt = replace_archive_member(data, "split.uef", "THRUST", replacement)
+        self.assertIn(struct.pack("<HI", 0x0F10, len(unknown)) + unknown, rebuilt)
+        self.assertEqual(read_archive_member(rebuilt, "split.uef", "THRUST"), replacement)
+
+    def test_compressed_uef_rebuild_remains_compressed_and_readable(self):
+        data = gzip.compress(minimal_uef(), mtime=123)
+        replacement = b'10 PRINT "REPTON"\r'
+        rebuilt = replace_archive_member(data, "tape.uef", "THRUST", replacement)
+        self.assertTrue(rebuilt.startswith(b"\x1f\x8b"))
+        self.assertEqual(read_archive_member(rebuilt, "tape.uef", "THRUST"), replacement)
+
+    def test_uef_project_lists_physical_chunks_and_safe_member_policy(self):
+        project = uef_project(minimal_uef())
+        self.assertEqual(project["schema"], "acorn-file-forge/uef-project/v1")
+        self.assertEqual(project["chunks"][0]["kind"], "Implicit start/stop-bit data")
+        self.assertEqual(project["files"][0]["name"], "THRUST")
+        self.assertTrue(project["files"][0]["editable"])
 
     def test_unsafe_parent_members_are_rejected(self):
         stream = io.BytesIO()

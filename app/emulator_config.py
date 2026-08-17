@@ -60,6 +60,15 @@ MAME_PODULES = {
     "arch-scsi": "scsi_aka31", "arch-ide": "ide_rdev",
     "arch-ethernet": "ether1", "arch-midi": "midi_aka16", "arch-tube": "tube",
 }
+ELKULATOR_MMFS_ROMS = {
+    "unpaged": ELKULATOR_ROOT / "roms/EMMFS.rom",
+    "paged": ELKULATOR_ROOT / "roms/SWMMFS.rom",
+}
+_ELKULATOR_KEYS = {
+    **{chr(ord("a") + offset): offset + 1 for offset in range(26)},
+    **{str(value): value + 27 for value in range(10)},
+    " ": 75,
+}
 
 
 def profile_machine(session) -> str:
@@ -138,10 +147,17 @@ def emulator_command(
     addons = profile_addons(session)
     media = Path(media_path)
     suffix = media.suffix.lower()
+    media_kind = str(getattr(session, "emulator_media_kind", "") or "")
     boot = str(profile.get("emulatorBoot") or "auto")
     machine = profile_machine(session)
+    if media_kind == "mmfs-sd" and emulator.identifier != "elkulator-pi1mhz":
+        raise ValueError(
+            f"{emulator.label} does not expose the managed Pi1MHz raw-SD adapter. "
+            "Choose an Electron MMFS profile with Elkulator, or mount one MMB slot as a DFS disk."
+        )
     if emulator.identifier == "elkulator-pi1mhz":
-        if suffix not in {".ssd", ".dsd", ".adf", ".ads", ".adm", ".adl", ".uef"}:
+        mmfs_card = media_kind == "mmfs-sd"
+        if not mmfs_card and suffix not in {".ssd", ".dsd", ".adf", ".ads", ".adm", ".adl", ".uef"}:
             raise ValueError("Elkulator can launch DFS or ADFS floppy images and UEF tapes. This parent image cannot be mounted by Elkulator; run a self-contained BASIC file from a temporary test disk, or export a compatible floppy image first.")
         executable, cwd = _elkulator_variant(addons)
         arguments = _desktop_command(
@@ -154,8 +170,27 @@ def emulator_command(
             arguments += ["-tube6502", str(BEM_ROOT / "roms/tube/6502Tube.rom")]
         if {"electron-rh-plus1", "electron-rh-plus2"} & addons:
             arguments += ["-rom", "12", str(ELKULATOR_ROOT / "roms/RHPLUS133.rom")]
-        arguments += ["-tape" if suffix == ".uef" else "-disc", str(media)]
-        if boot in {"auto", "boot"} and suffix != ".uef":
+        if mmfs_card:
+            filing_system = str(profile.get("filingSystem") or "").lower()
+            if "mmfs" not in filing_system and "mmfs" not in addons:
+                raise ValueError("Whole-MMB mounting requires an Electron profile with MMFS selected.")
+            build = "paged" if str(profile.get("mmfsBuild") or "").lower() == "paged" else "unpaged"
+            mmfs_rom = ELKULATOR_MMFS_ROMS[build]
+            if not mmfs_rom.is_file():
+                raise ValueError(f"The managed {build} MMFS ROM is missing from this Elkulator build.")
+            bank = "7" if build == "paged" else "2"
+            arguments += ["-rom", bank, str(mmfs_rom)]
+            if build == "paged" and "7" not in [str(value) for value in ram_banks]:
+                arguments += ["-ram", "7"]
+            arguments = _command_environment(arguments, {
+                "PI1MHZ_MAILBOX": "live",
+                "PI1MHZ_SD_IMAGE": str(media),
+            })
+            if boot in {"auto", "boot"}:
+                arguments += ["-autokeys", _elkulator_command_script(("mmfs", "din 0", "exec !boot"))]
+        else:
+            arguments += ["-tape" if suffix == ".uef" else "-disc", str(media)]
+        if not mmfs_card and boot in {"auto", "boot"} and suffix != ".uef":
             arguments.append("-autoboot")
         if debug:
             arguments.append("-debug")
@@ -210,6 +245,31 @@ def emulator_command(
     else:
         arguments += ["-video", "none", "-seconds_to_run", "8"]
     return arguments, str(Path(MAME_ROM_PATH).parent) if native else "/app"
+
+
+def _command_environment(arguments: list[str], values: dict[str, str]) -> list[str]:
+    assignments = [f"{key}={value}" for key, value in values.items()]
+    if "env" in arguments:
+        position = arguments.index("env") + 1
+        return [*arguments[:position], *assignments, *arguments[position:]]
+    return ["env", *assignments, *arguments]
+
+
+def _elkulator_command_script(commands: tuple[str, ...]) -> str:
+    events: list[tuple[int, int]] = []
+    delay = 300
+    for command in commands:
+        events.extend(((delay, 2000), (1, 69), (1, 2001)))  # Shift+@ types '*'.
+        for character in command.casefold():
+            if character == "!":
+                events.extend(((2, 2000), (1, _ELKULATOR_KEYS["1"]), (1, 2001)))
+            elif character in _ELKULATOR_KEYS:
+                events.append((2, _ELKULATOR_KEYS[character]))
+            else:
+                raise ValueError(f"The managed MMFS startup command contains unsupported key {character!r}.")
+        events.append((2, 67))
+        delay = 300
+    return ",".join(f"{wait}:{key}" for wait, key in events)
 
 
 def _desktop_command(

@@ -32,11 +32,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl git make gcc g++ autoconf automake libtool pkg-config patch \
     liballegro4-dev libopenal-dev libalut-dev zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
-# 1MHzWifi 0.1.41 includes the ROM cold-boot correction.
+# The pinned 1MHzWifi integration includes the Pi1MHz raw-SD MMFS adapter,
+# deterministic ROM selection and the current cold-boot corrections.
 RUN git clone https://github.com/stardot/elkulator.git /src/elkulator \
     && git -C /src/elkulator checkout 6cab45aba68fc3d3bdaea4c28b5de4de0307e00e \
     && git clone https://github.com/peteclarke-del/1mhzWifi.git /src/1mhzwifi \
-    && git -C /src/1mhzwifi checkout b39e21bf9c84ea629367a2ed8999d6b96bc08054 \
+    && git -C /src/1mhzwifi checkout c02e1dc42d36c1747780833c368dabd614091572 \
     && /src/1mhzwifi/emulator/pi1mhz-mailbox/integrations/elkulator/install.sh /src/elkulator \
     && cd /src/elkulator \
     && autoreconf -fi \
@@ -47,7 +48,9 @@ RUN mkdir -p /src/elkulator-runtime \
     && cp /src/elkulator/elk.cfg /src/elkulator-runtime/ \
     && curl -fsSL http://elkulator.acornelectron.co.uk/ElkulatorV1.0Linux.tar.gz -o /tmp/elkulator-roms.tar.gz \
     && tar -xzf /tmp/elkulator-roms.tar.gz -C /tmp \
-    && find /tmp -type d -name roms -print -quit | xargs -I{} cp -a {} /src/elkulator-runtime/roms
+    && find /tmp -type d -name roms -print -quit | xargs -I{} cp -a {} /src/elkulator-runtime/roms \
+    && cp /src/1mhzwifi/build/pi1mhz-all/Pi1MHz/EMMFS.rom /src/elkulator-runtime/roms/ \
+    && cp /src/1mhzwifi/build/pi1mhz-all/Pi1MHz/SWMMFS.rom /src/elkulator-runtime/roms/
 
 FROM debian:bookworm-slim AS bem-builder
 
@@ -77,7 +80,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    mame xvfb xauth x11vnc novnc websockify liballegro4.4t64 libopenal1 libalut0 \
+    mame xvfb xauth x11vnc novnc websockify imagemagick xdotool liballegro4.4t64 libopenal1 libalut0 \
     liballegro5.2t64 liballegro-acodec5.2t64 liballegro-audio5.2t64 \
     liballegro-dialog5.2t64 liballegro-image5.2t64 liballegro-ttf5.2t64 \
     libasound2t64 \
