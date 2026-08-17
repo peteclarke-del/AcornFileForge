@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 
 PLATFORM_CONTRACT_FORMAT = "acorn-file-forge-platform-contract"
-PLATFORM_CONTRACT_VERSION = 2
+PLATFORM_CONTRACT_VERSION = 3
 PLATFORM_KINDS = frozenset({"web", "desktop"})
 
 # A capability belongs here only when both hosts expose the same implementation
@@ -23,6 +23,7 @@ SHARED_CAPABILITIES = (
     "checkpoints-and-undo",
     "workflow-recipes",
     "managed-emulators",
+    "hardware-deployment",
 )
 
 HOST_CAPABILITIES = {

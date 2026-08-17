@@ -936,6 +936,7 @@ function renderPane(index, preserveScroll = false) {
       <button class="menu-command open-hex-editor"><b>0x</b><span>Hex editor…</span></button>
       ${emulatorActions}
       ${physicalFloppyAction}
+      <button class="menu-command build-deployment"><b>⇩</b><span>Build hardware deployment…</span></button>
       ${isSlots ? "" : `<button class="menu-command validate-image"><b>✓</b><span>${isRom ? "Check ROM structure" : "Check filesystem"}</span></button>`}
       ${isAdfsHdd ? '<button class="menu-command audit-adfs-installations"><b>⌁</b><span>Check installed disk software…</span></button>' : ""}
       ${isArchive ? "" : isRom ? '<button class="menu-command rom-workbench"><b>⌬</b><span>ROM Workbench…</span></button><button class="menu-command configure-rom"><b>▥</b><span>ROM layout…</span></button>' : isRomfs ? `${pane.image.readOnly ? "" : '<button class="menu-command configure-romfs"><b>▥</b><span>ROMFS properties…</span></button>'}` : isSlots || isTape ? (isTape ? '<button class="menu-command convert-tape"><b>⇥</b><span>Convert tape to disk</span></button>' : "") : pane.image.readOnly ? "" : '<button class="menu-command compact-image"><b>≋</b><span>Compact filesystem</span></button>'}
@@ -1045,6 +1046,7 @@ function renderPane(index, preserveScroll = false) {
   host.querySelector(".manage-checkpoints")?.addEventListener("click", () => guardedPaneAction(index, () => showCheckpointManager(index)));
   host.querySelector(".health-dashboard")?.addEventListener("click", () => guardedPaneAction(index, () => showHealthDashboard(index)));
   host.querySelector(".preflight-selection")?.addEventListener("click", () => guardedPaneAction(index, () => showSelectionPreflight(index)));
+  host.querySelector(".build-deployment")?.addEventListener("click", () => guardedPaneAction(index, () => showDeploymentAssistant(index)));
   host.querySelector(".inspect-file")?.addEventListener("click", () => guardedPaneAction(index, () => showFileInspector(index)));
   host.querySelector(".inspect-dependencies")?.addEventListener("click", () => guardedPaneAction(index, () => showDependencyReport(index)));
   host.querySelector(".test-menu-entries")?.addEventListener("click", () => guardedPaneAction(index, () => showMenuTests(index)));
@@ -3615,6 +3617,34 @@ async function prepareHostFolderMetadata(records) {
   }));
 }
 
+async function reviewHostImport(index, records, operation, itemType = "file") {
+  try {
+    const report = await requestCompatibilityReport(
+      index,
+      operation,
+      "host",
+      records.map(item => ({
+        name: itemType === "disk image"
+          ? formats.stem(item.file?.name || item.relativePath || "DISK")
+          : item.metadata?.targetName || item.file?.name || item.relativePath || "FILE",
+        nameIsLeaf: true,
+        source: item.relativePath || item.file?.name || "Local file",
+        type: itemType,
+        load: item.metadata?.load || "",
+        execute: item.metadata?.execute || "",
+        filetype: item.metadata?.filetype || "",
+      })),
+    );
+    return reviewCompatibilityReport(index, report, {
+      heading: `Import into ${panes[index].image.name}`,
+      continueLabel: `Continue with ${records.length} item${records.length === 1 ? "" : "s"}`,
+    });
+  } catch (error) {
+    toast(error.message, true);
+    return false;
+  }
+}
+
 async function addSelectedHostFolder(index, records, requestedSlot = null) {
   const pane = panes[index];
   if (!records.length || !pane.image) return;
@@ -3632,6 +3662,12 @@ async function addSelectedHostFolder(index, records, requestedSlot = null) {
       ? "That folder contains no SSD, DSD, HFE or ZIP disk images."
       : "That folder contains no importable files.", true);
   }
+  if (!await reviewHostImport(
+    index,
+    relevant,
+    "file-menu-folder-import",
+    isMmbRoot ? "disk image" : "file",
+  )) return false;
   if (isMmbRoot) {
     const selected = selectedEntries(index).find(entry => entry.empty);
     const firstEmpty = pane.entries.find(entry => entry.empty);
@@ -3700,6 +3736,7 @@ async function addSelectedHostFiles(index, files) {
   if (pane.image?.kind === "rom") return addRomHostFiles(index, files);
   const preparedFiles = await prepareHostFileMetadata(files);
   if (!preparedFiles.length) return toast("The selection contained metadata sidecars but no data files.", true);
+  if (!await reviewHostImport(index, preparedFiles, "file-menu-file-import")) return false;
   const batch = { current: 0, total: preparedFiles.length, acceptAll: false, currentMetadata: null };
   pane.actionPending = true;
   renderPane(index);
@@ -4868,21 +4905,97 @@ async function transferFiles(targetIndex, sources, targetPath = null) {
       </div>`,
       async form => {
         submitted = true;
-        const result = await performTransfers(targetIndex, transfers.map(item => ({
+        const renamed = transfers.map(item => ({
           ...item.source,
           targetName: form.get(`targetName${item.index}`)
-        })), destination);
-        resolve(result);
-        return result;
+        }));
+        setTimeout(async () => resolve(await reviewAndPerformTransfers(targetIndex, renamed, destination)), 0);
+        return true;
       });
       closed.then(() => { if (!submitted) resolve(false); });
     });
   }
-  return performTransfers(
+  return reviewAndPerformTransfers(
     targetIndex,
     sources.map(source => ({ ...source, targetName: source.name })),
     destination,
   );
+}
+
+function transferCompatibilityChanges(transfers) {
+  return transfers.map(transfer => ({
+    name: transfer.targetName || transfer.name,
+    nameIsLeaf: true,
+    source: transfer.path || transfer.name,
+    type: transfer.recursive ? "directory" : (transfer.type || "file"),
+    load: transfer.loadHex || transfer.load || "",
+    execute: transfer.executeHex || transfer.exec || transfer.execute || "",
+    access: transfer.attr || transfer.access || "",
+    filetype: transfer.filetype || "",
+  }));
+}
+
+async function requestCompatibilityReport(index, operation, sourceKind, changes) {
+  const pane = panes[index];
+  return trackedPaneOperation(index, "Building compatibility report", operationId => api(`/api/images/${pane.image.id}/preflight`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ operation, sourceKind, targetKind: pane.image.kind, changes, operationId }),
+  }), { abortMode: "read-only" });
+}
+
+function compatibilityReportMarkup(report, { heading = "Review compatibility before continuing", continueLabel = "Continue" } = {}) {
+  return `<div class="analysis-dialog wide-analysis compatibility-review"><small>CROSS-FORMAT PREFLIGHT / NO IMAGE WRITES</small><h2>${esc(heading)}</h2>
+    <p>${esc(report.summary)}. Review every conversion and loss before the destination image is changed.</p>
+    <div class="preflight-list">${report.items.map(item => `<article><b>${item.index + 1}</b><span><strong>${esc(item.sourceName)}${item.targetName !== item.sourceName ? ` → ${esc(item.targetName)}` : ""}</strong><small>${esc(item.source)} · ${esc(item.type)}${item.metadata.load ? ` · load ${esc(item.metadata.load)}` : ""}${item.metadata.execute ? ` · execute ${esc(item.metadata.execute)}` : ""}</small>${[...item.conversions, ...item.losses].map(note => `<em>${esc(note)}</em>`).join("")}</span></article>`).join("")}</div>
+    <div class="finding-list">${report.issues.map(item => `<p class="finding ${esc(item.severity)}"><b>${esc(item.severity)}</b>${esc(item.message)}</p>`).join("") || '<p class="finding pass"><b>ready</b>No conversion loss or blocking clash was detected.</p>'}</div>
+    <div class="modal-actions"><button class="button ghost" type="button" data-export-preflight="json">Export JSON</button><button class="button ghost" type="button" data-export-preflight="markdown">Export Markdown</button><button class="button ghost" value="cancel">Cancel</button><button class="button primary" name="action" value="continue" ${report.canProceed ? "" : "disabled"}>${esc(continueLabel)}</button></div></div>`;
+}
+
+function wireCompatibilityExports(report, imageName) {
+  modalContent.querySelector('[data-export-preflight="json"]')?.addEventListener("click", () => {
+    const documentValue = { ...report }; delete documentValue.markdown;
+    downloadJson(documentValue, `${pathNameWithoutExtension(imageName)}-compatibility-report.json`);
+  });
+  modalContent.querySelector('[data-export-preflight="markdown"]')?.addEventListener("click", () => downloadDocument(
+    `${pathNameWithoutExtension(imageName)}-compatibility-report.md`, report.markdown, "text/markdown;charset=utf-8",
+  ));
+}
+
+function reviewCompatibilityReport(index, report, options = {}) {
+  return new Promise(resolve => {
+    let accepted = false;
+    const closed = showModal(compatibilityReportMarkup(report, options), async form => {
+      accepted = form.get("action") === "continue";
+      resolve(accepted);
+    });
+    wireCompatibilityExports(report, panes[index].image.name);
+    closed.then(() => { if (!accepted) resolve(false); });
+  });
+}
+
+async function reviewAndPerformTransfers(targetIndex, transfers, destination) {
+  const target = panes[targetIndex];
+  const sourceKinds = new Set(transfers.map(transfer => panes[transfer.pane]?.image?.kind || "unknown"));
+  const crossFormat = sourceKinds.size !== 1 || !sourceKinds.has(target.image.kind);
+  if (crossFormat) {
+    try {
+      const report = await requestCompatibilityReport(
+        targetIndex,
+        "cross-format-transfer",
+        sourceKinds.size === 1 ? [...sourceKinds][0] : "mixed",
+        transferCompatibilityChanges(transfers),
+      );
+      if (!await reviewCompatibilityReport(targetIndex, report, {
+        heading: `Copy to ${target.image.name}`,
+        continueLabel: `Copy ${transfers.length} item${transfers.length === 1 ? "" : "s"}`,
+      })) return false;
+    } catch (error) {
+      toast(error.message, true);
+      return false;
+    }
+  }
+  return performTransfers(targetIndex, transfers, destination);
 }
 
 async function performDfsMoves(targetIndex, sources, destination) {
@@ -5434,6 +5547,7 @@ async function showOnlineLibrary(index) {
   const machine = defaultOnlineMachine(pane);
   const adfsMenus = pane.image.kind === "adfs" ? await adfsInstalledMenuChoices(index) : [];
   const machineOptions = ONLINE_MACHINES.map(([value, label]) => `<option value="${value}" ${value === machine ? "selected" : ""}>${label}</option>`).join("");
+  let acceptedOnlineSignature = "";
   showModal(`<div class="modal-heading online-library-heading"><span class="modal-kicker">ONLINE LIBRARY</span><h2>${isMmbRoot ? "Find disk images" : "Find software to install"}</h2><p>Search trusted Acorn archives, select several results, then install them through the same checked workflow as local files.</p></div>
     <div class="online-search-bar"><label>Machine<select name="machine">${machineOptions}</select></label><label class="online-query">Title, publisher or keyword<input name="query" type="search" placeholder="Leave blank to browse"></label><label>Show<select name="scope"><option value="missing">Not already present</option><option value="all">All results</option></select></label><button class="button online-search" type="button">Search</button><button class="button ghost online-sources" type="button">Sources…</button></div>
     <div class="online-status">Choose a machine and search the configured catalogues.</div>
@@ -5442,9 +5556,39 @@ async function showOnlineLibrary(index) {
       ${isMmbRoot ? `<label>Start at slot<input name="startSlot" type="number" min="0" max="510" value="${selectedEmpty[0] ?? firstEmpty}"></label><span class="field-note">${selectedEmpty.length ? `${selectedEmpty.length} selected empty slot${selectedEmpty.length === 1 ? "" : "s"} will be preferred.` : "The next suitable empty slots will be used."}</span><label class="check"><input type="checkbox" name="addToMenu" checked> Offer installed disks to the detected menu</label>` : ""}
       ${pane.image.kind === "adfs" ? `${adfsMenuChoiceMarkup(pane, adfsMenus, "onlineMenuChoice")}<label class="check"><input type="checkbox" name="createDirectory"> Create a folder for each downloaded disk</label><span class="field-note">A menu selection creates one directory per disk beneath that menu. Untick Menu beside an individual result to install it off-menu.</span>` : ""}
     </div>
+    <div class="online-compatibility-review" aria-live="polite"></div>
     <div class="modal-actions"><button class="button" value="cancel">Cancel</button><button class="button primary online-install" type="submit" disabled>${isMmbRoot ? "Insert selected disks" : "Install selected"}</button></div>`, async form => {
       const itemIds = form.getAll("catalogItem");
       if (!itemIds.length) { toast("Select one or more downloadable items first.", true); return false; }
+      const signature = JSON.stringify({
+        itemIds,
+        startSlot: form.get("startSlot"),
+        menu: form.get("onlineMenuChoice"),
+        createDirectory: form.has("createDirectory"),
+      });
+      if (acceptedOnlineSignature !== signature) {
+        const selectedItems = itemIds.map(id => resultItems.find(item => item.id === id)).filter(Boolean);
+        const report = await requestCompatibilityReport(
+          index,
+          "online-library-install",
+          "online-catalogue",
+          selectedItems.map(item => ({
+            name: item.title || item.filename || "Software",
+            nameIsLeaf: true,
+            source: item.sourceName || item.pageUrl || "Online Library",
+            type: isMmbRoot ? "disk image" : (form.has("createDirectory") ? "directory" : "file"),
+          })),
+        );
+        const reviewHost = modalContent.querySelector(".online-compatibility-review");
+        reviewHost.innerHTML = `<details open><summary>Compatibility preflight · ${esc(report.summary)}</summary>
+          <div class="preflight-list">${report.items.map(item => `<article><b>${item.index + 1}</b><span><strong>${esc(item.sourceName)}${item.targetName !== item.sourceName ? ` → ${esc(item.targetName)}` : ""}</strong>${[...item.conversions, ...item.losses].map(note => `<em>${esc(note)}</em>`).join("")}</span></article>`).join("")}</div>
+          <div class="finding-list">${report.issues.map(item => `<p class="finding ${esc(item.severity)}"><b>${esc(item.severity)}</b>${esc(item.message)}</p>`).join("") || '<p class="finding pass"><b>ready</b>No conversion loss or blocking clash was detected.</p>'}</div></details>`;
+        acceptedOnlineSignature = report.canProceed ? signature : "";
+        const install = modalContent.querySelector(".online-install");
+        install.textContent = report.canProceed ? `Install ${itemIds.length} reviewed item${itemIds.length === 1 ? "" : "s"}` : "Resolve compatibility findings";
+        setTimeout(() => { install.disabled = !report.canProceed; }, 0);
+        return false;
+      }
       const titles = new Map([...modalContent.querySelectorAll('[name="catalogItem"]')].map(input => [input.value, input.closest("tr")?.querySelector("strong")?.textContent || input.value]));
       const results = [];
       const menuChoice = String(form.get("onlineMenuChoice") || "off");
@@ -5507,7 +5651,12 @@ async function showOnlineLibrary(index) {
       resultSort = { key, direction: resultSort.key === key && resultSort.direction === "asc" ? "desc" : "asc" };
       renderOnlineResults();
     });
-    resultHost.querySelectorAll('[name="catalogItem"]').forEach(input => input.onchange = () => { installButton.disabled = !resultHost.querySelector('[name="catalogItem"]:checked'); });
+    resultHost.querySelectorAll('[name="catalogItem"]').forEach(input => input.onchange = () => {
+      acceptedOnlineSignature = "";
+      modalContent.querySelector(".online-compatibility-review").innerHTML = "";
+      installButton.textContent = isMmbRoot ? "Insert selected disks" : "Install selected";
+      installButton.disabled = !resultHost.querySelector('[name="catalogItem"]:checked');
+    });
     installButton.disabled = !resultHost.querySelector('[name="catalogItem"]:checked');
   };
   const runSearch = async (requestedMachine = null) => {
@@ -7438,17 +7587,15 @@ async function showSelectionPreflight(index) {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ operation: "selection", changes: items })
     });
-    if (!replaceAnalysisLoading(`<div class="analysis-dialog wide-analysis"><small>PREFLIGHT / NO IMAGE WRITES</small><h2>${esc(report.summary)}</h2>
-      <div class="preflight-list">${report.items.map(item => `<article><b>${item.index + 1}</b><span><strong>${esc(item.sourceName)}${item.targetName !== item.sourceName ? ` → ${esc(item.targetName)}` : ""}</strong><small>${esc(item.source)} · ${esc(item.type)}${item.metadata.load ? ` · load ${esc(item.metadata.load)}` : ""}${item.metadata.execute ? ` · execute ${esc(item.metadata.execute)}` : ""}</small>${[...item.conversions, ...item.losses].map(note => `<em>${esc(note)}</em>`).join("")}</span></article>`).join("")}</div>
-      <div class="finding-list">${report.issues.map(item => `<p class="finding ${esc(item.severity)}"><b>${esc(item.severity)}</b>${esc(item.message)}</p>`).join("") || '<p class="finding pass"><b>ready</b>No truncation or clashes were detected.</p>'}</div>
-      <div class="modal-actions"><button class="button ghost" type="button" data-export-preflight="json">Export JSON</button><button class="button ghost" type="button" data-export-preflight="markdown">Export Markdown</button><button class="button" type="button" data-accept-preflight ${report.canProceed ? "" : "disabled"}>Keep with saved image</button><button class="button primary" value="cancel">Close</button></div></div>`)) return;
-    modalContent.querySelector('[data-export-preflight="json"]').onclick = () => {
-      const documentValue = { ...report }; delete documentValue.markdown;
-      downloadJson(documentValue, `${pathNameWithoutExtension(pane.image.name)}-compatibility-report.json`);
-    };
-    modalContent.querySelector('[data-export-preflight="markdown"]').onclick = () => downloadDocument(
-      `${pathNameWithoutExtension(pane.image.name)}-compatibility-report.md`, report.markdown, "text/markdown;charset=utf-8",
+    const markup = compatibilityReportMarkup(report, {
+      heading: report.summary,
+      continueLabel: "Close",
+    }).replace(
+      /<button class="button ghost" value="cancel">Cancel<\/button><button class="button primary" name="action" value="continue"[^>]*>Close<\/button>/,
+      `<button class="button" type="button" data-accept-preflight ${report.canProceed ? "" : "disabled"}>Keep with saved image</button><button class="button primary" value="cancel">Close</button>`,
     );
+    if (!replaceAnalysisLoading(markup)) return;
+    wireCompatibilityExports(report, pane.image.name);
     modalContent.querySelector("[data-accept-preflight]").onclick = async event => {
       event.currentTarget.disabled = true;
       try {
@@ -7462,6 +7609,97 @@ async function showSelectionPreflight(index) {
       }
     };
   } catch (error) { toast(error.message, true); modal.close(); }
+}
+
+async function showDeploymentAssistant(index) {
+  const pane = panes[index];
+  let targets;
+  try {
+    targets = (await api(`/api/images/${pane.image.id}/deployment/targets`)).targets;
+  } catch (error) {
+    return toast(error.message, true);
+  }
+  const available = targets.filter(target => target.available);
+  showModal(`<div class="deployment-assistant">
+    <header class="modal-heading"><span class="modal-kicker">HARDWARE DEPLOYMENT</span><h2>Build media for ${esc(pane.image.name)}</h2><p>Acorn File Forge works from an isolated snapshot, validates the exact target tree and leaves the open image unchanged.</p></header>
+    <div class="deployment-layout">
+      <section class="deployment-settings">
+        <label>Target<select name="deploymentTarget">${targets.map(target => `<option value="${esc(target.id)}" ${target.available ? "" : "disabled"}>${esc(target.label)}${target.available ? "" : " · unavailable"}</option>`).join("")}</select></label>
+        <div class="deployment-target-help" aria-live="polite"></div>
+        <fieldset class="deployment-gotek-options"><legend>FlashFloppy navigation</legend><label>Mode<select name="gotekMode"><option value="native">Native filenames and folders</option><option value="indexed">Indexed DSKA0000 layout</option></select></label><label>First index<input name="startIndex" type="number" min="0" max="9999" value="0"></label></fieldset>
+        <div class="help-warning"><strong>Back up the working card or USB device first.</strong> The ZIP is a reviewed directory tree, not permission to overwrite a known-good deployment.</div>
+      </section>
+      <section class="deployment-review" aria-live="polite"><div class="empty-list">Choose a target, then validate the deployment.</div></section>
+    </div>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Close</button><button class="button" type="button" data-plan-deployment ${available.length ? "" : "disabled"}>Validate layout</button><button class="button primary" type="button" data-download-deployment disabled>Download deployment ZIP</button></div>
+  </div>`);
+  if (!available.length) {
+    modalContent.querySelector(".deployment-review").innerHTML = '<div class="help-warning">This image type has no supported deployment layout.</div>';
+    return;
+  }
+  const targetSelect = modalContent.querySelector('[name="deploymentTarget"]');
+  targetSelect.value = available[0].id;
+  const gotekOptions = modalContent.querySelector(".deployment-gotek-options");
+  const targetHelp = modalContent.querySelector(".deployment-target-help");
+  const review = modalContent.querySelector(".deployment-review");
+  const buildButton = modalContent.querySelector("[data-download-deployment]");
+  let plan = null;
+  const payload = () => ({
+    target: targetSelect.value,
+    gotekMode: modalContent.querySelector('[name="gotekMode"]').value,
+    startIndex: Number(modalContent.querySelector('[name="startIndex"]').value || 0),
+  });
+  const targetChanged = () => {
+    const target = targets.find(item => item.id === targetSelect.value);
+    targetHelp.innerHTML = `<strong>${esc(target?.label || "")}</strong><span>${esc(target?.description || target?.reason || "")}</span>`;
+    gotekOptions.hidden = targetSelect.value !== "gotek";
+    plan = null;
+    buildButton.disabled = true;
+    review.innerHTML = '<div class="empty-list">Validate again after changing the target layout.</div>';
+  };
+  targetSelect.onchange = targetChanged;
+  modalContent.querySelectorAll('[name="gotekMode"], [name="startIndex"]').forEach(control => control.onchange = targetChanged);
+  targetChanged();
+  modalContent.querySelector("[data-plan-deployment]").onclick = async event => {
+    event.currentTarget.disabled = true;
+    review.innerHTML = "<p>Finalising and hashing an isolated snapshot…</p>";
+    try {
+      plan = await trackedPaneOperation(index, "Validating hardware deployment", operationId => api(`/api/images/${pane.image.id}/deployment/plan`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload(), operationId }),
+      }), { abortMode: "read-only" });
+      review.innerHTML = `<header><strong>${esc(plan.targetLabel)}</strong><span>${plan.entries.length} file${plan.entries.length === 1 ? "" : "s"} · ${humanSize(plan.entries.reduce((total, entry) => total + entry.size, 0))}</span></header>
+        <div class="deployment-file-list">${plan.entries.map(entry => `<article><span><b>${esc(entry.path)}</b><small>${esc(entry.role)} · ${humanSize(entry.size)}</small></span><code title="SHA-256 ${esc(entry.sha256)}">${esc(entry.sha256.slice(0, 16))}…</code></article>`).join("")}</div>
+        <div class="finding-list">${plan.issues.map(item => `<p class="finding ${esc(item.severity)}"><b>${esc(item.severity)}</b>${esc(item.message)}</p>`).join("") || '<p class="finding pass"><b>ready</b>The generated layout passed its automated checks.</p>'}</div>
+        <details open><summary>Installation and verification</summary><ol>${plan.instructions.map(step => `<li>${esc(step)}</li>`).join("")}</ol></details>`;
+      buildButton.disabled = !plan.canProceed;
+    } catch (error) {
+      plan = null;
+      buildButton.disabled = true;
+      review.innerHTML = `<div class="help-warning">${esc(error.message)}</div>`;
+    } finally {
+      event.currentTarget.disabled = false;
+    }
+  };
+  buildButton.onclick = async () => {
+    if (!plan) return;
+    buildButton.disabled = true;
+    try {
+      const result = await trackedPaneOperation(index, "Building hardware deployment ZIP", async operationId => {
+        const response = await fetch(`/api/images/${pane.image.id}/deployment/package`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payload(), expectedRevision: plan.source.revision, operationId }),
+        });
+        return downloadResponse(response, `${pathNameWithoutExtension(pane.image.name)}-${plan.target}-deployment.zip`);
+      }, { abortMode: "read-only" });
+      toast(`${result.filename} downloaded · ${humanSize(result.size)}`);
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      buildButton.disabled = !plan?.canProceed;
+    }
+  };
 }
 
 function selectedInspectable(index) {

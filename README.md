@@ -101,7 +101,7 @@ they will not be committed or packaged.
 
 ## Current status
 
-The current release candidate is `1.0.0-rc.1`. It supports the editing and transfer workflows described in
+The current release candidate is `1.0.0-rc.2`. It supports the editing and transfer workflows described in
 this guide, including movable, resizable and stackable panes, undo and named
 checkpoints, browser-private recovery, background job tracking, MMB and ADFS
 menu maintenance, HFE handling, UEF extraction, an Online Library and
@@ -1129,6 +1129,33 @@ JSON for automation or Markdown for a package record. Choose **Keep with saved
 image** after a report passes to retain it with the working session. The next
 saved ZIP includes the accepted JSON and Markdown below `Compatibility/`, and
 the generated README identifies the accepted operation and review time.
+
+The same report is now mandatory before a cross-format batch started by pane
+drag and drop, Cut/Copy/Paste, **File → Insert File**, folder import or Online
+Library. It is built before the first destination write. Blocking name clashes
+or directory losses stop the operation, while reviewable conversions remain
+attached to the individual item. Online Library displays the report inside its
+existing results dialog and requires a second Install action after review.
+
+### Hardware deployment packages
+
+Choose **Tools → Build hardware deployment** in any applicable pane to build a
+checked directory tree for Gotek/FlashFloppy, MMFS, BeebSCSI, Pi1MHz or a RISC
+OS host. The assistant works on an isolated sparse snapshot. Hardware
+finalisation, hashing and package generation therefore do not advance the disc
+ID or otherwise alter the image still open in the workspace.
+
+The validation screen lists exact target paths, sizes, SHA-256 values,
+hardware-profile warnings and the manual installation checks. Download remains
+disabled when a finding is blocking. A changed source revision also invalidates
+an approved plan before download. The ZIP contains the target media tree,
+`README.md`, `Deployment/manifest.json` and the Markdown compatibility report.
+Gotek packages support native filenames and indexed `DSKA0000` navigation;
+MMFS uses a root `BEEB.MMB`; BeebSCSI uses the matched
+`BeebSCSI0/scsi0.dat` and `scsi0.dsc` layout; Pi1MHz produces a merge tree that
+does not replace firmware or configuration; RISC OS packages retain controller
+attachment as an explicit manual step. The complete procedure and limits are
+in the [hardware deployment guide](docs/HARDWARE-DEPLOYMENT-GUIDE.md).
 
 **Find duplicates / variants** uses full SHA-256 hashes for byte-identical
 content and a conservative normalised-title comparison for likely release or
@@ -2650,7 +2677,7 @@ curl http://localhost:8666/api/health
 A healthy response looks like:
 
 ```json
-{"engine":"oaknut","status":"ok","version":"1.0.0-rc.1"}
+{"engine":"oaknut","status":"ok","version":"1.0.0-rc.2"}
 ```
 
 ## Main dependencies

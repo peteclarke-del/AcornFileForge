@@ -115,6 +115,25 @@ class AnalysisServiceTests(unittest.TestCase):
             self.assertIn("hierarchical directory", report["items"][0]["losses"][0])
             self.assertIn("RISC OS filetype", report["items"][0]["losses"][1])
 
+    def test_preflight_uses_a_dfs_disk_title_limit_for_mmb_disk_images(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "collection.mmb"
+            path.write_bytes(b"image")
+            session = ImageSession("e" * 32, path.name, "mmb", path)
+
+            report = preflight_report(
+                DiskService(folder), session,
+                {
+                    "operation": "online-library-install",
+                    "sourceKind": "online-catalogue",
+                    "targetKind": "mmb",
+                    "changes": [{"name": "ARCADIANS123", "type": "disk image"}],
+                },
+            )
+
+            self.assertEqual(report["items"][0]["targetName"], "ARCADIANS123")
+            self.assertTrue(report["canProceed"])
+
     def test_accepted_preflight_is_retained_with_canonical_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "disk.ssd"

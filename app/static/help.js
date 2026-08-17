@@ -33,6 +33,7 @@ function showHelp() {
           <a href="#help-maintenance">Check and compact</a>
           <a href="#help-hex-editor">Raw image hex editor</a>
           <a href="#help-analysis">Workbench and analysis</a>
+          <a href="#help-deployment">Hardware deployment</a>
           <a href="#help-saving">Save, close and recover</a>
           <a href="#help-shortcuts">Keyboard shortcuts</a>
           <a href="#help-accessibility">Accessibility and appearance</a>
@@ -906,7 +907,7 @@ function showHelp() {
               <li><strong>Export collection manifest</strong> downloads CSV or JSON containing slots, files, Acorn metadata, menu records and checksums.</li>
               <li><strong>Compare with open image</strong> matches two manifests by filesystem path, MMB slot, DFS side or ROM bank. It separates additions, removals, proven renames or moves, changed bytes and metadata-only edits, then joins changed raw-byte ranges for the primary image and companion descriptor. A rename is reported only when content, size and filesystem context identify one unique pair; ambiguous duplicate files remain separate additions and removals. Export JSON retains the deterministic logical fingerprints and full itemised evidence. Different filesystem families can be compared as inventories but are marked unsuitable for direct patching.</li>
               <li>For matching filesystem families, DFS side layouts and ROM bank sizes, <strong>Download patch</strong> creates an <code>.affpatch.zip</code> containing the reviewed operation plan and only changed payloads. Tick changes to export a selective patch or leave every box clear for the complete comparison. Selective patches derive their own final fingerprint and automatically include required directory and MMB-slot dependencies. Comparison, archive creation and verification show the current catalogue, checksum or payload phase with byte or item counts, elapsed time, throughput and ETA where meaningful. Abort stops these read-only stages safely without changing either image. <strong>Analyse → Apply guarded patch</strong> first performs a read-only preflight against the exact base fingerprint and verifies every payload. It shows the base and candidate names, change totals and an itemised operation preview; Apply remains disabled until verification succeeds. Applying creates an automatic checkpoint, repeats validation before writing and checks the complete candidate fingerprint afterwards. Abort during application restores that checkpoint. Stale, corrupt and wrong-format patches are rejected and failed applications roll back.</li>
-              <li><strong>Analyse → Dry-run selected items</strong> creates a versioned compatibility report without writing. Each row records its proposed target name, Acorn metadata and any filename, directory or RISC OS filetype conversion or loss. Export the result as JSON or Markdown. A report without blocking findings can be kept with the working image; the next saved ZIP includes its canonical JSON and Markdown below <code>Compatibility/</code>.</li>
+              <li><strong>Analyse → Dry-run selected items</strong> creates a versioned compatibility report without writing. Each row records its proposed target name, Acorn metadata and any filename, directory or RISC OS filetype conversion or loss. Export the result as JSON or Markdown. A report without blocking findings can be kept with the working image; the next saved ZIP includes its canonical JSON and Markdown below <code>Compatibility/</code>. Cross-format drag, clipboard, File-menu and Online Library batches now show this shared report before their first destination write.</li>
               <li>For MMB, edit the exported JSON menu records carefully and choose <strong>Apply reviewed JSON</strong>. Current records are compared first so a stale manifest cannot overwrite a newer menu.</li>
             </ol></div>
             <figure><img src="/help/private-collection.png" alt="Private collection catalogue showing an indexed DFS image, location and target machines"><figcaption>The browser-private catalogue remains searchable after an image is closed. Locations are descriptive and the database stores manifests rather than image bytes.</figcaption></figure>
@@ -927,6 +928,28 @@ function showHelp() {
               <li>After a container restart, an unfinished job is marked interrupted instead of disappearing. Use Resume after checking the destination pane.</li>
             </ol></div>
             <figure><img src="/help/workbench-analysis.png" alt="Acorn File Forge Workbench and image analysis tools"><figcaption>Workbench holds reusable settings; each pane's Analyse menu runs checks against the currently open image.</figcaption></figure>
+          </section>
+          <section id="help-deployment">
+            <h3>Build media for real hardware</h3>
+            <p class="help-lead">The deployment assistant creates a checked card, USB or host-directory tree without changing the image open in the workspace.</p>
+            <div class="help-task"><h4>Create a deployment package</h4><ol>
+              <li>Apply the intended machine and expansions in <strong>Workbench → Hardware profiles</strong>.</li>
+              <li>Open the image and choose <strong>Tools → Build hardware deployment</strong>.</li>
+              <li>Choose Gotek/FlashFloppy, MMFS, BeebSCSI, Pi1MHz or RISC OS. Unavailable targets stay disabled and explain the required source format.</li>
+              <li>For Gotek, choose Native filenames or an Indexed <code>DSKA0000</code> layout and its first index.</li>
+              <li>Select <strong>Validate layout</strong>. A disposable sparse snapshot is hardware-finalised and hashed, so DAT/DSC checks cannot alter the live pane.</li>
+              <li>Review every path, role, size, SHA-256 value, profile warning and installation step. Blocking findings disable download.</li>
+              <li>Select <strong>Download deployment ZIP</strong>. If the image changed after review, validate again instead of building from a stale decision.</li>
+              <li>Extract to a temporary directory, back up the known-good card or USB device, then merge the generated tree. Complete the read, write and reboot tests in its README before retiring the backup.</li>
+            </ol></div>
+            <div class="help-table-wrap"><table class="help-table"><thead><tr><th>Target</th><th>Generated layout</th><th>Important manual step</th></tr></thead><tbody>
+              <tr><td>Gotek</td><td><code>GOTEK-USB</code>, optional <code>FF.CFG</code></td><td>Copy its contents to a firmware-compatible USB device</td></tr>
+              <tr><td>MMFS</td><td><code>SD-CARD/BEEB.MMB</code></td><td>Preserve the matching ROM build and PAGE configuration</td></tr>
+              <tr><td>BeebSCSI</td><td><code>SD-CARD/BeebSCSI0/scsi0.dat</code> and <code>scsi0.dsc</code></td><td>Keep the validated pair together</td></tr>
+              <tr><td>Pi1MHz</td><td>Root MMB or <code>BeebSCSI0</code> merge tree</td><td>Preserve firmware, <code>Pi1MHz.cfg</code> and saved state</td></tr>
+              <tr><td>RISC OS</td><td><code>RISC-OS-HOST/Images</code></td><td>Attach with geometry appropriate to the actual controller or emulator</td></tr>
+            </tbody></table></div>
+            <figure><img src="/help/hardware-deployment-assistant.png" alt="Hardware deployment assistant listing a Gotek target file, checksum and installation checks"><figcaption>The plan is built from the exact source revision. Its manifest and compatibility report travel with the generated media tree.</figcaption></figure>
           </section>
           <section id="help-saving">
             <h3>Save, close and recover safely</h3>
