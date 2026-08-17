@@ -14,6 +14,7 @@ that match the running frontend.
 | Install, update, back up or troubleshoot the Docker service | [Installation and operations](INSTALLATION.md) |
 | Install or develop the native Linux application | [Linux desktop application](LINUX-DESKTOP.md) |
 | Write SSD, DSD, ADFS or HFE images to a real disk | [Greaseweazle physical floppy guide](PHYSICAL-FLOPPY-GUIDE.md) |
+| Build a checked Gotek, MMFS, BeebSCSI, Pi1MHz or RISC OS media tree | [Hardware deployment assistant](HARDWARE-DEPLOYMENT-GUIDE.md) |
 | Review the mandatory web and desktop parity rules | [Web and desktop platform contract](PLATFORM-CONTRACT.md) |
 | Understand every supported media family and normal workflow | [Main project handbook](../README.md) |
 | Edit BASIC, command files, machine code, archives or binary data | [File editor and code analysis](FILE-EDITOR-GUIDE.md) |
@@ -60,6 +61,11 @@ their layout after refresh. Dragging between panes
 uses the same validation as Cut, Copy and Paste, including DFS name limits,
 ADFS directory capacity, MMB slot rules and metadata conversion.
 
+Cross-format drag, clipboard, File-menu and Online Library batches stop at a
+shared compatibility review before the first write. The review records every
+target-name conversion and metadata loss using the same exportable schema as
+**Analyse → Dry-run selected items**.
+
 ### Edit files by content
 
 Double-click a file to open the suitable editor. Tokenised BBC BASIC opens as
@@ -95,6 +101,12 @@ managed Elkulator, B-em and MAME tools provide launch and debugging paths for
 the formats each emulator can genuinely mount.
 
 ![Hardware profile and emulator configuration](images/hardware-workbench-current.png)
+
+Use **Tools → Build hardware deployment** to create a validated Gotek, MMFS,
+BeebSCSI, Pi1MHz or RISC OS directory tree from the open image. The assistant
+works on an isolated snapshot, shows exact paths and SHA-256 values, and writes
+the installation, verification and rollback procedure into the downloaded
+ZIP. See the [deployment guide](HARDWARE-DEPLOYMENT-GUIDE.md).
 
 ### Preserve and recover work
 

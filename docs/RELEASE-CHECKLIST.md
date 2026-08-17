@@ -168,6 +168,11 @@ For a broad release, cover all of these:
       commands return the versioned JSON envelope and documented exit codes.
 - [ ] CLI dry-run writes no output, deterministic recipes reject changed
       inputs, and accepted compatibility reports appear in saved ZIPs.
+- [ ] Cross-format drag, clipboard, File-menu and Online Library batches show
+      the shared compatibility report before their first destination write.
+- [ ] Gotek, MMFS, BeebSCSI, Pi1MHz and RISC OS deployment plans list exact
+      paths and hashes, reject stale revisions and produce a ZIP whose manifest
+      matches every payload. Confirm planning leaves the live image unchanged.
 
 ## 7. Editor and emulator gate
 

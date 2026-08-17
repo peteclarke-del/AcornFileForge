@@ -98,6 +98,19 @@ class FrontendAccessibilityTests(unittest.TestCase):
             self.app,
         )
 
+    def test_deployment_assistant_has_labelled_controls_and_live_review(self):
+        self.assertIn('class="deployment-review" aria-live="polite"', self.app)
+        self.assertIn('name="deploymentTarget"', self.app)
+        self.assertIn('data-plan-deployment', self.app)
+        self.assertIn('data-download-deployment disabled', self.app)
+
+    def test_cross_format_entry_points_share_the_preflight_service(self):
+        self.assertIn('"cross-format-transfer"', self.app)
+        self.assertIn('"file-menu-file-import"', self.app)
+        self.assertIn('"file-menu-folder-import"', self.app)
+        self.assertIn('"online-library-install"', self.app)
+        self.assertIn("requestCompatibilityReport", self.app)
+
 
 if __name__ == "__main__":
     unittest.main()
