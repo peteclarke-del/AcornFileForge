@@ -19,7 +19,8 @@ project documentation. An unchecked item remains in scope.
       including the Raspberry Pi package-name and Capstone fixes.
 - [ ] Run and retain the complete AMD64, ARM64 and ARMv7 clean-build matrix for
       the release candidate.
-- [ ] Run the generated-media and fault-injection gates for the candidate.
+- [x] Run the generated-media and fault-injection gates for the candidate and
+      retain the AMD64 evidence in `docs/release-evidence/`.
 - [ ] Complete the real-hardware gate for the affected BBC, Electron,
       BeebSCSI, MMFS and RISC OS workflows.
 - [ ] Choose the release version, update `VERSION`, create the signed or
@@ -80,7 +81,7 @@ project documentation. An unchecked item remains in scope.
       profiles and recipes.
 - [x] Provide a supported headless CLI for image creation, imports, conversion,
       validation, menu generation, comparison, patching and saving.
-- [ ] Export a completed GUI workflow as a versioned recipe with source
+- [x] Export a completed GUI workflow as a versioned recipe with source
       identities, expected hashes and all non-secret decisions required for a
       deterministic rebuild.
 - [x] Add a dry-run CLI report and stable machine-readable exit statuses.
@@ -195,17 +196,18 @@ project documentation. An unchecked item remains in scope.
 
 Work should normally proceed in this order:
 
-1. Finish comparison subsets and the missing workspace search fields because
-   both reuse existing deterministic manifests.
-2. Define the compatibility-report schema, then expose it through a headless
-   CLI and versioned recipes.
-3. Build the private collection database on those same manifests and hashes.
-4. Build the deployment assistant on hardware profiles, compatibility reports
+1. Present the shared compatibility report consistently before every remaining
+   cross-format GUI workflow.
+2. Build the deployment assistant on hardware profiles, compatibility reports
    and deterministic recipes.
-5. Develop whole-MMB emulation, writable UEF and sandboxed menu interpretation
-   as isolated expert projects with their own fixtures and safety gates.
-6. Run the complete release matrix and real-hardware gate, then publish the
-   tagged release candidate.
+3. Develop writable UEF projects and sandboxed menu interpretation as isolated
+   expert projects with their own fixtures and safety gates.
+4. Add a real MMFS storage adapter and use whole-MMB emulator results for menu
+   and PAGE diagnostics.
+5. Correlate static cheat candidates with repeatable emulator evidence before
+   permitting guarded patches or a private cheat library.
+6. Run the complete multi-architecture and real-hardware release gates, then
+   publish the tagged release candidate.
 
 Safety takes precedence over marking a checkbox. Unsupported token streams,
 tape control data, menu programs and emulator adapters must remain read-only or

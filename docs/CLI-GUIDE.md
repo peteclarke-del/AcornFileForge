@@ -250,8 +250,43 @@ result also returns exit code 5 instead of being reported as a successful
 deterministic rebuild.
 
 Version 1 recipes execute create, import-file, compact, menu-create,
-UEF-convert and final save decisions. A recipe produced by a newer application
+UEF-convert, guarded patch application and final save decisions. A recipe produced by a newer application
 version is rejected until its schema is supported rather than guessed.
+
+### Export a completed GUI workflow
+
+Open **Workbench → Portable project**, choose an open image and select
+**Export workflow bundle**. The downloaded `.affrecipe.zip` contains:
+
+- `workflow.affrecipe.json`, the versioned recipe and every expected output
+  hash;
+- `changes.affpatch.zip`, the guarded logical changes from the earliest
+  retained pre-change checkpoint to the current image;
+- `README.md`, the exact base and optional DSC identities plus a ready-to-edit
+  replay command.
+
+The original image is deliberately not copied into the bundle. Extract it and
+map `image` to the recorded base and `changes` to the bundled patch:
+
+```bash
+python -m app.cli recipe-run workflow.affrecipe.json \
+  --source image=/media/original.ssd \
+  --source changes=changes.affpatch.zip \
+  --output rebuilt.ssd
+```
+
+For BeebSCSI, also map the companion with
+`--descriptor image=/media/original.dsc`. Replay verifies both physical input
+hashes, the base logical fingerprint, the patch payloads and the final output
+hashes. The recipe retains the chosen hardware profile, target validation and
+accepted compatibility reports as descriptive decisions, but never browser
+ownership tokens or private server paths.
+
+An edited legacy session with no retained pre-change checkpoint is rejected
+rather than exported as a false reconstruction. Save it, create a named
+checkpoint and use that as the base for subsequent recorded changes. UEF and
+HFE workflow export remains unavailable until the container-level rebuild can
+be proved lossless.
 
 ## Safety notes
 

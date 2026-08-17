@@ -35,7 +35,9 @@ BLANK_FORMATS = frozenset({
     "hfe-ssd", "hfe-dsd", "hfe-adfs-s", "hfe-adfs-m", "hfe-adfs-l",
 })
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}")
-RECIPE_ACTIONS = frozenset({"create", "import-file", "compact", "menu-create", "convert-uef", "save"})
+RECIPE_ACTIONS = frozenset({
+    "create", "import-file", "compact", "menu-create", "convert-uef", "apply-patch", "save",
+})
 
 
 def progress_to_stderr(stream):
@@ -139,23 +141,33 @@ def source_identity(
     descriptor: Path | None = None,
     service: DiskService | None = None,
     session: ImageSession | None = None,
+    progress=None,
 ) -> dict:
     """Build a stable physical and, where available, logical source identity."""
     path = Path(path)
     result = {
         "name": path.name,
         "size": path.stat().st_size,
-        "sha256": sha256_path(path),
+        "sha256": sha256_path(
+            path,
+            (lambda current, total: progress(f"Hashing {path.name}", current, total))
+            if progress else None,
+        ),
     }
     if descriptor is not None:
         descriptor = Path(descriptor)
         result["descriptor"] = {
             "name": descriptor.name,
             "size": descriptor.stat().st_size,
-            "sha256": sha256_path(descriptor),
+            "sha256": sha256_path(
+                descriptor,
+                (lambda current, total: progress(
+                    f"Hashing {descriptor.name}", current, total
+                )) if progress else None,
+            ),
         }
     if service is not None and session is not None:
-        manifest = build_manifest(service, session)
+        manifest = build_manifest(service, session, progress)
         result.update(
             kind=session.kind,
             logicalFingerprint=manifest_fingerprint(manifest),
@@ -276,7 +288,7 @@ def load_recipe(path: Path) -> dict:
     for index, action in enumerate(document["actions"], start=1):
         if not isinstance(action, dict) or action.get("action") not in RECIPE_ACTIONS:
             raise DiskError(f"Recipe action {index} is not supported or is incomplete.")
-        if action.get("action") == "import-file" and action.get("source") not in document["sources"]:
+        if action.get("action") in {"import-file", "apply-patch"} and action.get("source") not in document["sources"]:
             raise DiskError(f"Recipe action {index} refers to an unverified source alias.")
     return document
 

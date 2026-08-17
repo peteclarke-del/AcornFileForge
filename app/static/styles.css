@@ -997,8 +997,10 @@ dialog:has(.workbench-dialog) form { box-sizing: border-box; max-height: calc(10
 .workbench-emulator-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 10px; }
 .workbench-emulator-settings .field { margin: 9px 0 0; }
 .workbench-emulator-settings code { overflow-wrap: anywhere; }
-.project-tools { display: grid; place-content: center; gap: 14px; padding-block: 20px; text-align: center; }
-.project-tools p { max-width: 620px; color: var(--muted); line-height: 1.6; }
+.project-tools { display: grid; place-content: start center; gap: 10px; padding-block: 4px; text-align: center; }
+.project-tools > * { margin-block: 0; }
+.project-tools p { max-width: 900px; color: var(--muted); line-height: 1.45; }
+.project-tools hr { width: 100%; border: 0; border-top: 1px solid var(--line); }
 @media (max-width: 900px) {
   .workbench-profile-picker, .workbench-grid > section, .hardware-addon-groups, .workbench-emulator-controls, .hardware-addon-options { grid-template-columns: 1fr; }
   .workbench-profile-picker small { grid-column: 1; }
