@@ -3,6 +3,7 @@ Type=Application
 Name=Acorn File Forge
 Comment=Open and maintain Acorn media images
 Exec=@EXEC@ %F
+TryExec=@TRY_EXEC@
 Icon=uk.co.acornfileforge.AcornFileForge
 Terminal=false
 Categories=Utility;FileTools;

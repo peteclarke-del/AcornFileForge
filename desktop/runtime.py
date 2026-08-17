@@ -23,7 +23,15 @@ class DesktopPaths:
 
 def _xdg_path(variable: str, fallback: Path) -> Path:
     value = os.environ.get(variable, "").strip()
-    return Path(value).expanduser() if value else fallback
+    if not value:
+        return fallback
+    path = Path(value).expanduser()
+    snap_root = Path.home() / "snap"
+    try:
+        path.relative_to(snap_root)
+    except ValueError:
+        return path
+    return fallback
 
 
 def desktop_paths() -> DesktopPaths:

@@ -32,11 +32,23 @@ tools/install-linux-desktop.sh
 
 The installer creates `.venv-desktop` in the checkout, installs the Python
 application dependencies there and registers the launcher, icon and MIME types
-for the current user. It does not use `sudo` and does not modify the Docker
-installation.
+for the current user. The application-menu entry uses the stable
+`~/.local/bin/acorn-file-forge` launcher, which points back to this checkout.
+This avoids malformed desktop commands when the checkout path contains spaces.
+It does not use `sudo` and does not modify the Docker installation.
+
+When installation is started from a sandboxed IDE terminal, such as the Snap
+build of Visual Studio Code, the script ignores that application's private
+`XDG_DATA_HOME` and registers with the real user desktop under
+`~/.local/share`. Any stale Acorn File Forge entry left in the IDE's private
+data directory is removed.
+The launcher resolves its real file after following the symbolic link, so it
+still finds the checkout and virtual environment. It also removes Snap-private
+GTK module paths when started from an IDE terminal, preventing incompatible
+Snap libraries from being loaded into the native application.
 
 Launch **Acorn File Forge** from the desktop application menu, run
-`tools/acorn-file-forge-desktop`, or open a registered SSD, DSD, MMB, ADFS,
+`~/.local/bin/acorn-file-forge`, or open a registered SSD, DSD, MMB, ADFS,
 BeebSCSI, UEF, HFE or ROM image from the file manager. DAT and DSC partners are
 matched automatically when they share a basename.
 
@@ -104,6 +116,9 @@ Pull the new source and rerun the installer after dependency changes:
 git pull --ff-only
 tools/install-linux-desktop.sh
 ```
+
+Rerunning the installer also repairs an application entry that points to an
+older or moved checkout and refreshes the desktop, MIME and icon databases.
 
 Remove the launcher and private environment with:
 

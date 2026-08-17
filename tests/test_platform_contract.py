@@ -107,6 +107,23 @@ class PlatformContractTests(unittest.TestCase):
         self.assertEqual(paths.config, Path(temporary) / "config/acorn-file-forge")
         self.assertEqual(paths.cache, Path(temporary) / "cache/acorn-file-forge")
 
+    @unittest.skipIf(desktop_paths is None, "Desktop runtime dependencies unavailable")
+    def test_desktop_paths_ignore_an_ide_snap_private_xdg_home(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(
+            os.environ,
+            {
+                "HOME": temporary,
+                "XDG_DATA_HOME": f"{temporary}/snap/code/current/.local/share",
+                "XDG_CONFIG_HOME": f"{temporary}/snap/code/current/.config",
+                "XDG_CACHE_HOME": f"{temporary}/snap/code/current/.cache",
+            },
+        ):
+            paths = desktop_paths()
+
+        self.assertEqual(paths.data, Path(temporary) / ".local/share/acorn-file-forge")
+        self.assertEqual(paths.config, Path(temporary) / ".config/acorn-file-forge")
+        self.assertEqual(paths.cache, Path(temporary) / ".cache/acorn-file-forge")
+
     @unittest.skipIf(_image_pair is None, "Flask is available in the application container")
     def test_desktop_open_pairs_dat_and_dsc_from_either_file(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
