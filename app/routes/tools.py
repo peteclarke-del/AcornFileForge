@@ -27,14 +27,18 @@ from ..analysis_service import (
     workspace_metadata_records,
 )
 from ..checksum import sha256_bytes
+from ..archive_browser import read_archive_member_details
+from ..cheat_analysis import analyse_basic, analyse_disassembly, cheat_report, disassembly_diagnostics
 from ..disk_service import DiskError, DiskService
 from ..emulator_config import configured_emulator, emulator_command, emulator_status
 from ..hardware_profiles import normalise_hardware_profile
-from ..image_diff import compare_images
+from ..image_diff import compare_images, manifest_fingerprint
 from ..image_patch import apply_patch_archive, inspect_patch_archive, write_patch_archive
 from ..file_editor import (
     disassemble_file,
+    disassemble_file_data,
     inspect_editable_file,
+    inspect_file_data,
     normalise_basic_source,
     pack_basic_lines,
     prepare_basic_source,
@@ -48,6 +52,7 @@ from ..file_editor import (
 )
 from ..operations import OperationRegistry
 from ..menu.adfs import audit_adfs_menu_pages
+from ..metadata_lookup import lookup_online, parse_distribution_filename
 from ..menu.mmb import (
     audit_mmb_menu_pages,
     edit_mmb_menu_entries,
@@ -408,6 +413,8 @@ def create_tools_blueprint(
             "Collection manifest ready",
         ) as progress:
             report = build_manifest(service, session, progress)
+            report["fingerprint"] = manifest_fingerprint(report)
+            report["revision"] = service.summary(session)["revision"]
         output_format = request.args.get("format", "json").lower()
         if output_format == "csv":
             body = manifest_csv(report)
@@ -602,6 +609,59 @@ def create_tools_blueprint(
                 optional_int(request.args.get("slot")),
                 optional_int(request.args.get("side")),
                 progress,
+            ))
+
+    @blueprint.get("/api/images/<image_id>/cheat-candidates")
+    def cheat_candidates(image_id):
+        session = service.get(image_id)
+        path = str(request.args.get("path") or "")
+        if not path:
+            raise DiskError("Choose one BASIC or machine-code file to analyse.")
+        slot = optional_int(request.args.get("slot"))
+        side = optional_int(request.args.get("side"))
+        online = str(request.args.get("online") or "false").lower() in {"1", "true", "yes"}
+        operation_id = request.args.get("operationId")
+        with operations.tracked(
+            operation_id,
+            "Looking for cheat candidates",
+            "Cheat-candidate analysis complete",
+        ):
+            member = str(request.args.get("member") or "")
+            if member:
+                outer_name = str(request.args.get("name") or path.rsplit(".", 1)[-1])
+                outer = service.read_file(session, slot, path, side)
+                content, metadata = read_archive_member_details(outer, outer_name, member)
+                inspection = inspect_file_data(
+                    content, metadata, member, read_only=True,
+                    size=len(content), digest=sha256_bytes(content),
+                )
+                report_path = member
+            else:
+                content = metadata = None
+                inspection = inspect_editable_file(service, session, path, slot, side)
+                report_path = path
+            if inspection["view"] == "basic":
+                kind = "BBC BASIC"
+                findings = analyse_basic(inspection["text"])
+                diagnostics = []
+            elif inspection["view"] in {"disassembly", "hex"}:
+                disassembly = (disassemble_file_data(
+                    content, metadata, session, member,
+                    size=len(content), digest=sha256_bytes(content),
+                ) if member else disassemble_file(service, session, path, slot, side))
+                kind = str(disassembly.get("architecture") or "machine code").upper()
+                findings = analyse_disassembly(disassembly)
+                diagnostics = disassembly_diagnostics(disassembly)
+            else:
+                raise DiskError("This analyser supports tokenised BBC BASIC and machine-code files. Scripts and plain text do not contain executable game state to trace.")
+            parsed = parse_distribution_filename(report_path.rsplit("/", 1)[-1].rsplit(".", 1)[-1])
+            title = parsed.get("title") or report_path.rsplit("/", 1)[-1].rsplit(".", 1)[-1]
+            profile = session.hardware_profile or {}
+            machine = str(profile.get("name") or profile.get("machine") or session.target_hardware or "")
+            matches = lookup_online(title) if online else []
+            return jsonify(cheat_report(
+                path=report_path, kind=kind, findings=findings, title=title,
+                machine=machine, matches=matches, diagnostics=diagnostics,
             ))
 
     @blueprint.get("/api/images/<image_id>/inspect/search")

@@ -1,0 +1,20 @@
+[
+  {
+    "id": "8bs-cheats",
+    "name": "8-Bit Software",
+    "enabled": true,
+    "queryTemplate": "https://www.google.com/search?q=site%3A8bs.com+{query}"
+  },
+  {
+    "id": "stardot-cheats",
+    "name": "StarDot",
+    "enabled": true,
+    "queryTemplate": "https://www.google.com/search?q=site%3Astardot.org.uk+{query}"
+  },
+  {
+    "id": "bbcmicro-cheats",
+    "name": "BBC Micro Games Archive",
+    "enabled": true,
+    "queryTemplate": "https://www.google.com/search?q=site%3Abbcmicro.co.uk+{query}"
+  }
+]
