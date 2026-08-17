@@ -1032,6 +1032,16 @@ body:has(dialog[open].failed) .pane .loading { display: none; }
 .file-row.empty-slot { color: var(--empty-text); }
 .file-row.empty-slot .file-icon { background: var(--empty-icon); color: var(--empty-icon-text); border: 1px dashed var(--input-border); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.physical-floppy-context-menu { position: fixed; z-index: 1600; min-width: 230px; padding: 5px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); box-shadow: 0 12px 35px var(--modal-shadow); }
+.physical-floppy-context-menu button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px 11px; border: 0; border-radius: 5px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.physical-floppy-context-menu button:hover, .physical-floppy-context-menu button:focus-visible { background: var(--cream); outline: 2px solid var(--focus-ring); }
+.physical-floppy-context-menu button:disabled { color: var(--muted); cursor: not-allowed; opacity: .65; }
+.physical-floppy-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 4px 0; }
+.physical-floppy-summary > div { padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--cream); }
+.physical-floppy-summary dt { color: var(--muted); font: 8px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+.physical-floppy-summary dd { margin: 3px 0 0; font-size: 11px; }
+.physical-floppy-confirm { padding: 9px 10px; border: 1px solid var(--danger-border); border-radius: 7px; background: var(--danger-surface); color: var(--ink); }
+dialog:has(.physical-floppy-dialog), dialog:has(.physical-floppy-complete) { width: min(560px, calc(100vw - 30px)); }
 .menu-fields { display: grid; grid-template-columns: 1.5fr 1fr .8fr; gap: 9px; }
 .scan-notes { display: grid; gap: 4px; margin-top: 14px; padding: 10px; border-radius: 8px; background: var(--cream); color: var(--muted); font-size: 10px; }
 .scan-notes { max-height: min(330px, 42vh); overflow: auto; }

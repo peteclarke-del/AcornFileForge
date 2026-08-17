@@ -23,6 +23,11 @@ const {
 } = window.AcornImportPlanning;
 
 const panes = [newPaneState()];
+let platformContract = { host: "web", hostCapabilities: [] };
+
+function hasHostCapability(capability) {
+  return platformContract.hostCapabilities?.includes(capability) || false;
+}
 
 const {
   api: rawApi,
@@ -448,6 +453,93 @@ function selectedEntry(index) {
   return entries.length === 1 ? entries[0] : null;
 }
 
+function physicalFloppySlot(index) {
+  const pane = panes[index];
+  if (pane?.slot !== null) return Number(pane.slot);
+  const selected = selectedEntry(index);
+  return pane?.image?.kind === "mmb" && selected?.formatted ? Number(selected.slot) : null;
+}
+
+function removePhysicalFloppyContextMenu() {
+  document.querySelector(".physical-floppy-context-menu")?.remove();
+}
+
+function showPhysicalFloppyContextMenu(index, event, enabled) {
+  event.preventDefault();
+  removePhysicalFloppyContextMenu();
+  const menu = document.createElement("div");
+  menu.className = "physical-floppy-context-menu";
+  menu.setAttribute("role", "menu");
+  menu.style.left = `${Math.max(8, Math.min(event.clientX, window.innerWidth - 250))}px`;
+  menu.style.top = `${Math.max(8, Math.min(event.clientY, window.innerHeight - 60))}px`;
+  menu.innerHTML = `<button type="button" role="menuitem" ${enabled ? "" : "disabled"} title="${enabled ? "Write this image with Greaseweazle" : "Use the native Linux host to access physical hardware."}"><b>▣</b><span>Write physical floppy…</span></button>`;
+  document.body.append(menu);
+  const button = menu.querySelector("button");
+  button.onclick = () => {
+    removePhysicalFloppyContextMenu();
+    guardedPaneAction(index, () => showPhysicalFloppyDialog(index));
+  };
+  button.focus();
+  menu.onkeydown = keyEvent => {
+    if (keyEvent.key === "Escape") {
+      keyEvent.preventDefault();
+      removePhysicalFloppyContextMenu();
+      event.currentTarget.focus();
+    }
+  };
+  const close = closeEvent => {
+    if (!menu.contains(closeEvent.target)) removePhysicalFloppyContextMenu();
+  };
+  setTimeout(() => document.addEventListener("pointerdown", close, { once: true }), 0);
+}
+
+async function showPhysicalFloppyDialog(index) {
+  const pane = panes[index];
+  if (!pane?.image) return;
+  if (!hasHostCapability("physical-floppy-write")) {
+    return toast("Physical floppy access requires the native Linux host.", true);
+  }
+  const slot = physicalFloppySlot(index);
+  const query = new URLSearchParams();
+  if (Number.isInteger(slot)) query.set("slot", String(slot));
+  showModal('<div class="analysis-loading compact"><span class="modal-progress-icon" aria-hidden="true">↻</span><h2>Checking Greaseweazle</h2><p>Finding the device and validating the selected image…</p></div>');
+  try {
+    const status = await api(`/api/desktop/images/${pane.image.id}/physical-floppy?${query}`);
+    const verification = status.media.automaticVerification
+      ? "Every written sector will be read back and verified automatically."
+      : "HFE stores raw bitcells, so Greaseweazle cannot automatically verify this write. Test the disk in suitable hardware afterwards.";
+    const unavailable = status.available ? "" : `<div class="help-warning"><strong>Greaseweazle is not ready.</strong> ${esc(status.detail)}</div>`;
+    showModal(`<div class="analysis-dialog physical-floppy-dialog"><header><div><small>PHYSICAL MEDIA</small><h2>Write ${esc(status.media.name)}</h2></div></header>
+      <p>This will write the current working image to a real floppy disk. Unsaved image changes are included.</p>
+      <dl class="physical-floppy-summary"><div><dt>Image type</dt><dd>${esc(status.media.format)}</dd></div><div><dt>Verification</dt><dd>${status.media.automaticVerification ? "Automatic sector verification" : "Not available for HFE"}</dd></div></dl>
+      ${unavailable}
+      <label class="field"><span>Physical drive</span><select name="physicalDrive" ${status.available ? "" : "disabled"}>${status.drives.map(drive => `<option value="${esc(drive.id)}">${esc(drive.label)}</option>`).join("")}</select></label>
+      <div class="help-warning"><strong>This is destructive.</strong> All existing data on the disk in the selected drive will be overwritten. ${esc(verification)}</div>
+      <label class="check-field physical-floppy-confirm"><input type="checkbox" name="physicalConfirmed" required ${status.available ? "" : "disabled"}> I understand that the physical disk will be overwritten.</label>
+      <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button danger" value="write" ${status.available ? "" : "disabled"}>Write and ${status.media.automaticVerification ? "verify" : "finish unverified"}</button></div></div>`, async form => {
+        const result = await trackedPaneOperation(
+          index,
+          `Writing ${status.media.name} to a physical floppy`,
+          operationId => api(`/api/desktop/images/${pane.image.id}/physical-floppy`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ drive: form.get("physicalDrive"), slot, operationId }),
+          }),
+          { abortMode: "physical" },
+        );
+        const verified = result.result.verified;
+        showModal(`<div class="analysis-dialog physical-floppy-complete"><header><div><small>PHYSICAL MEDIA</small><h2>${verified ? "Disk written and verified" : "Disk written"}</h2></div></header>
+          <p>${esc(result.media.name)} was written to drive ${esc(result.result.drive)}.</p>
+          <div class="help-${verified ? "note" : "warning"}"><strong>${verified ? "Verification passed." : "Verification was not available."}</strong> ${verified ? "Greaseweazle confirmed every written track." : "Test this HFE-derived disk in its target hardware before relying on it."}</div>
+          <div class="modal-actions"><button class="button primary" value="cancel">Close</button></div></div>`, null, { replace: true });
+        return false;
+      }, { replace: true });
+  } catch (error) {
+    modal.close();
+    toast(`Could not prepare the physical write: ${error.message}`, true);
+  }
+}
+
 function clipboardItemsForPane(index) {
   const pane = panes[index];
   if (!pane?.image) return [];
@@ -827,11 +919,23 @@ function renderPane(index, preserveScroll = false) {
         <button class="menu-command run-pane-emulator"><b>▶</b><span>Run ${emulatorTargetName}…</span></button>
         <button class="menu-command debug-pane-emulator"><b>⌁</b><span>Debug ${emulatorTargetName}…</span></button>`
       : "";
+  const physicalSuffix = String(pane.image.name || "").toLowerCase().match(/\.(ssd|dsd|adf|ads|adm|adl|hfe)$/);
+  const physicalSlot = pane.slot !== null
+    ? Number(pane.slot)
+    : isSlots && selectedKeys.size === 1 && selected?.formatted ? Number(selected.slot) : null;
+  const physicalMediaApplicable = !isAdfsHdd && (
+    Boolean(physicalSuffix) || (pane.image.kind === "mmb" && Number.isInteger(physicalSlot))
+  );
+  const physicalHostAvailable = hasHostCapability("physical-floppy-write");
+  const physicalFloppyAction = physicalMediaApplicable
+    ? `<span class="menu-separator" role="separator"></span><button class="menu-command write-physical-floppy" ${physicalHostAvailable ? "" : 'disabled title="Physical drives are available in the native Linux host."'}><b>▣</b><span>Write physical floppy…</span></button>`
+    : "";
   const utilityTools = `<details class="tool-menu">
     <summary class="tool"><b>⋯</b><span>Tools</span></summary>
     <div class="tool-menu-panel tool-menu-panel-right">
       <button class="menu-command open-hex-editor"><b>0x</b><span>Hex editor…</span></button>
       ${emulatorActions}
+      ${physicalFloppyAction}
       ${isSlots ? "" : `<button class="menu-command validate-image"><b>✓</b><span>${isRom ? "Check ROM structure" : "Check filesystem"}</span></button>`}
       ${isAdfsHdd ? '<button class="menu-command audit-adfs-installations"><b>⌁</b><span>Check installed disk software…</span></button>' : ""}
       ${isArchive ? "" : isRom ? '<button class="menu-command rom-workbench"><b>⌬</b><span>ROM Workbench…</span></button><button class="menu-command configure-rom"><b>▥</b><span>ROM layout…</span></button>' : isRomfs ? `${pane.image.readOnly ? "" : '<button class="menu-command configure-romfs"><b>▥</b><span>ROMFS properties…</span></button>'}` : isSlots || isTape ? (isTape ? '<button class="menu-command convert-tape"><b>⇥</b><span>Convert tape to disk</span></button>' : "") : pane.image.readOnly ? "" : '<button class="menu-command compact-image"><b>≋</b><span>Compact filesystem</span></button>'}
@@ -890,6 +994,10 @@ function renderPane(index, preserveScroll = false) {
       beginImageRename(index);
     }
   };
+  if (physicalMediaApplicable) {
+    imageTitle.oncontextmenu = event => showPhysicalFloppyContextMenu(index, event, physicalHostAvailable);
+    host.querySelector(".format-icon").oncontextmenu = event => showPhysicalFloppyContextMenu(index, event, physicalHostAvailable);
+  }
   host.querySelector(".refresh-image").onclick = () => refreshCurrentView(index);
   host.querySelector(".menu-new-matching-image")?.addEventListener("click", event => guardedPaneAction(index, () => newImageFromFileMenu(index, event.currentTarget.dataset.format)));
   host.querySelector(".menu-load-image")?.addEventListener("click", () => chooseImage(index));
@@ -924,6 +1032,7 @@ function renderPane(index, preserveScroll = false) {
   host.querySelector(".open-hex-editor")?.addEventListener("click", () => guardedPaneAction(index, () => openHexEditor(index)));
   host.querySelector(".run-pane-emulator")?.addEventListener("click", () => guardedPaneAction(index, () => launchPaneEmulator(index, false)));
   host.querySelector(".debug-pane-emulator")?.addEventListener("click", () => guardedPaneAction(index, () => launchPaneEmulator(index, true)));
+  host.querySelector(".write-physical-floppy")?.addEventListener("click", () => guardedPaneAction(index, () => showPhysicalFloppyDialog(index)));
   host.querySelector(".convert-tape")?.addEventListener("click", () => guardedPaneAction(index, () => convertTape(index)));
   host.querySelector(".preview-menu")?.addEventListener("click", () => guardedPaneAction(index, () => showMenuPreview(index)));
   host.querySelector(".audit-menu-pages")?.addEventListener("click", () => guardedPaneAction(index, () => auditMmbMenuPages(index)));
@@ -10178,4 +10287,14 @@ window.AcornDesktopHost = Object.freeze({
   },
 });
 
-restoreOpenPanes();
+async function startWorkbench() {
+  try {
+    const health = await rawApi("/api/health");
+    platformContract = health.platform || platformContract;
+  } catch (_error) {
+    // The shared web host remains the safe default when capability discovery fails.
+  }
+  await restoreOpenPanes();
+}
+
+startWorkbench();

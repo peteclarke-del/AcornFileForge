@@ -123,7 +123,7 @@ def create_app(
         create_menus_blueprint(service, MENU_TEMPLATE_DIR)
     )
     if runtime.kind == "desktop":
-        application.register_blueprint(create_desktop_blueprint(service))
+        application.register_blueprint(create_desktop_blueprint(service, operations))
 
     @application.errorhandler(DiskError)
     def disk_error(error):

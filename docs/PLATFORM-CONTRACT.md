@@ -19,8 +19,10 @@ logic.
 3. Image opening, editing, validation, conversion, menus, metadata, recipes,
    undo and saving remain in shared `app/` modules.
 4. Host adapters contain only work that a browser cannot perform. Current
-   examples are choosing an absolute local path, owning a native window and
-   launching an emulator on the host display.
+   examples are choosing an absolute local path, owning a native window,
+   launching an emulator on the host display and accessing a Greaseweazle USB
+   floppy interface. Physical-media policy remains in the reusable
+   `acorn_greaseweazle` package rather than in presentation code.
 5. A host-only API must be declared in `HOST_EXCLUSIVE_ENDPOINTS` in
    `app/platform_contract.py`. Adding an exception is an architectural change,
    not a shortcut around parity.

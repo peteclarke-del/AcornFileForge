@@ -59,3 +59,7 @@ fi
 
 echo "Acorn File Forge desktop is installed for this user."
 echo "Launch it from the application menu or run: $launcher"
+if ! command -v gw >/dev/null 2>&1; then
+    echo "Optional: install the official Greaseweazle tools to enable physical floppy writing."
+    echo "See docs/PHYSICAL-FLOPPY-GUIDE.md for setup and verification guidance."
+fi
