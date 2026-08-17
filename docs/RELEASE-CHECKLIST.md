@@ -70,6 +70,8 @@ For each target:
 - [ ] The service starts on port `8666` and the health endpoint reports the
       expected version.
 - [ ] `npm run test:browser` passes against the built service.
+- [ ] A generated BASIC file and a generated machine-code file produce bounded,
+      read-only cheat-candidate reports; plain text is rejected explicitly.
 - [ ] `git diff --check` passes.
 
 When a build fails, retain the first Docker `ERROR` block. Later `CANCELED`
@@ -151,6 +153,8 @@ For a broad release, cover all of these:
 - [ ] ZIP and archive hierarchy, member preview and editor hand-off.
 - [ ] Online Library machine default, sorting, already-present filtering,
       multi-selection and installation.
+- [ ] Private collection IndexedDB persistence, stale revision handling,
+      cross-image reports and bounded backup merge, replacement and clearing.
 - [ ] Menu metadata priority, launch action, PAGE derivation, multi-title disk,
       keep-off-menu and complete regeneration.
 - [ ] Headless CLI create, save, validate, preflight, import, menu, compare and patch

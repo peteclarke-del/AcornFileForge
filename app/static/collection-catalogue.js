@@ -1,0 +1,170 @@
+(function (root) {
+  "use strict";
+
+  const BACKUP_FORMAT = "acorn-file-forge-private-collection";
+  const BACKUP_VERSION = 1;
+  const DATABASE = "acorn-file-forge-private-collection-v1";
+  const MAX_IMAGES = 2000;
+  const MAX_RECORDS = 1_000_000;
+
+  const text = value => String(value ?? "").trim();
+  const titleKey = value => text(value).toLocaleLowerCase().replace(/[^a-z0-9]+/g, "");
+  const imageKey = (kind, name, location = "") => [text(kind).toLowerCase(), text(name).toLowerCase(), text(location).toLowerCase()].join("|");
+
+  function titlesFromManifest(manifest) {
+    const titles = [];
+    const add = (title, publisher = "", source = "catalogue") => {
+      if (!text(title)) return;
+      titles.push({ title: text(title), publisher: text(publisher), source, key: titleKey(title) });
+    };
+    (manifest.menus || []).forEach(menu => (menu.entries || []).forEach(entry => (
+      add(entry.title || entry.diskTitle, entry.publisher, `menu:${menu.type || "unknown"}`)
+    )));
+    (manifest.records || []).forEach(record => {
+      if (record.recordType === "slot" && record.formatted) add(record.diskTitle, "", "mmb-slot");
+      if (record.recordType === "rom-bank" && !record.empty) add(record.title, "", "rom-bank");
+    });
+    return [...new Map(titles.map(item => [`${item.key}|${item.publisher.toLowerCase()}|${item.source}`, item])).values()];
+  }
+
+  function catalogueEntry(manifest, options = {}, previous = null, now = () => new Date().toISOString(), uuid = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`) {
+    if (!manifest || !manifest.image || !Array.isArray(manifest.records) || !Array.isArray(manifest.menus)) {
+      throw new Error("The collection manifest is incomplete.");
+    }
+    const location = text(options.location ?? previous?.location);
+    const machines = [...new Set((options.machines || previous?.machines || []).map(text).filter(Boolean))];
+    const timestamp = now();
+    return {
+      id: previous?.id || uuid(),
+      imageKey: imageKey(manifest.image.kind, manifest.image.name, location),
+      sessionId: text(options.sessionId || manifest.image.id),
+      name: text(manifest.image.name) || "Untitled image",
+      kind: text(manifest.image.kind) || "unknown",
+      size: Number(manifest.image.size || 0),
+      location,
+      machines,
+      notes: text(options.notes ?? previous?.notes),
+      fingerprint: text(manifest.fingerprint),
+      revision: text(manifest.revision || manifest.image.revision),
+      createdAt: previous?.createdAt || timestamp,
+      indexedAt: timestamp,
+      stale: false,
+      records: manifest.records,
+      menus: manifest.menus,
+      titles: titlesFromManifest(manifest),
+    };
+  }
+
+  function collectionReport(entries, wanted = []) {
+    const hashes = new Map();
+    const variants = new Map();
+    const ownedTitles = new Set();
+    entries.forEach(image => {
+      (image.records || []).forEach(record => {
+        const hash = text(record.sha256).toLowerCase();
+        if (!hash || !["file", "slot", "rom-bank"].includes(record.recordType)) return;
+        const item = { imageId: image.id, image: image.name, kind: image.kind, path: record.path || "", slot: record.slot, bank: record.bank, title: record.diskTitle || record.title || record.path || "Untitled", sha256: hash };
+        if (!hashes.has(hash)) hashes.set(hash, []);
+        hashes.get(hash).push(item);
+      });
+      (image.titles || []).forEach(title => {
+        ownedTitles.add(title.key || titleKey(title.title));
+        const key = title.key || titleKey(title.title);
+        if (!key) return;
+        if (!variants.has(key)) variants.set(key, []);
+        variants.get(key).push({ imageId: image.id, image: image.name, title: title.title, publisher: title.publisher, source: title.source });
+      });
+    });
+    const acrossImages = rows => new Set(rows.map(row => row.imageId)).size > 1;
+    return {
+      images: entries.length,
+      records: entries.reduce((total, entry) => total + (entry.records || []).length, 0),
+      titles: ownedTitles.size,
+      stale: entries.filter(entry => entry.stale).length,
+      exactDuplicates: [...hashes.values()].filter(rows => rows.length > 1 && acrossImages(rows)),
+      titleVariants: [...variants.values()].filter(rows => rows.length > 1 && acrossImages(rows)),
+      missingTitles: wanted.map(text).filter(Boolean).filter(title => !ownedTitles.has(titleKey(title))),
+    };
+  }
+
+  function validateBackup(document) {
+    if (!document || document.format !== BACKUP_FORMAT || document.version !== BACKUP_VERSION || !Array.isArray(document.images)) {
+      throw new Error(`Only ${BACKUP_FORMAT} version ${BACKUP_VERSION} backups are supported.`);
+    }
+    if (document.images.length > MAX_IMAGES) throw new Error(`A collection backup cannot contain more than ${MAX_IMAGES} images.`);
+    let records = 0;
+    document.images.forEach((image, index) => {
+      if (!image || !text(image.id) || !Array.isArray(image.records) || !Array.isArray(image.menus)) {
+        throw new Error(`Collection image ${index + 1} is incomplete.`);
+      }
+      records += image.records.length;
+    });
+    if (records > MAX_RECORDS) throw new Error(`A collection backup cannot contain more than ${MAX_RECORDS.toLocaleString()} records.`);
+    return document;
+  }
+
+  function create({ indexedDB = root.indexedDB, now, uuid } = {}) {
+    if (!indexedDB) return { available: false };
+    let databasePromise;
+    const open = () => databasePromise ||= new Promise((resolve, reject) => {
+      const request = indexedDB.open(DATABASE, 1);
+      request.onupgradeneeded = () => {
+        const database = request.result;
+        const images = database.createObjectStore("images", { keyPath: "id" });
+        images.createIndex("imageKey", "imageKey", { unique: false });
+        images.createIndex("sessionId", "sessionId", { unique: false });
+        database.createObjectStore("settings", { keyPath: "key" });
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error("The private collection database could not be opened."));
+    });
+    const request = operation => new Promise((resolve, reject) => {
+      operation.onsuccess = () => resolve(operation.result);
+      operation.onerror = () => reject(operation.error || new Error("The private collection operation failed."));
+    });
+    const store = async (name, mode = "readonly") => (await open()).transaction(name, mode).objectStore(name);
+    const list = async () => request((await store("images")).getAll());
+    const settings = async () => (await request((await store("settings")).get("preferences"))) || { key: "preferences", wanted: [] };
+    const saveSettings = async value => request((await store("settings", "readwrite")).put({ key: "preferences", wanted: (value.wanted || []).map(text).filter(Boolean) }));
+    const upsertManifest = async (manifest, options = {}) => {
+      const entries = await list();
+      const key = imageKey(manifest.image?.kind, manifest.image?.name, options.location);
+      const previous = entries.find(entry => options.id ? entry.id === options.id : entry.sessionId === options.sessionId || entry.imageKey === key);
+      const entry = catalogueEntry(manifest, options, previous, now, uuid);
+      await request((await store("images", "readwrite")).put(entry));
+      return entry;
+    };
+    const markStale = async image => {
+      const entries = await list();
+      const matches = entries.filter(entry => entry.sessionId === image.id || (entry.name === image.name && entry.kind === image.kind));
+      const changed = matches.filter(entry => !image.revision || entry.revision !== image.revision);
+      if (!changed.length) return 0;
+      const imageStore = await store("images", "readwrite");
+      await Promise.all(changed.map(entry => request(imageStore.put({ ...entry, stale: true }))));
+      return changed.length;
+    };
+    const remove = async ids => {
+      const imageStore = await store("images", "readwrite");
+      await Promise.all(ids.map(id => request(imageStore.delete(id))));
+    };
+    const clear = async () => {
+      await request((await store("images", "readwrite")).clear());
+      await request((await store("settings", "readwrite")).clear());
+    };
+    const exportBackup = async () => ({
+      format: BACKUP_FORMAT, version: BACKUP_VERSION, exportedAt: (now || (() => new Date().toISOString()))(),
+      images: await list(), settings: await settings(),
+    });
+    const importBackup = async (document, replace = false) => {
+      validateBackup(document);
+      if (replace) await clear();
+      const imageStore = await store("images", "readwrite");
+      await Promise.all(document.images.map(image => request(imageStore.put(image))));
+      if (document.settings) await saveSettings(document.settings);
+      return document.images.length;
+    };
+    return { available: true, list, settings, saveSettings, upsertManifest, markStale, remove, clear, exportBackup, importBackup };
+  }
+
+  root.AcornCollectionCatalogue = { BACKUP_FORMAT, BACKUP_VERSION, catalogueEntry, collectionReport, create, imageKey, titleKey, titlesFromManifest, validateBackup };
+})(typeof window === "undefined" ? globalThis : window);
