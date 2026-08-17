@@ -909,11 +909,16 @@ function renderPane(index, preserveScroll = false) {
   const emulatorTargetName = Number.isInteger(emulatorSlot)
     ? `disk in slot ${emulatorSlot}`
     : isTape ? "tape image" : "image";
+  const effectiveEmulatorProfile = editorTargetProfile(pane);
+  const wholeMmbApplicable = isSlots
+    && effectiveEmulatorProfile.machine === "electron"
+    && String(effectiveEmulatorProfile.filingSystem || "").includes("mmfs");
   const emulatorActions = isSlots
     ? `<span class="menu-separator" role="separator"></span>
       <button class="menu-command run-pane-emulator" ${emulatorMediaApplicable ? "" : 'disabled title="Select one formatted MMB slot first."'}><b>▶</b><span>Run selected disk…</span></button>
       <button class="menu-command debug-pane-emulator" ${emulatorMediaApplicable ? "" : 'disabled title="Select one formatted MMB slot first."'}><b>⌁</b><span>Debug selected disk…</span></button>
-      <button class="menu-command" disabled title="The bundled emulators do not yet provide an MMFS SD-card adapter for direct MMB mounting."><b>▦</b><span>Mount whole MMB <small>adapter required</small></span></button>`
+      <button class="menu-command run-whole-mmb" ${wholeMmbApplicable ? "" : 'disabled title="Choose an Electron Workbench profile with MMFS to use the managed Pi1MHz SD adapter."'}><b>▦</b><span>Run whole MMB…</span></button>
+      <button class="menu-command debug-whole-mmb" ${wholeMmbApplicable ? "" : 'disabled title="Choose an Electron Workbench profile with MMFS to use the managed Pi1MHz SD adapter."'}><b>⌁</b><span>Debug whole MMB…</span></button>`
     : emulatorMediaApplicable
       ? `<span class="menu-separator" role="separator"></span>
         <button class="menu-command run-pane-emulator"><b>▶</b><span>Run ${emulatorTargetName}…</span></button>
@@ -939,7 +944,7 @@ function renderPane(index, preserveScroll = false) {
       <button class="menu-command build-deployment"><b>⇩</b><span>Build hardware deployment…</span></button>
       ${isSlots ? "" : `<button class="menu-command validate-image"><b>✓</b><span>${isRom ? "Check ROM structure" : "Check filesystem"}</span></button>`}
       ${isAdfsHdd ? '<button class="menu-command audit-adfs-installations"><b>⌁</b><span>Check installed disk software…</span></button>' : ""}
-      ${isArchive ? "" : isRom ? '<button class="menu-command rom-workbench"><b>⌬</b><span>ROM Workbench…</span></button><button class="menu-command configure-rom"><b>▥</b><span>ROM layout…</span></button>' : isRomfs ? `${pane.image.readOnly ? "" : '<button class="menu-command configure-romfs"><b>▥</b><span>ROMFS properties…</span></button>'}` : isSlots || isTape ? (isTape ? '<button class="menu-command convert-tape"><b>⇥</b><span>Convert tape to disk</span></button>' : "") : pane.image.readOnly ? "" : '<button class="menu-command compact-image"><b>≋</b><span>Compact filesystem</span></button>'}
+      ${isArchive ? "" : isRom ? '<button class="menu-command rom-workbench"><b>⌬</b><span>ROM Workbench…</span></button><button class="menu-command configure-rom"><b>▥</b><span>ROM layout…</span></button>' : isRomfs ? `${pane.image.readOnly ? "" : '<button class="menu-command configure-romfs"><b>▥</b><span>ROMFS properties…</span></button>'}` : isSlots || isTape ? (isTape ? '<button class="menu-command uef-project"><b>≋</b><span>UEF tape project…</span></button><button class="menu-command convert-tape"><b>⇥</b><span>Convert tape to disk</span></button>' : "") : pane.image.readOnly ? "" : '<button class="menu-command compact-image"><b>≋</b><span>Compact filesystem</span></button>'}
     </div>
   </details>`;
   const toolbarMarkup = `${fileTools}${clipboardTools}${viewTools}${libraryTools}
@@ -1033,8 +1038,11 @@ function renderPane(index, preserveScroll = false) {
   host.querySelector(".open-hex-editor")?.addEventListener("click", () => guardedPaneAction(index, () => openHexEditor(index)));
   host.querySelector(".run-pane-emulator")?.addEventListener("click", () => guardedPaneAction(index, () => launchPaneEmulator(index, false)));
   host.querySelector(".debug-pane-emulator")?.addEventListener("click", () => guardedPaneAction(index, () => launchPaneEmulator(index, true)));
+  host.querySelector(".run-whole-mmb")?.addEventListener("click", () => guardedPaneAction(index, () => launchPaneEmulator(index, false, true)));
+  host.querySelector(".debug-whole-mmb")?.addEventListener("click", () => guardedPaneAction(index, () => launchPaneEmulator(index, true, true)));
   host.querySelector(".write-physical-floppy")?.addEventListener("click", () => guardedPaneAction(index, () => showPhysicalFloppyDialog(index)));
   host.querySelector(".convert-tape")?.addEventListener("click", () => guardedPaneAction(index, () => convertTape(index)));
+  host.querySelector(".uef-project")?.addEventListener("click", () => guardedPaneAction(index, () => showUefProject(index)));
   host.querySelector(".preview-menu")?.addEventListener("click", () => guardedPaneAction(index, () => showMenuPreview(index)));
   host.querySelector(".audit-menu-pages")?.addEventListener("click", () => guardedPaneAction(index, () => auditMmbMenuPages(index)));
   host.querySelector(".backup-menu-slot")?.addEventListener("click", () => guardedPaneAction(index, () => backupMmbMenuSlot(index)));
@@ -5809,6 +5817,7 @@ async function showMenuPreview(index, highlight = "") {
         </div>
         <div class="modal-actions">
           <button class="button ghost" value="cancel">Close preview</button>
+          ${data.kind === "mmb" ? '<button class="button ghost capture-menu-sandbox" type="button">Capture actual menu</button>' : ""}
           ${canEdit ? '<button class="button ghost bulk-edit-menu" type="button">Bulk edit entries</button>' : ""}
           ${canScanMissing ? '<button class="button ghost scan-missing-menu" type="button">Add missing disks</button>' : ""}
           ${canReorder ? '<button class="button primary save-menu-order" value="save" disabled>Save order</button>' : ""}
@@ -5833,6 +5842,41 @@ async function showMenuPreview(index, highlight = "") {
         pane.image = result.image;
         toast(`Saved menu order for ${result.entries} entries`);
       });
+
+    modalContent.querySelector(".capture-menu-sandbox")?.addEventListener("click", async event => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      try {
+        const captured = await paneOperation(
+          index,
+          "Booting an isolated MMFS card and capturing the real menu display…",
+          () => api(`/api/images/${pane.image.id}/menu-sandbox`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ hardwareProfile: editorTargetProfile(pane) }),
+          }),
+        );
+        const result = captured.result || {};
+        const frames = result.frames || [];
+        const existing = modalContent.querySelector(".menu-sandbox-evidence");
+        existing?.remove();
+        const evidence = document.createElement("section");
+        evidence.className = "menu-sandbox-evidence";
+        evidence.innerHTML = `
+          <div><small>ISOLATED EMULATOR EVIDENCE</small><h3>Actual installed menu display</h3></div>
+          <p>${esc(result.summary || "The capture completed.")}</p>
+          <div class="menu-sandbox-frames">${frames.map(frame => `
+            <figure><img src="${frame.dataUrl}" alt="Installed MMB menu ${esc(frame.role)} emulator capture"><figcaption>${esc(frame.role)} · SHA-256 ${esc(frame.sha256.slice(0, 16))}…</figcaption></figure>
+          `).join("")}</div>
+          <div class="help-note"><strong>Evidence:</strong> isolated FAT32 card · ${esc(result.emulator || "managed emulator")} · ${Number(result.changedPixels || 0).toLocaleString()} pixels changed after ${esc(result.input || "navigation")} input · ${result.repeatable ? "screen hashes reproduced a previous capture" : "first capture for this exact revision"} · source ${esc(String(result.sourceSha256 || "").slice(0, 16))}…</div>`;
+        modalContent.querySelector(".modal-actions")?.before(evidence);
+        evidence.scrollIntoView({ block: "nearest" });
+      } catch (error) {
+        toast(error.message, true);
+      } finally {
+        button.disabled = false;
+      }
+    });
 
     const normalise = value => String(value || "").toLocaleLowerCase();
     modalContent.querySelector(".scan-missing-menu")?.addEventListener("click", () => {
@@ -7054,6 +7098,50 @@ function convertTape(index) {
     const repaired = tapeFiles.filter(file => file.loaderChanges?.length).length;
     toast(`${tapeFiles.length} tape file${tapeFiles.length === 1 ? "" : "s"} converted to ${form.get("format").toUpperCase()}${repaired ? ` · ${repaired} loader${repaired === 1 ? "" : "s"} repaired` : ""}`);
   });
+}
+
+function uefChunkRows(chunks, comparison = false) {
+  return (chunks || []).map(chunk => `<tr class="${chunk.changed ? "changed" : ""}">
+    <td>${Number(chunk.index) + 1}</td><td><code>${esc(chunk.id)}</code></td>
+    <td>${esc(chunk.kind || (chunk.changed ? "Standard tape data" : "Preserved chunk"))}</td>
+    <td>${Number(chunk.length).toLocaleString()} B</td>
+    <td>${comparison ? (chunk.changed ? "Data and CRC changed" : "Byte-identical") : (chunk.preserved ? "Preserved" : "Review")}</td>
+  </tr>`).join("");
+}
+
+function uefStructuralReview(proof) {
+  return new Promise(resolve => {
+    const shade = document.createElement("div");
+    shade.className = "editor-choice-shade";
+    shade.setAttribute("role", "dialog");
+    shade.setAttribute("aria-modal", "true");
+    const changed = (proof.chunks || []).filter(chunk => chunk.changed).length;
+    shade.innerHTML = `<section class="editor-choice-card uef-structural-review"><header><div><small>UEF STRUCTURAL COMPARISON</small><h2>Review proven tape rebuild</h2></div></header>
+      <div class="help-note"><strong>${(proof.changedBlocks || []).length} cassette block${(proof.changedBlocks || []).length === 1 ? "" : "s"} will change.</strong> ${esc(proof.proof)} Raw UEF length: ${proof.sameLength ? "unchanged" : "changed"}.</div>
+      <div class="uef-project-table"><table><thead><tr><th>#</th><th>Chunk</th><th>Meaning</th><th>Size</th><th>Result</th></tr></thead><tbody>${uefChunkRows(proof.chunks, true)}</tbody></table></div>
+      <p><strong>${changed}</strong> standard-data chunk${changed === 1 ? "" : "s"} changed. Every unlisted tape property and every unchanged or unknown chunk remains byte-identical.</p>
+      <div class="modal-actions"><button type="button" class="button ghost" data-choice="cancel">Cancel</button><button type="button" class="button primary" data-choice="save">Save proven rebuild</button></div></section>`;
+    const finish = value => { shade.remove(); resolve(value); };
+    shade.querySelectorAll("[data-choice]").forEach(button => button.onclick = () => finish(button.dataset.choice));
+    shade.onkeydown = event => { if (event.key === "Escape") finish("cancel"); else trapFocus(shade, event); };
+    attachEditorOverlay(shade);
+    shade.querySelector('[data-choice="cancel"]').focus();
+  });
+}
+
+async function showUefProject(index) {
+  const pane = panes[index];
+  analysisLoading("Reading UEF tape project", "Indexing every physical chunk and reconstructed cassette file…");
+  try {
+    const project = await api(`/api/images/${pane.image.id}/uef-project`);
+    const files = project.files.map(file => `<tr><td>${esc(file.name)}</td><td>&amp;${Number(file.load).toString(16).toUpperCase()}</td><td>&amp;${Number(file.execute).toString(16).toUpperCase()}</td><td>${Number(file.length).toLocaleString()} B</td><td>${file.blocks}</td><td>${file.editable ? "Same-length edits proved" : esc(file.reasons.join("; ") || "Read-only")}</td></tr>`).join("");
+    replaceAnalysisLoading(`<div class="analysis-dialog wide-analysis uef-project-dialog"><header><div><small>LOSSLESS TAPE PROJECT · UEF ${esc(project.version)}</small><h2>${esc(pane.image.name)}</h2></div><span>${project.compressed ? "GZIP-COMPRESSED" : "RAW UEF"}</span></header>
+      <div class="operation-summary"><span><b>${project.files.length}</b><small>Reconstructed files</small></span><span><b>${project.chunks.length}</b><small>Physical chunks</small></span><span><b>${humanSize(project.rawLength)}</b><small>Raw UEF structure</small></span></div>
+      ${project.warnings.length ? `<div class="help-warning"><strong>Read before editing</strong>${project.warnings.map(warning => `<p>${esc(warning)}</p>`).join("")}</div>` : '<div class="help-note"><strong>Complete reconstruction:</strong> eligible file members may be edited without changing their byte length. The app proves the physical chunk structure before every save.</div>'}
+      <h3>Cassette files</h3><div class="uef-project-table"><table><thead><tr><th>Name</th><th>Load</th><th>Execute</th><th>Size</th><th>Blocks</th><th>Edit policy</th></tr></thead><tbody>${files}</tbody></table></div>
+      <details><summary>Physical chunk sequence</summary><div class="uef-project-table"><table><thead><tr><th>#</th><th>Chunk</th><th>Meaning</th><th>Size</th><th>Policy</th></tr></thead><tbody>${uefChunkRows(project.chunks)}</tbody></table></div></details>
+      <div class="help-note"><strong>Project identity:</strong> <code>${esc(project.sha256)}</code></div><div class="modal-actions"><button class="button primary" value="cancel">Close</button></div></div>`);
+  } catch (error) { toast(error.message, true); modal.close(); }
 }
 
 async function newImageFromFileMenu(index, initialFormat) {
@@ -8559,9 +8647,10 @@ function showInteractiveEmulator(pane, result) {
   openBrowserEmulator(pane, result);
 }
 
-function paneEmulatorTarget(index) {
+function paneEmulatorTarget(index, wholeMmb = false) {
   const pane = panes[index];
   if (pane.image.kind !== "mmb") return { slot: pane.slot, label: pane.image.name, modePrefix: "parent" };
+  if (wholeMmb) return { slot: null, label: `complete MMB · ${pane.image.name}`, modePrefix: "whole-mmb" };
   const selected = pane.slot === null ? selectedEntries(index).filter(entry => entry.formatted) : [];
   const slot = pane.slot !== null ? Number(pane.slot) : selected.length === 1 ? Number(selected[0].slot) : null;
   if (!Number.isInteger(slot)) throw new Error("Select one formatted MMB disk slot first.");
@@ -8569,9 +8658,9 @@ function paneEmulatorTarget(index) {
   return { slot, label: `slot ${slot} · ${name}`, modePrefix: "slot" };
 }
 
-async function launchPaneEmulator(index, debug = false) {
+async function launchPaneEmulator(index, debug = false, wholeMmb = false) {
   const pane = panes[index];
-  const target = paneEmulatorTarget(index);
+  const target = paneEmulatorTarget(index, wholeMmb);
   const endpoint = debug ? "editor-debugger" : "editor-emulator";
   const query = new URLSearchParams({
     hardwareProfile: JSON.stringify(editorTargetProfile(pane)),
@@ -8588,7 +8677,7 @@ async function launchPaneEmulator(index, debug = false) {
   }
   const action = await editorChoice(
     `${debug ? "Debug" : "Run"} ${target.label}`,
-    `${status.label} can mount this media. Choose whether to leave the machine at its command prompt or follow the image's normal boot sequence.${target.modePrefix === "slot" ? " The selected MMB disk is mounted from a temporary SSD copy, so emulator writes do not alter its slot." : ""}`,
+    `${status.label} can mount this media. Choose whether to leave the machine at its command prompt or follow the image's normal boot sequence.${target.modePrefix === "slot" ? " The selected MMB disk is mounted from a temporary SSD copy, so emulator writes do not alter its slot." : target.modePrefix === "whole-mmb" ? " A temporary FAT16 card exposes this image as BEEB.MMB through the managed Pi1MHz MMFS adapter. Emulator writes remain isolated from the working image." : ""}`,
     [
       { value: "cancel", label: "Cancel", className: "ghost" },
       { value: "mount", label: "Mount only" },
@@ -9257,20 +9346,32 @@ async function openFileEditor(index, name, target = null, pathOverride = null, f
       ${editorMenus({ downloadUrl, downloadLabel: target ? "Export original archive member…" : "Download with metadata…", canEdit, canSaveAs: canEdit && !target, canChangeProperties: !target && !pane.image.readOnly && pane.image.kind !== "tape", basic: isBasic, readOnly: !canEdit })}
       <textarea class="inspector-content source-content${isBasic ? " basic-source" : ""}" name="inspectedText" rows="${editorRows}" spellcheck="false" wrap="off" ${canEdit ? "" : "readonly"}>${esc(report.text)}</textarea>
       <aside class="source-byte-sync" aria-live="polite" hidden></aside>
-      ${target ? `<div class="help-note">${canEdit ? "Saving rebuilds the containing archive transactionally and records an image undo checkpoint." : "This container cannot be rebuilt safely. Exporting keeps the original member bytes."}</div>` : ""}
+      ${report.tapeProject ? `<div class="help-note"><strong>Safe UEF tape project:</strong> ${esc(report.tapeProject.proof)} The edited member must remain exactly ${Number(report.tapeProject.length).toLocaleString()} bytes.</div>` : target ? `<div class="help-note">${canEdit ? `${pane.archiveKind === "uef" ? "A structural comparison is shown before saving. " : ""}Saving rebuilds the containing archive transactionally and records an image undo checkpoint.` : "This container cannot be rebuilt safely. Exporting keeps the original member bytes."}</div>` : ""}
       ${isBasic && report.basic.editable && report.basic.editNote ? `<div class="help-note">${esc(report.basic.editNote)} Saving replaces only the tokenised program prefix.</div>` : ""}
       ${isBasic && !report.editable ? `<div class="help-warning">${esc(report.basic.dialect)} cannot yet be safely retokenised by this editor${report.basic.trailingBytes ? ` and it also carries ${Number(report.basic.trailingBytes).toLocaleString()} trailing bytes` : ""}. It is open read-only; the raw bytes remain available in Hex.</div>` : ""}
       <footer class="editor-status"><span class="editor-document-state">${canEdit ? "Saved" : "Read-only"}</span><span class="editor-position">Ln 1, Col 1</span><span class="editor-size"></span></footer>
       <button class="editor-save-submit" type="submit" value="save" hidden>Save</button></div>`,
     canEdit ? async form => {
+      const replacementRequest = target ? {
+        ...target.context,
+        text: form.get("inspectedText"),
+        sha256: report.sha256,
+        archiveSha256: report.archiveSha256,
+      } : { path, slot: pane.slot, side: pane.side, text: form.get("inspectedText"), sha256: report.sha256 };
+      if (report.tapeProject || (target && pane.archiveKind === "uef")) {
+        const previewEndpoint = report.tapeProject
+          ? `/api/images/${pane.image.id}/inspect/uef-rebuild-preview`
+          : `/api/images/${pane.image.id}/archive/rebuild-preview`;
+        const proof = await api(previewEndpoint, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(replacementRequest),
+        });
+        const decision = await uefStructuralReview(proof);
+        if (decision !== "save") return false;
+      }
       const data = await api(target?.inspectEndpoint || `/api/images/${pane.image.id}/inspect`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(target ? {
-          ...target.context,
-          text: form.get("inspectedText"),
-          sha256: report.sha256,
-          archiveSha256: report.archiveSha256,
-        } : { path, slot: pane.slot, side: pane.side, text: form.get("inspectedText"), basic: isBasic, sha256: report.sha256 })
+        body: JSON.stringify(target ? replacementRequest : { ...replacementRequest, basic: isBasic })
       });
       pane.image = data.image;
       await loadDirectory(index);
@@ -9395,7 +9496,7 @@ async function showEditorCheatCandidates(root, intelligence, pane, path, online 
       <div class="cheat-analysis-filters"><label>Purpose<select name="cheatCategory"><option value="">All candidate types</option>${categories.map(category => `<option value="${esc(category)}">${esc(category)}</option>`).join("")}</select></label><label>Confidence<select name="cheatConfidence"><option value="">All confidence levels</option><option value="strong">Strong</option><option value="likely">Likely</option><option value="possible">Possible</option></select></label></div>
       <div class="cheat-candidate-list">${cards || `<div class="empty-list">No static candidate was found in this file.${diagnostics ? " The analysis notes above explain the most likely reason." : " Encrypted, compressed, self-modifying or indirectly addressed code needs runtime tracing."}</div>`}</div>
       <details class="cheat-online-evidence" ${matches ? "open" : ""}><summary>Game identification and published references</summary><p>Detected title: <strong>${esc(report.title)}</strong> · target: ${esc(report.machine || "not configured")}</p>${matches ? `<ul>${matches}</ul>` : '<p>No internet identification was requested. The searches below open only when selected.</p>'}<div class="collection-transfer">${references}</div></details>
-      ${online ? "" : '<div class="modal-actions"><button class="button primary" type="button" data-cheat-online>Check online title evidence</button></div>'}
+      <div class="modal-actions"><button class="button ghost" type="button" data-cheat-library>Private cheat library…</button><button class="button primary" type="button" data-cheat-prove disabled>Prepare guarded patch…</button>${online ? "" : '<button class="button ghost" type="button" data-cheat-online>Check online title evidence</button>'}</div>
     </div>`);
     dockEditorIntelligence(root);
     const panel = root.querySelector(".cheat-analysis-dialog");
@@ -9409,16 +9510,154 @@ async function showEditorCheatCandidates(root, intelligence, pane, path, online 
     };
     panel.querySelector('[name="cheatCategory"]').onchange = filter;
     panel.querySelector('[name="cheatConfidence"]').onchange = filter;
+    let selectedFinding = null;
     panel.querySelectorAll("[data-cheat-navigation]").forEach(card => card.addEventListener("click", () => {
-      try { focusEditorCheatCandidate(root, JSON.parse(card.dataset.cheatNavigation)); }
+      try {
+        const navigation = JSON.parse(card.dataset.cheatNavigation);
+        focusEditorCheatCandidate(root, navigation);
+        panel.querySelectorAll(".cheat-candidate.selected").forEach(item => item.classList.remove("selected"));
+        card.classList.add("selected");
+        selectedFinding = report.findings[Number(card.dataset.cheatIndex)];
+        const prove = panel.querySelector("[data-cheat-prove]");
+        prove.disabled = !Number.isInteger(Number(navigation.offset)) || report.kind === "BBC BASIC" || Boolean(target?.context?.member);
+      }
       catch (_error) { toast("That candidate could not be located in the current editor view.", true); }
     }));
     panel.querySelector("[data-cheat-online]")?.addEventListener("click", () => showEditorCheatCandidates(root, intelligence, pane, path, true, target));
+    panel.querySelector("[data-cheat-prove]")?.addEventListener("click", () => showGuardedCheatPatch(root, pane, path, report, selectedFinding, target));
+    panel.querySelector("[data-cheat-library]")?.addEventListener("click", () => showCheatLibrary(root, pane, path, target));
   } catch (error) {
     intelligence?.showCustom("Cheat candidates", `<p class="code-empty-message">${esc(error.message)}</p>`);
     dockEditorIntelligence(root);
     toast(error.message, true);
   }
+}
+
+const CHEAT_LIBRARY_KEY = "acorn-file-forge-cheat-library-v1";
+
+function readCheatLibrary() {
+  try {
+    const rows = JSON.parse(localStorage.getItem(CHEAT_LIBRARY_KEY) || "[]");
+    return Array.isArray(rows) ? rows.filter(row => row?.format === "acorn-file-forge-cheat-patch" && row?.version === 1).slice(-500) : [];
+  } catch (_error) { return []; }
+}
+
+function retainCheatPatch(patch) {
+  const rows = readCheatLibrary().filter(row => row.id !== patch.id);
+  rows.push(patch);
+  localStorage.setItem(CHEAT_LIBRARY_KEY, JSON.stringify(rows.slice(-500)));
+}
+
+async function showGuardedCheatPatch(root, pane, path, report, finding, target = null) {
+  if (!finding?.navigation || !Number.isInteger(Number(finding.navigation.offset))) return toast("Select a machine-code candidate with an exact file offset first.", true);
+  const context = new URLSearchParams(target?.context || Object.fromEntries(fileContextQuery(pane, path)));
+  context.set("offset", String(finding.navigation.offset));
+  context.set("length", "1");
+  try {
+    const source = await api(`/api/images/${pane.image.id}/cheat-patch/context?${context}`);
+    const shade = document.createElement("div");
+    shade.className = "editor-choice-shade";
+    shade.setAttribute("role", "dialog");
+    shade.setAttribute("aria-modal", "true");
+    shade.innerHTML = `
+      <form class="editor-choice-card guarded-cheat-patch-dialog">
+        <small>EXACT-HASH PROJECT PATCH</small><h2>Prove and guard a cheat patch</h2>
+        <p class="help-warning"><strong>This does not prove a cheat automatically.</strong> Use the configured emulator debugger, set the stated watchpoint, and record at least two distinct gameplay events. Apply remains guarded by the exact file hash and original bytes.</p>
+        <div class="operation-summary"><span><b>&amp;${Number(source.offset).toString(16).toUpperCase()}</b><small>File offset</small></span><span><b>${esc(source.originalHex)}</b><small>Current byte</small></span><span><b>${esc(source.sourceSha256.slice(0, 12))}…</b><small>Exact source</small></span></div>
+        <div class="guarded-cheat-grid">
+          <label>Patch title<input name="title" value="${esc(`${report.title}: ${finding.category}`)}" required></label>
+          <label>Author<input name="author" required></label>
+          <label>File offset<input name="offset" type="number" min="0" value="${Number(source.offset)}" readonly></label>
+          <label>Watchpoint address<input name="watchAddress" value="${esc((finding.evidence.match(/&[0-9A-F]+/i) || [""])[0])}" placeholder="&70" required></label>
+          <label>Original bytes<input name="originalHex" value="${esc(source.originalHex)}" pattern="[0-9A-Fa-f ,]+" required><small>Extend this from the disassembly when replacing a multi-byte instruction.</small></label>
+          <label>Replacement bytes<input name="replacementHex" placeholder="EA EA" pattern="[0-9A-Fa-f ,]+" required><small>Must contain the same number of bytes.</small></label>
+          <label class="wide">Rationale<textarea name="rationale" rows="3" minlength="12" required>${esc(finding.summary)}. ${esc(finding.evidence)}</textarea></label>
+          <fieldset><legend>Observation 1</legend><input name="event1" placeholder="Player loses first life" required><input name="before1" placeholder="Before value" required><input name="after1" placeholder="After value" required></fieldset>
+          <fieldset><legend>Observation 2</legend><input name="event2" placeholder="Player loses second life" required><input name="before2" placeholder="Before value" required><input name="after2" placeholder="After value" required></fieldset>
+        </div>
+        <div class="modal-actions"><button class="button ghost" type="button" data-cheat-patch-cancel>Cancel</button><button class="button primary" type="submit">Validate patch</button></div>
+      </form>`;
+    const formElement = shade.querySelector("form");
+    const close = () => { shade.remove(); root?.focus?.(); };
+    shade.querySelector("[data-cheat-patch-cancel]").onclick = close;
+    shade.onkeydown = event => { if (event.key === "Escape") close(); else trapFocus(shade, event); };
+    formElement.onsubmit = async event => {
+      event.preventDefault();
+      const form = new FormData(formElement);
+      const controls = [...formElement.elements];
+      controls.forEach(control => { control.disabled = true; });
+      formElement.setAttribute("aria-busy", "true");
+      try {
+        const documentValue = {
+          path, slot: pane.slot, side: pane.side, member: target?.context?.member,
+          sourceSha256: source.sourceSha256, offset: Number(form.get("offset")),
+          originalHex: form.get("originalHex"), replacementHex: form.get("replacementHex"),
+          watchAddress: form.get("watchAddress"), title: form.get("title"), author: form.get("author"),
+          rationale: form.get("rationale"), hardwareProfile: editorTargetProfile(pane),
+          observations: [1, 2].map(number => ({ event: form.get(`event${number}`), before: form.get(`before${number}`), after: form.get(`after${number}`), emulator: report.machine })),
+        };
+        const preview = await api(`/api/images/${pane.image.id}/cheat-patch/preview`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(documentValue) });
+        retainCheatPatch(preview.patch);
+        downloadDocument(`${String(report.title || "cheat").replace(/[^A-Za-z0-9_-]+/g, "-")}.affcheat.json`, JSON.stringify(preview.patch, null, 2));
+        if (!window.confirm(`This is dangerous: apply ${preview.patch.replacementHex} at file offset &${Number(preview.patch.offset).toString(16).toUpperCase()}? An automatic image checkpoint will be created first.`)) return;
+        const applied = await api(`/api/images/${pane.image.id}/cheat-patch/apply`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ patch: preview.patch, slot: pane.slot, side: pane.side }) });
+        pane.image = applied.image;
+        close();
+        modal.close();
+        renderAll();
+        toast("Guarded cheat patch applied. Test it before relying on the result.");
+      } catch (error) { toast(error.message, true); }
+      finally {
+        controls.forEach(control => { control.disabled = false; });
+        formElement.removeAttribute("aria-busy");
+      }
+    };
+    modal.append(shade);
+    formElement.elements.author.focus();
+  } catch (error) { toast(error.message, true); }
+}
+
+function showCheatLibrary(root, pane, path, target = null) {
+  const rows = readCheatLibrary();
+  const shade = document.createElement("div");
+  shade.className = "editor-choice-shade";
+  shade.setAttribute("role", "dialog");
+  shade.setAttribute("aria-modal", "true");
+  shade.innerHTML = `
+    <section class="editor-choice-card cheat-library-dialog"><small>BROWSER-PRIVATE EXACT-HASH LIBRARY</small><h2>Guarded cheat patches</h2>
+      <p>Entries match a complete source SHA-256 and guarded original bytes, never a title alone. Image data is not stored here.</p>
+      <div class="cheat-library-list">${rows.map((row, index) => `<article><div><strong>${esc(row.title)}</strong><small>${esc(row.path)} · ${esc(row.hardwareProfile?.name || row.hardwareProfile?.machine || "Unspecified machine")}</small><code>${esc(row.sourceSha256.slice(0, 16))}… · &amp;${Number(row.offset).toString(16).toUpperCase()} ${esc(row.originalHex)} → ${esc(row.replacementHex)}</code></div><span><button class="button small" type="button" data-cheat-apply="${index}">Apply to current file</button><button class="button small ghost" type="button" data-cheat-export="${index}">Export</button></span></article>`).join("") || '<div class="empty-list">No guarded patches have been retained in this browser profile.</div>'}</div>
+      <div class="modal-actions"><button class="button danger" type="button" data-cheat-clear ${rows.length ? "" : "disabled"}>Clear library</button><button class="button primary" type="button" data-cheat-library-close>Close</button></div>
+    </section>`;
+  const close = () => { shade.remove(); root?.focus?.(); };
+  shade.querySelector("[data-cheat-library-close]").onclick = close;
+  shade.onkeydown = event => { if (event.key === "Escape") close(); else trapFocus(shade, event); };
+  shade.querySelectorAll("[data-cheat-export]").forEach(button => button.addEventListener("click", () => {
+    const row = rows[Number(button.dataset.cheatExport)];
+    downloadDocument(`${String(row.title || "cheat").replace(/[^A-Za-z0-9_-]+/g, "-")}.affcheat.json`, JSON.stringify(row, null, 2));
+  }));
+  shade.querySelectorAll("[data-cheat-apply]").forEach(button => button.addEventListener("click", async () => {
+    const patch = rows[Number(button.dataset.cheatApply)];
+    if (!window.confirm(`This is dangerous: apply “${patch.title}” to the current file only if its exact SHA-256 and guarded bytes match?`)) return;
+    button.disabled = true;
+    try {
+      const applied = await api(`/api/images/${pane.image.id}/cheat-patch/apply`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ patch, path, slot: pane.slot, side: pane.side, member: target?.context?.member }) });
+      pane.image = applied.image;
+      close();
+      modal.close();
+      renderAll();
+      toast("Guarded cheat patch applied to the exact matching file revision");
+    } catch (error) { toast(error.message, true); }
+    finally { button.disabled = false; }
+  }));
+  shade.querySelector("[data-cheat-clear]")?.addEventListener("click", () => {
+    if (!window.confirm("Clear this browser profile's guarded cheat library? Image files and checkpoints are not affected.")) return;
+    localStorage.removeItem(CHEAT_LIBRARY_KEY);
+    close();
+    toast("Private cheat library cleared");
+  });
+  modal.append(shade);
+  shade.querySelector("[data-cheat-library-close]").focus();
 }
 
 function focusEditorCheatCandidate(root, navigation) {

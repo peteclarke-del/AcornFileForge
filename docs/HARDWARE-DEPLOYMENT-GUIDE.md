@@ -120,7 +120,8 @@ report is needed without starting a transfer.
 
 - Deployment does not format removable media or overwrite an attached device.
 - RISC OS controller geometry remains a documented manual decision.
-- Whole-MMB emulator mounting is still unavailable until a managed emulator
-  exposes an MMFS-compatible virtual SD adapter.
-- UEF reconstruction, unsupported HFE track layouts and ambiguous FileCore
-  media retain their existing read-only or rejected behaviour.
+- Whole-MMB emulator mounting is available for Electron MMFS profiles through
+  the bundled Elkulator Pi1MHz raw-SD adapter. The deployment ZIP itself is
+  still a generated directory tree and never writes a removable card.
+- Ambiguous UEF recordings, unsupported HFE track layouts and ambiguous
+  FileCore media retain their read-only or rejected behaviour.

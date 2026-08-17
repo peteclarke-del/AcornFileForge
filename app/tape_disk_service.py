@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+import tempfile
 from pathlib import Path
 
 from .errors import DiskError
@@ -12,7 +13,9 @@ from .uef import (
     basic_unopened_channel_io,
     is_tokenized_basic,
     parse_uef,
+    replace_uef_file,
     rewrite_basic_loader,
+    uef_editability,
 )
 
 
@@ -34,6 +37,60 @@ class TapeDiskMixin:
             if item.name.casefold() == name.casefold():
                 return item
         raise DiskError(f"Tape file “{name}” was not found.")
+
+    def _tape_file_index(self, session: ImageSession, inner: str) -> int:
+        name = inner.rsplit(".", 1)[-1]
+        for index, item in enumerate(self._tape(session).files):
+            if item.name.casefold() == name.casefold():
+                return index
+        raise DiskError(f"Tape file “{name}” was not found.")
+
+    def tape_member_editability(self, session: ImageSession, inner: str) -> dict:
+        if session.kind != "tape":
+            raise DiskError("Only UEF tape members have a cassette reconstruction proof.")
+        try:
+            return uef_editability(session.path.read_bytes(), self._tape_file_index(session, inner))
+        except UEFError as exc:
+            raise DiskError(str(exc)) from exc
+
+    def preview_tape_member_replacement(
+        self, session: ImageSession, inner: str, replacement: bytes,
+    ) -> dict:
+        if session.kind != "tape":
+            raise DiskError("Only UEF tape members use this structural comparison.")
+        try:
+            _rebuilt, report = replace_uef_file(
+                session.path.read_bytes(), self._tape_file_index(session, inner), replacement,
+            )
+        except UEFError as exc:
+            raise DiskError(str(exc)) from exc
+        return report
+
+    def replace_tape_member(self, session: ImageSession, inner: str, replacement: bytes) -> dict:
+        """Atomically replace one proven member and refresh the parsed tape model."""
+        if session.kind != "tape":
+            raise DiskError("Only UEF tape members can be rebuilt this way.")
+        with session.lock:
+            try:
+                rebuilt, report = replace_uef_file(
+                    session.path.read_bytes(), self._tape_file_index(session, inner), replacement,
+                )
+                parsed = parse_uef(rebuilt)
+            except UEFError as exc:
+                raise DiskError(str(exc)) from exc
+            with tempfile.NamedTemporaryFile(
+                dir=session.path.parent, prefix="uef-rebuild-", delete=False,
+            ) as temporary:
+                temporary.write(rebuilt)
+                temporary_path = Path(temporary.name)
+            try:
+                temporary_path.replace(session.path)
+            finally:
+                temporary_path.unlink(missing_ok=True)
+            session.tape = parsed
+            self._mark_mutated(session, None)
+            self._persist_session(session)
+            return report
 
     def _dfs_conversion_name(self, name: str, used: set[str]) -> str:
         return self._unique_import_name(name, used, 7)

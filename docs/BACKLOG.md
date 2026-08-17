@@ -109,10 +109,10 @@ project documentation. An unchecked item remains in scope.
       SSD without changing the MMB.
 - [x] Disable whole-MMB launch honestly when the selected emulator has no MMFS
       storage adapter.
-- [ ] Add an MMFS-compatible virtual SD-card adapter to Elkulator or B-em.
-- [ ] Mount, boot and debug the complete MMB, including its actual menu and
+- [x] Add an MMFS-compatible virtual SD-card adapter to Elkulator or B-em.
+- [x] Mount, boot and debug the complete MMB, including its actual menu and
       selected MMFS build.
-- [ ] Feed authoritative whole-MMB emulator results back into menu health and
+- [x] Feed authoritative whole-MMB emulator results back into menu health and
       PAGE diagnostics.
 
 ## 7. Writable archives and UEF projects
@@ -123,12 +123,12 @@ project documentation. An unchecked item remains in scope.
       verify hashes and checkpoint the containing image.
 - [x] Decode raw, compressed and extensionless UEF into a read-only cassette
       hierarchy and copy reconstructed files to writable media.
-- [ ] Rebuild UEF while preserving chunk order, baud-rate changes, gaps,
+- [x] Rebuild UEF while preserving chunk order, baud-rate changes, gaps,
       carrier tones, security cycles and unknown control chunks byte for byte
       where they are not intentionally changed.
-- [ ] Provide a tape-project view and a structural before-save comparison that
+- [x] Provide a tape-project view and a structural before-save comparison that
       makes every timing or control-chunk change explicit.
-- [ ] Enable UEF member editing only when the reconstruction proof succeeds;
+- [x] Enable UEF member editing only when the reconstruction proof succeeds;
       retain read-only behaviour for ambiguous or unsupported recordings.
 
 ## 8. Expanded menu interpretation
@@ -137,9 +137,9 @@ project documentation. An unchecked item remains in scope.
       explicitly modelled menu records.
 - [x] Show a database-oriented fallback when a machine-code menu cannot be
       interpreted safely.
-- [ ] Run unfamiliar menu programs in an isolated emulator sandbox with bounded
+- [x] Run unfamiliar menu programs in an isolated emulator sandbox with bounded
       time, deterministic media and no access to working images.
-- [ ] Capture display, palette, text and input behaviour from the sandbox and
+- [x] Capture display, palette, text and input behaviour from the sandbox and
       link it to the menu database records that produced each screen entry.
 - [ ] Promote a captured interpreter profile only after repeatable evidence and
       regression fixtures exist for that menu family.
@@ -187,9 +187,9 @@ project documentation. An unchecked item remains in scope.
       and configured specialist reference searches as a read-only Analyse tool.
 - [ ] Correlate static candidates with emulator watchpoints and repeatable
       gameplay events before offering a patch.
-- [ ] Save a proved cheat as a guarded project patch with original-byte hash,
+- [x] Save a proved cheat as a guarded project patch with original-byte hash,
       machine profile, rationale, author and rollback instructions.
-- [ ] Add a user-owned cheat library that matches exact image and file hashes,
+- [x] Add a user-owned cheat library that matches exact image and file hashes,
       never title alone.
 
 ## 12. Linux desktop host

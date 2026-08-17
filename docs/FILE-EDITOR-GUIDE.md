@@ -29,9 +29,11 @@ the pane's Save Image control prepares its timestamped download ZIP.
 Archive members are expanded in memory. Readable members in ZIP, TAR,
 compressed TAR, GZIP, BZIP2 and XZ containers can be edited. Save verifies the
 member and parent archive SHA-256 values, rebuilds the complete container and
-replaces the outer image file through the normal undoable transaction. UEF
-members remain read-only because rebuilding a tape stream may change timing or
-loader behaviour.
+replaces the outer image file through the normal undoable transaction. A UEF
+member is editable only when its complete block sequence maps uniquely onto
+standard data chunks and its encoded length remains unchanged. The structural
+review proves every other timing and control chunk is retained before the
+normal undoable transaction runs.
 
 ## Opening and exporting a file
 
@@ -394,6 +396,27 @@ Specialist browser searches come from `app/cheat_sources.json` and open only
 when selected. See the [cheat analysis guide](CHEAT-ANALYSIS-GUIDE.md) for the
 safe checkpoint, watchpoint and hardware-test workflow.
 
+Selecting a machine-code result with a proven file offset enables **Prepare
+guarded patch**. This workflow does not convert static confidence into proof.
+It asks the tester to record the watchpoint and at least two distinct gameplay
+events where the watched value changed, along with the intended replacement,
+rationale and author. A valid `.affcheat.json` record contains:
+
+- the full SHA-256 and size of the analysed source file;
+- the exact file offset, original bytes and same-length replacement bytes;
+- the applied hardware profile, watchpoint and gameplay observations;
+- an author, rationale and explicit rollback instruction.
+
+Apply repeats both the complete-file hash check and the original-byte check. It
+then writes through the normal filesystem transaction, which creates an image
+checkpoint before the change. A mismatched revision, byte sequence or target
+is refused. The browser-private patch library stores no image data, is limited
+to 500 records and matches by exact hash rather than a title. Entries can be
+exported individually and cleared without affecting images or checkpoints.
+Archive members and BASIC source are not patch targets in this first guarded
+workflow. Emulator observations are tester supplied until managed watchpoint
+capture can correlate runtime events automatically.
+
 ## Managed emulator and debugger
 
 Open **Workbench → Hardware profiles → Emulator and debugger integration**.
@@ -465,20 +488,32 @@ isolated BASIC, parent boot and parent mount contexts. Results are retained in
 project test history. Formats which cannot be mounted directly explain that
 specific emulator limitation without disabling a valid isolated BASIC run.
 
-Whole-MMB mounting is deliberately separate from selected-slot launching. The
-bundled Elkulator and B-em builds do not expose an MMFS-compatible virtual
-SD-card adapter, so **Mount whole MMB** is visible but disabled with that exact
-reason. Acorn File Forge does not pass an `.mmb` to a floppy-image switch or
-pretend that extracting a single slot makes the complete container available.
+Whole-MMB mounting is deliberately separate from selected-slot launching. An
+Electron MMFS profile uses the bundled Elkulator Pi1MHz raw-SD adapter. Acorn
+File Forge creates an isolated FAT32 card with root `BEEB.MMB`, selects the
+profile's paged or unpaged MMFS ROM, then offers Run and Debug for the complete
+container. The live working image is never writable by the emulator. B-em has
+no equivalent adapter, so BBC and Master profiles explain that limitation and
+continue to offer one-slot extraction.
+
+The installed-menu preview can run the same isolated card on a bounded private
+display. It captures the settled menu and a second frame after navigation,
+then records the frame hashes against the exact MMB hash. A second identical
+capture makes the evidence repeatable. Image Health reports that evidence but
+continues to list static entry and PAGE failures independently.
 
 ## Archive and UEF members
 
 UEF, gzip-compressed UEF, ZIP, TAR, TAR.GZ, TGZ, TAR.BZ2, TAR.XZ, standalone
 GZIP, BZIP2 and XZ containers open as bounded hierarchies. UEF members expose
 their reconstructed load and execution addresses and whether the cassette
-block sequence was complete. UEF remains read-only. Readable members in the
-other formats can be edited through a checksum-guarded rebuild of the complete
-container and the normal image checkpoint.
+block sequence was complete. Complete, unambiguous standard-block members can
+be edited when their encoded length does not change. Save presents a physical
+chunk comparison, updates only the selected data and its block CRCs, and proves
+that timing, control and unknown chunks retain order, length and bytes. Every
+ambiguous, incomplete, cycle-level or length-changing case remains read-only.
+Readable members in the other formats use the existing checksum-guarded
+container rebuild and normal image checkpoint.
 
 Inspect, disassembly, Hex and cheat-candidate analysis retain the outer image,
 container and member path as one context. A nested name such as
