@@ -205,6 +205,10 @@ project documentation. An unchecked item remains in scope.
       the Docker edition.
 - [x] Provide a user-local installer, launcher, icon, MIME definitions and
       uninstaller for Debian and Ubuntu class desktops.
+- [x] Write supported floppy images and selected MMB slots through an optional
+      Greaseweazle, with drive validation, destructive confirmation, stable
+      source snapshots, tracked progress, cancellation and format-appropriate
+      verification.
 - [ ] Produce signed distribution packages after the project licence and
       release-signing policy are finalised.
 

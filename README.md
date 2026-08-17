@@ -134,6 +134,8 @@ the reusable release checklist.
 - The [installation guide](docs/INSTALLATION.md) covers desktop and Raspberry Pi builds, updates, retained sessions and common failures.
 - The [Linux desktop guide](docs/LINUX-DESKTOP.md) covers the GTK application,
   native file handling, XDG storage and emulator configuration.
+- The [physical floppy guide](docs/PHYSICAL-FLOPPY-GUIDE.md) covers optional
+  Greaseweazle setup, supported images, verification and safe cancellation.
 - The [platform contract](docs/PLATFORM-CONTRACT.md) defines the mandatory
   parity boundary between browser and native hosts.
 - The [headless CLI guide](docs/CLI-GUIDE.md) covers automation, stable JSON results, dry-runs and deterministic recipes.

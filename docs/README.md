@@ -13,6 +13,7 @@ that match the running frontend.
 | --- | --- |
 | Install, update, back up or troubleshoot the Docker service | [Installation and operations](INSTALLATION.md) |
 | Install or develop the native Linux application | [Linux desktop application](LINUX-DESKTOP.md) |
+| Write SSD, DSD, ADFS or HFE images to a real disk | [Greaseweazle physical floppy guide](PHYSICAL-FLOPPY-GUIDE.md) |
 | Review the mandatory web and desktop parity rules | [Web and desktop platform contract](PLATFORM-CONTRACT.md) |
 | Understand every supported media family and normal workflow | [Main project handbook](../README.md) |
 | Edit BASIC, command files, machine code, archives or binary data | [File editor and code analysis](FILE-EDITOR-GUIDE.md) |

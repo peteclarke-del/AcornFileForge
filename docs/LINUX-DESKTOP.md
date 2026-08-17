@@ -59,11 +59,26 @@ combined with a particular byte layout.
   writes it to the user's normal Downloads directory.
 - Run and Debug use native emulator windows. The Docker edition continues to
   use its browser-visible noVNC display.
+- Supported floppy images and one selected MMB slot can be written through a
+  locally installed Greaseweazle. Choose **Tools → Write physical floppy** or
+  right-click the image title. The workflow includes drive selection,
+  destructive confirmation, tracked progress, cancellation and verification.
 
 There is intentionally no parallel GTK implementation of panes or editors.
 That would double the maintenance burden and allow filesystem safety fixes to
 drift. The detailed rules are in the
 [platform contract](PLATFORM-CONTRACT.md).
+
+## Greaseweazle physical disks
+
+Greaseweazle is optional and is not installed automatically. Install the
+official tools and Linux udev rules, then confirm `gw info` works in the same
+desktop session that launches Acorn File Forge. SSD, DSD and sector-based ADFS
+floppies are written with automatic read-back verification. HFE can be written,
+but its raw bitcell representation does not support automatic verification.
+
+The complete safety and troubleshooting workflow is in the
+[physical floppy guide](PHYSICAL-FLOPPY-GUIDE.md).
 
 ## Emulator paths
 

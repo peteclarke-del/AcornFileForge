@@ -110,7 +110,17 @@ function showHelp() {
               <li>The selected source is copied into XDG application storage before editing. The original is not changed in place.</li>
               <li>Saved ZIPs use the normal Linux Downloads directory and contain the same image, sidecars and README as the web edition.</li>
               <li>Managed emulators appear as native windows. In Docker they continue to appear in the browser display.</li>
+              <li>Install the optional official Greaseweazle tools to write SSD, DSD, ADFS floppy and HFE images to real disks. At an MMB index, select one formatted slot to write it as an SSD.</li>
             </ul>
+            <div class="help-task"><h4>Write a physical floppy with Greaseweazle</h4><ol>
+              <li>Confirm <code>gw info</code> can see the connected device and that the Linux udev rules permit access.</li>
+              <li>Open a supported floppy image. For an MMB, select exactly one formatted disk slot.</li>
+              <li>Choose <strong>Tools → Write physical floppy</strong>, or right-click the image title or coloured format badge.</li>
+              <li>Select drive A, B, 0, 1, 2 or 3, insert the destination disk, then acknowledge that every existing byte on it will be overwritten.</li>
+              <li>Follow the live cylinder, head and verification progress. Abort stops Greaseweazle, but leaves the physical disk potentially incomplete; the working image remains unchanged.</li>
+              <li>Keep a sector disk only after the completion dialog confirms verification. HFE contains raw bitcells and cannot be automatically verified, so test that disk on suitable hardware.</li>
+            </ol></div>
+            <div class="help-note"><strong>Stable source:</strong> the working image is finalised and copied to a private snapshot before the physical write begins. Later edits cannot alter an in-progress disk, and temporary slot images and snapshots are removed afterwards.</div>
             <div class="help-note"><strong>One product, two hosts:</strong> the desktop application embeds the shared frontend and starts the shared API on a private random loopback port. A launch token protects it, and the local-path adapter is not exposed by the web host.</div>
             <div class="help-warning"><strong>Updating the source:</strong> pull the new version and rerun the desktop installer when Python dependencies change. Working sessions remain under <code>~/.local/share/acorn-file-forge</code>, or the configured XDG data directory.</div>
           </section>
