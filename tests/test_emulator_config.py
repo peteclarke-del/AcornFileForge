@@ -51,6 +51,23 @@ class EmulatorConfigurationTests(unittest.TestCase):
         self.assertEqual(command[:4], ["/usr/games/mame", "-rompath", MAME_ROM_PATH, "aa310"])
         self.assertEqual(cwd, "/app")
 
+    @patch("app.emulator_config.emulator_status", return_value={"available": True})
+    @patch("app.emulator_config.Path.is_file", return_value=True)
+    def test_native_archimedes_window_retains_host_audio(self, _available, _status):
+        session = SimpleNamespace(
+            hardware_profile={"machine": "archimedes", "emulator": "mame"},
+            target_hardware="risc-os",
+        )
+        command, cwd = emulator_command(
+            session,
+            "/work/game.adf",
+            interactive=True,
+            native=True,
+        )
+        self.assertNotIn("-sound", command)
+        self.assertIn("-video", command)
+        self.assertEqual(cwd, str(Path(MAME_ROM_PATH).parent))
+
     @patch("app.emulator_config.Path.is_file", return_value=True)
     def test_bem_command_selects_the_requested_bbc_model(self, _available):
         with tempfile.TemporaryDirectory() as temporary:
@@ -76,6 +93,23 @@ class EmulatorConfigurationTests(unittest.TestCase):
         self.assertIn("DISPLAY=:99", command)
         self.assertNotIn("xvfb-run", command)
         self.assertEqual(command[3], "900")
+
+    @patch("app.emulator_config.Path.is_file", return_value=True)
+    def test_native_interactive_elkulator_uses_the_host_display(self, _available):
+        session = SimpleNamespace(
+            hardware_profile={"machine": "electron", "emulator": "auto"},
+            target_hardware="auto",
+        )
+        command, cwd = emulator_command(
+            session,
+            "/work/game.ssd",
+            interactive=True,
+            native=True,
+        )
+        self.assertEqual(command[0], "/opt/elkulator/profiles/base/elkulator")
+        self.assertNotIn("DISPLAY=:99", command)
+        self.assertNotIn("timeout", command)
+        self.assertEqual(cwd, "/opt/elkulator/profiles/base")
 
     @patch("app.emulator_config.Path.is_file", return_value=True)
     def test_electron_additions_drive_elkulator_variant_ram_and_tube(self, _available):

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import os
+import re
 import shutil
 import subprocess
-import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -22,17 +23,25 @@ class ManagedEmulator:
         return Path(self.executable).is_file() or shutil.which(self.executable) is not None
 
 
+ELKULATOR_ROOT = Path(os.environ.get("ACORN_ELKULATOR_ROOT", "/opt/elkulator"))
+BEM_ROOT = Path(os.environ.get("ACORN_BEM_ROOT", "/opt/b-em"))
+MAME_EXECUTABLE = os.environ.get("ACORN_MAME_EXECUTABLE", "/usr/games/mame")
+MAME_ROM_PATH = os.environ.get(
+    "ACORN_MAME_ROM_PATH", "/opt/acorn-file-forge/firmware/mame"
+)
+
+
 EMULATORS = {
     "elkulator-pi1mhz": ManagedEmulator(
         "elkulator-pi1mhz", "Elkulator with Pi1MHz/AP5 patches",
-        "/opt/elkulator/elkulator", "elkulator-debug", ("electron",),
+        str(ELKULATOR_ROOT / "elkulator"), "elkulator-debug", ("electron",),
     ),
     "b-em": ManagedEmulator(
-        "b-em", "B-em BBC Micro systems", "/opt/b-em/b-em", "b-em-debug",
+        "b-em", "B-em BBC Micro systems", str(BEM_ROOT / "b-em"), "b-em-debug",
         ("bbc-b", "bbc-b-plus", "master"),
     ),
     "mame": ManagedEmulator(
-        "mame", "MAME Archimedes", "/usr/games/mame", "mame-debug",
+        "mame", "MAME Archimedes", MAME_EXECUTABLE, "mame-debug",
         ("archimedes",),
     ),
 }
@@ -43,8 +52,6 @@ MAME_MACHINES = {
     "master": "bbcm",
     "archimedes": "aa310",
 }
-MAME_ROM_PATH = "/opt/acorn-file-forge/firmware/mame"
-
 BEM_TUBES = {
     "tube-6502": 6, "tube-z80": 2, "tube-80186": 3, "tube-arm": 1,
     "tube-65816": 4, "tube-32016": 5, "tube-6809": 7, "tube-pdp11": 9,
@@ -116,7 +123,14 @@ def emulator_status(session) -> dict:
     }
 
 
-def emulator_command(session, media_path: str | Path, *, debug: bool = False, interactive: bool = False) -> tuple[list[str], str]:
+def emulator_command(
+    session,
+    media_path: str | Path,
+    *,
+    debug: bool = False,
+    interactive: bool = False,
+    native: bool = False,
+) -> tuple[list[str], str]:
     emulator = configured_emulator(session)
     if not emulator.available:
         raise ValueError(f"{emulator.label} is not installed in this build.")
@@ -130,14 +144,16 @@ def emulator_command(session, media_path: str | Path, *, debug: bool = False, in
         if suffix not in {".ssd", ".dsd", ".adf", ".ads", ".adm", ".adl", ".uef"}:
             raise ValueError("Elkulator can launch DFS or ADFS floppy images and UEF tapes. This parent image cannot be mounted by Elkulator; run a self-contained BASIC file from a temporary test disk, or export a compatible floppy image first.")
         executable, cwd = _elkulator_variant(addons)
-        arguments = _desktop_command(executable, debug=debug, interactive=interactive)
+        arguments = _desktop_command(
+            executable, debug=debug, interactive=interactive, native=native
+        )
         ram_banks = [6, 7] if "electron-swram-32" in addons else [4, 5, 6, 7] if "electron-swram-64" in addons else []
         for bank in ram_banks:
             arguments += ["-ram", str(bank)]
         if "tube-6502" in addons:
-            arguments += ["-tube6502", "/opt/b-em/roms/tube/6502Tube.rom"]
+            arguments += ["-tube6502", str(BEM_ROOT / "roms/tube/6502Tube.rom")]
         if {"electron-rh-plus1", "electron-rh-plus2"} & addons:
-            arguments += ["-rom", "12", "/opt/elkulator/roms/RHPLUS133.rom"]
+            arguments += ["-rom", "12", str(ELKULATOR_ROOT / "roms/RHPLUS133.rom")]
         arguments += ["-tape" if suffix == ".uef" else "-disc", str(media)]
         if boot in {"auto", "boot"} and suffix != ".uef":
             arguments.append("-autoboot")
@@ -148,7 +164,12 @@ def emulator_command(session, media_path: str | Path, *, debug: bool = False, in
         if suffix not in {".ssd", ".dsd", ".adf", ".ads", ".adm", ".adl", ".img", ".uef", ".csw"}:
             raise ValueError("B-em can launch BBC DFS or ADFS floppy images and UEF/CSW tapes. This parent image cannot be mounted by B-em; run a self-contained BASIC file from a temporary test disk, or export compatible media first.")
         model = _bem_model(machine, addons)
-        arguments = [*_desktop_command(emulator.executable, debug=debug, interactive=interactive), f"-m{model}"]
+        arguments = [
+            *_desktop_command(
+                emulator.executable, debug=debug, interactive=interactive, native=native
+            ),
+            f"-m{model}",
+        ]
         tube = next((BEM_TUBES[item] for item in addons if item in BEM_TUBES), None)
         if tube is not None and model not in {11, 12, 14}:
             arguments.append(f"-t{tube}")
@@ -158,7 +179,7 @@ def emulator_command(session, media_path: str | Path, *, debug: bool = False, in
             arguments.append("-autoboot")
         if debug:
             arguments.append("-debug")
-        return arguments, "/opt/b-em"
+        return arguments, str(BEM_ROOT)
     driver = MAME_MACHINES.get(machine)
     if not driver:
         raise ValueError(f"MAME has no managed machine mapping for {machine}.")
@@ -169,10 +190,17 @@ def emulator_command(session, media_path: str | Path, *, debug: bool = False, in
     if suffix in {".mmb", ".rom", ".bin"}:
         raise ValueError("This container format cannot be attached directly to the selected MAME machine. Open or export a bootable disk or hard-disk image first.")
     arguments = [
-        emulator.executable, "-rompath", MAME_ROM_PATH, driver,
+        emulator.executable,
+        "-rompath",
+        MAME_ROM_PATH,
+        driver,
         *_mame_podule_arguments(addons),
-        media_option, str(media), "-skip_gameinfo", "-sound", "none",
+        media_option,
+        str(media),
+        "-skip_gameinfo",
     ]
+    if not (native and interactive):
+        arguments += ["-sound", "none"]
     if debug and not interactive:
         arguments = ["timeout", "--signal=TERM", "--kill-after=2", "15", *arguments, "-debug", "-debugger", "qt"]
     elif debug:
@@ -181,11 +209,19 @@ def emulator_command(session, media_path: str | Path, *, debug: bool = False, in
         arguments += ["-video", "soft"]
     else:
         arguments += ["-video", "none", "-seconds_to_run", "8"]
-    return arguments, "/app"
+    return arguments, str(Path(MAME_ROM_PATH).parent) if native else "/app"
 
 
-def _desktop_command(executable: str, *, debug: bool, interactive: bool) -> list[str]:
+def _desktop_command(
+    executable: str,
+    *,
+    debug: bool,
+    interactive: bool,
+    native: bool = False,
+) -> list[str]:
     """Run in the shared browser display or a bounded private X server."""
+    if native and interactive:
+        return [executable]
     environment = ["env", "ALSA_CONFIG_PATH=/app/alsa-null.conf", "ALSOFT_DRIVERS=null"]
     if interactive:
         return [
@@ -206,8 +242,8 @@ def _elkulator_variant(addons: set[str]) -> tuple[str, str]:
     variant = f"plus1-{disk}" if plus1 and disk != "base" else "plus1" if plus1 else disk
     if "electron-mrb" in addons:
         variant += "-mrb"
-    folder = f"/opt/elkulator/profiles/{variant}"
-    return f"{folder}/elkulator", folder
+    folder = ELKULATOR_ROOT / "profiles" / variant
+    return str(folder / "elkulator"), str(folder)
 
 
 def _bem_model(machine: str, addons: set[str]) -> int:
@@ -232,7 +268,7 @@ def _bem_model(machine: str, addons: set[str]) -> int:
 
 
 def _bem_profile_config(session, addons: set[str]) -> Path:
-    source = Path("/opt/b-em/b-em.cfg")
+    source = BEM_ROOT / "b-em.cfg"
     config = source.read_text(encoding="utf-8")
     settings = {
         "scsienable": "true" if "beebscsi" in addons else "false",

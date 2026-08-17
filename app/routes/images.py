@@ -5,20 +5,12 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request, send_file, send_from_directory
 
-from ..archive_utils import open_disk_image_upload
 from ..download_archive import build_download_archive, prepared_download
 from ..disk_service import DiskError, DiskService
-from ..formats import (
-    ADFS_EXTENSIONS,
-    DFS_EXTENSIONS,
-    HFE_EXTENSIONS,
-    MMB_EXTENSIONS,
-    ROM_EXTENSIONS,
-    TAPE_EXTENSIONS,
-)
+from ..image_opening import open_image_upload
 from ..hardware_profiles import hardware_catalogue, normalise_hardware_profile
-from ..menu.analysis import best_distribution_filename
 from ..operations import OperationRegistry
+from ..platform_contract import PlatformRuntime
 from ..version import application_version
 from .common import optional_int, payload
 from .effects import image_mutation, request_effect
@@ -28,7 +20,9 @@ def create_images_blueprint(
     service: DiskService,
     static_dir: Path,
     operations: OperationRegistry,
+    runtime: PlatformRuntime | None = None,
 ) -> Blueprint:
+    runtime = runtime or PlatformRuntime()
     blueprint = Blueprint("images", __name__)
 
     @blueprint.get("/")
@@ -37,7 +31,12 @@ def create_images_blueprint(
 
     @blueprint.get("/api/health")
     def health():
-        return jsonify(status="ok", engine="oaknut", version=application_version())
+        return jsonify(
+            status="ok",
+            engine="oaknut",
+            version=application_version(),
+            platform=runtime.public_contract(),
+        )
 
     @blueprint.get("/api/hardware-profiles")
     def list_hardware_profiles():
@@ -50,48 +49,26 @@ def create_images_blueprint(
         if not image or not image.filename:
             raise DiskError("Choose a media image to open.")
         descriptor_file = request.files.get("descriptor")
-        image_extensions = (
-            DFS_EXTENSIONS | MMB_EXTENSIONS | TAPE_EXTENSIONS | ADFS_EXTENSIONS | HFE_EXTENSIONS | ROM_EXTENSIONS
+        try:
+            rom_component_names = json.loads(
+                request.form.get("romComponentNames", "[]")
+            )
+        except json.JSONDecodeError as exc:
+            raise DiskError("The ROM component list is invalid.") from exc
+        if not isinstance(rom_component_names, list):
+            raise DiskError("The ROM component list is invalid.")
+        session = open_image_upload(
+            service,
+            image,
+            descriptor_file if descriptor_file and descriptor_file.filename else None,
+            target_hardware=request.form.get("targetHardware", "auto"),
+            rom_options={
+                "layout": request.form.get("romLayout", "linear"),
+                "platform": request.form.get("romPlatform", "bbc-master-electron"),
+                "componentNames": rom_component_names,
+            },
+            force_kind=request.form.get("forceKind") or None,
         )
-        with open_disk_image_upload(image, image_extensions) as (
-            image_item,
-            archived_descriptor,
-        ):
-            try:
-                rom_component_names = json.loads(
-                    request.form.get("romComponentNames", "[]")
-                )
-            except json.JSONDecodeError as exc:
-                raise DiskError("The ROM component list is invalid.") from exc
-            if not isinstance(rom_component_names, list):
-                raise DiskError("The ROM component list is invalid.")
-            descriptor = None
-            if descriptor_file and descriptor_file.filename:
-                descriptor = (
-                    descriptor_file.filename,
-                    descriptor_file.stream,
-                )
-            elif archived_descriptor is not None:
-                descriptor = (
-                    archived_descriptor.filename,
-                    archived_descriptor.stream,
-                )
-            session = service.create_from_stream(
-                image_item.filename,
-                image_item.stream,
-                descriptor,
-                request.form.get("targetHardware", "auto"),
-                {
-                    "layout": request.form.get("romLayout", "linear"),
-                    "platform": request.form.get("romPlatform", "bbc-master-electron"),
-                    "componentNames": rom_component_names,
-                },
-                request.form.get("forceKind") or None,
-            )
-            service.set_distribution_name(
-                session,
-                best_distribution_filename(image_item.metadata_names),
-            )
         return jsonify(image=service.summary(session))
 
     @blueprint.post("/api/images/create")

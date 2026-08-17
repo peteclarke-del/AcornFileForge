@@ -1,8 +1,9 @@
 # Acorn File Forge
 
-Acorn File Forge is a browser-based workshop for Acorn disk, hard-drive, tape
-and ROM images. It covers BBC Micro, BBC Master, Electron, Archimedes and
-compatible RISC OS media.
+Acorn File Forge is a web and native Linux workshop for Acorn disk, hard-drive,
+tape and ROM images. It covers BBC Micro, BBC Master, Electron, Archimedes and
+compatible RISC OS media. Both editions use the same workbench, filesystem
+services and editors, so a format fix or feature is not maintained twice.
 
 Open as many image panes as the browser and computer can comfortably handle,
 browse their real filing systems and drag files between them. You can add,
@@ -53,6 +54,20 @@ SSH cloning also works when your GitHub public key is configured, but it is not
 required to install or run the application.
 
 Open <http://localhost:8666>.
+
+Linux users can instead install the GTK 4 desktop host. It provides a native
+window, local file chooser, file-manager associations and native emulator
+windows while embedding the same application:
+
+```bash
+tools/install-linux-desktop.sh
+tools/acorn-file-forge-desktop
+```
+
+Read the [Linux desktop guide](docs/LINUX-DESKTOP.md) for prerequisite packages,
+XDG storage, emulator paths and removal. The
+[platform contract](docs/PLATFORM-CONTRACT.md) requires shared changes to be
+implemented and tested for both web and desktop hosts.
 
 If your system still uses the standalone Compose command, replace
 `docker compose` with `docker-compose` in the examples below.
@@ -117,6 +132,12 @@ the reusable release checklist.
   content detection, BASIC and script editing, source transformations,
   disassembly projects, archives, synchronized bytes and emulator hand-off.
 - The [installation guide](docs/INSTALLATION.md) covers desktop and Raspberry Pi builds, updates, retained sessions and common failures.
+- The [Linux desktop guide](docs/LINUX-DESKTOP.md) covers the GTK application,
+  native file handling, XDG storage and emulator configuration.
+- The [physical floppy guide](docs/PHYSICAL-FLOPPY-GUIDE.md) covers optional
+  Greaseweazle setup, supported images, verification and safe cancellation.
+- The [platform contract](docs/PLATFORM-CONTRACT.md) defines the mandatory
+  parity boundary between browser and native hosts.
 - The [headless CLI guide](docs/CLI-GUIDE.md) covers automation, stable JSON results, dry-runs and deterministic recipes.
 - The [private collection guide](docs/COLLECTION-GUIDE.md) covers browser-owned indexing, stale revisions, reports, backups and privacy boundaries.
 - The [cheat-candidate analysis guide](docs/CHEAT-ANALYSIS-GUIDE.md) covers BASIC and machine-code evidence, confidence, online references and safe emulator verification.

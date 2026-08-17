@@ -12,12 +12,14 @@ from .operations import OperationRegistry
 from .routes.files import create_files_blueprint
 from .routes.hex_editor import create_hex_editor_blueprint
 from .routes.catalog import create_catalog_blueprint
+from .routes.desktop import create_desktop_blueprint
 from .routes.images import create_images_blueprint
 from .routes.menus import create_menus_blueprint
 from .routes.mmb import create_mmb_blueprint
-from .routes.tools import create_tools_blueprint
+from .routes.tools import InteractiveEmulator, create_tools_blueprint
 from .routes.rom_tools import create_rom_tools_blueprint
 from .routes.effects import mutation_for
+from .platform_contract import runtime as platform_runtime
 
 
 ROOT = Path(__file__).resolve().parent
@@ -25,27 +27,52 @@ WORK_DIR = Path(os.environ.get("ACORN_FILE_FORGE_WORK_DIR", ROOT.parent / "work"
 MENU_TEMPLATE_DIR = ROOT / "assets" / "menu_templates"
 
 
-def create_app() -> Flask:
+def create_app(
+    *,
+    work_dir: Path | str | None = None,
+    platform: str = "web",
+    desktop_token: str | None = None,
+) -> Flask:
     application = Flask(__name__, static_folder="static", static_url_path="")
+    runtime = platform_runtime(platform, desktop_token)
+    active_work_dir = Path(work_dir) if work_dir is not None else WORK_DIR
     max_upload_gib = max(1, int(os.environ.get("ACORN_MAX_UPLOAD_GIB", "8")))
     application.config["MAX_CONTENT_LENGTH"] = max_upload_gib * 1024 * 1024 * 1024
-    service = DiskService(WORK_DIR)
-    operations = OperationRegistry(WORK_DIR / "operations.json")
+    application.config["ACORN_PLATFORM"] = runtime.public_contract()
+    service = DiskService(active_work_dir)
+    operations = OperationRegistry(active_work_dir / "operations.json")
 
     @application.before_request
     def establish_browser_owner():
         cookie_owner = request.cookies.get("acorn_file_forge_owner", "")
         browser_owner = request.headers.get("X-Acorn-Session-Owner", "")
-        owner_id = (
-            browser_owner
-            if re.fullmatch(r"[A-Za-z0-9_-]{32,64}", browser_owner)
-            else cookie_owner
-        )
+        if runtime.kind == "desktop":
+            owner_id = runtime.desktop_token or ""
+        elif re.fullmatch(r"[A-Za-z0-9_-]{32,64}", browser_owner):
+            owner_id = browser_owner
+        else:
+            owner_id = cookie_owner
         if not re.fullmatch(r"[A-Za-z0-9_-]{32,64}", owner_id):
             owner_id = secrets.token_urlsafe(32)
         g.set_owner_cookie = cookie_owner != owner_id
         g.session_owner_token = SESSION_OWNER.set(owner_id)
         g.session_owner_id = owner_id
+
+    @application.before_request
+    def authenticate_desktop_host():
+        if runtime.kind != "desktop":
+            return None
+        supplied = (
+            request.headers.get("X-Acorn-Desktop-Token", "")
+            or request.cookies.get("acorn_file_forge_desktop", "")
+        )
+        if not secrets.compare_digest(supplied, runtime.desktop_token or ""):
+            return jsonify(error="This private desktop service rejected the request."), 403
+        g.set_desktop_cookie = not secrets.compare_digest(
+            request.cookies.get("acorn_file_forge_desktop", ""),
+            runtime.desktop_token or "",
+        )
+        return None
 
     @application.before_request
     def checkpoint_image_mutation():
@@ -73,17 +100,30 @@ def create_app() -> Flask:
             SESSION_OWNER.reset(token)
 
     application.register_blueprint(
-        create_images_blueprint(service, ROOT / "static", operations)
+        create_images_blueprint(service, ROOT / "static", operations, runtime)
     )
-    application.register_blueprint(create_files_blueprint(service, WORK_DIR, operations))
-    application.register_blueprint(create_catalog_blueprint(service, WORK_DIR))
+    application.register_blueprint(
+        create_files_blueprint(service, active_work_dir, operations)
+    )
+    application.register_blueprint(create_catalog_blueprint(service, active_work_dir))
     application.register_blueprint(create_mmb_blueprint(service))
     application.register_blueprint(create_hex_editor_blueprint(service))
-    application.register_blueprint(create_tools_blueprint(service, operations))
+    emulator_manager = InteractiveEmulator(native=runtime.kind == "desktop")
+    application.extensions["acorn_interactive_emulator"] = emulator_manager
+    application.register_blueprint(
+        create_tools_blueprint(
+            service,
+            operations,
+            runtime,
+            emulator_manager=emulator_manager,
+        )
+    )
     application.register_blueprint(create_rom_tools_blueprint(service, ROOT))
     application.register_blueprint(
         create_menus_blueprint(service, MENU_TEMPLATE_DIR)
     )
+    if runtime.kind == "desktop":
+        application.register_blueprint(create_desktop_blueprint(service, operations))
 
     @application.errorhandler(DiskError)
     def disk_error(error):
@@ -111,6 +151,13 @@ def create_app() -> Flask:
                 "acorn_file_forge_owner",
                 g.session_owner_id,
                 max_age=365 * 24 * 60 * 60,
+                httponly=True,
+                samesite="Strict",
+            )
+        if getattr(g, "set_desktop_cookie", False):
+            response.set_cookie(
+                "acorn_file_forge_desktop",
+                runtime.desktop_token,
                 httponly=True,
                 samesite="Strict",
             )

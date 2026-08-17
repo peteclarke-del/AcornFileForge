@@ -51,6 +51,7 @@ from ..file_editor import (
     encode_editor_replacement,
 )
 from ..operations import OperationRegistry
+from ..platform_contract import PlatformRuntime
 from ..workflow_recipe import build_workflow_recipe_bundle
 from ..menu.adfs import audit_adfs_menu_pages
 from ..metadata_lookup import lookup_online, parse_distribution_filename
@@ -101,9 +102,10 @@ def uploaded_patch_path(work_dir: Path):
 
 
 class InteractiveEmulator:
-    """Own the single browser-visible emulator display exposed by noVNC."""
+    """Own one browser-visible or native managed emulator process."""
 
-    def __init__(self):
+    def __init__(self, *, native: bool = False):
+        self.native = native
         self.lock = threading.RLock()
         self.process = None
         self.xvfb = None
@@ -137,19 +139,28 @@ class InteractiveEmulator:
             self._stop_locked()
             launch, media = media_context.__enter__()
             try:
-                arguments, cwd = emulator_command(launch, media, debug=debug, interactive=True)
-                self.xvfb = subprocess.Popen(
-                    ["Xvfb", ":99", "-screen", "0", "1280x960x24", "-ac", "-nolisten", "tcp"],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                arguments, cwd = emulator_command(
+                    launch,
+                    media,
+                    debug=debug,
+                    interactive=True,
+                    native=self.native,
                 )
-                time.sleep(0.3)
-                self.vnc = subprocess.Popen(
-                    ["x11vnc", "-display", ":99", "-rfbport", "5900", "-nopw", "-forever", "-shared", "-quiet"],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                )
+                if not self.native:
+                    self.xvfb = subprocess.Popen(
+                        ["Xvfb", ":99", "-screen", "0", "1280x960x24", "-ac", "-nolisten", "tcp"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    )
+                    time.sleep(0.3)
+                    self.vnc = subprocess.Popen(
+                        ["x11vnc", "-display", ":99", "-rfbport", "5900", "-nopw", "-forever", "-shared", "-quiet"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    )
                 self.process = subprocess.Popen(
-                    arguments, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    text=True,
+                    arguments,
+                    cwd=cwd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
                 )
                 self.media_context = media_context
             except Exception:
@@ -174,13 +185,16 @@ class InteractiveEmulator:
                     media.__exit__(None, None, None)
 
 
-INTERACTIVE_EMULATOR = InteractiveEmulator()
-
-
 def create_tools_blueprint(
     service: DiskService,
     operations: OperationRegistry,
+    runtime: PlatformRuntime | None = None,
+    emulator_manager: InteractiveEmulator | None = None,
 ) -> Blueprint:
+    runtime = runtime or PlatformRuntime()
+    interactive_emulator = emulator_manager or InteractiveEmulator(
+        native=runtime.kind == "desktop"
+    )
     blueprint = Blueprint("tools", __name__)
 
     def requested_emulator_session(session, data: dict):
@@ -852,19 +866,25 @@ def create_tools_blueprint(
         slot, side = optional_int(data.get("slot")), optional_int(data.get("side"))
         if bool(data.get("interactive")):
             try:
-                arguments, launch = INTERACTIVE_EMULATOR.start(
+                arguments, launch = interactive_emulator.start(
                     launch_media(session, configured, data), debug=False,
                 )
             except (ValueError, OSError, subprocess.SubprocessError) as exc:
-                raise DiskError(f"The browser-visible emulator could not start: {exc}") from exc
+                raise DiskError(f"The interactive emulator could not start: {exc}") from exc
             emulator = configured_emulator(launch)
             result = {
                 "time": datetime.now(timezone.utc).isoformat(), "command": arguments[0],
                 "returnCode": 0, "bounded": False, "interactive": True,
                 "emulator": emulator.label, "machine": str(launch.hardware_profile.get("machine") or ""),
                 "launchMode": str(data.get("mode") or "parent-auto"),
-                "summary": f"{emulator.label} is running in the browser display.",
-                "stdout": "", "stderr": "", "viewerPort": 8668,
+                "summary": (
+                    f"{emulator.label} is running in its native desktop window."
+                    if runtime.kind == "desktop"
+                    else f"{emulator.label} is running in the browser display."
+                ),
+                "stdout": "", "stderr": "",
+                "displayMode": "native" if runtime.kind == "desktop" else "browser",
+                **({} if runtime.kind == "desktop" else {"viewerPort": 8668}),
             }
             project = record_editor_run(session, path, slot, side, result)
             return jsonify(result=result, project=project)
@@ -899,7 +919,7 @@ def create_tools_blueprint(
     @request_effect("external", "stopping the managed emulator")
     def editor_emulator_stop(image_id):
         service.get(image_id)
-        INTERACTIVE_EMULATOR.stop()
+        interactive_emulator.stop()
         return jsonify(stopped=True)
 
     @blueprint.get("/api/images/<image_id>/editor-assembler")
@@ -1010,19 +1030,25 @@ def create_tools_blueprint(
         expression = str(data.get("expression") or "").strip()[:500]
         if bool(data.get("interactive")):
             try:
-                arguments, launch = INTERACTIVE_EMULATOR.start(
+                arguments, launch = interactive_emulator.start(
                     launch_media(session, configured, data), debug=True,
                 )
             except (ValueError, OSError, subprocess.SubprocessError) as exc:
-                raise DiskError(f"The browser-visible debugger could not start: {exc}") from exc
+                raise DiskError(f"The interactive debugger could not start: {exc}") from exc
             emulator = configured_emulator(launch)
             result = {
                 "time": datetime.now(timezone.utc).isoformat(), "command": arguments[0],
                 "returnCode": 0, "bounded": False, "interactive": True,
                 "emulator": emulator.label, "machine": str(launch.hardware_profile.get("machine") or ""),
                 "launchMode": str(data.get("mode") or "parent-auto"),
-                "summary": f"{emulator.label} debugger is running in the browser display.",
-                "stdout": "", "stderr": "", "viewerPort": 8668,
+                "summary": (
+                    f"{emulator.label} debugger is running in its native desktop window."
+                    if runtime.kind == "desktop"
+                    else f"{emulator.label} debugger is running in the browser display."
+                ),
+                "stdout": "", "stderr": "",
+                "displayMode": "native" if runtime.kind == "desktop" else "browser",
+                **({} if runtime.kind == "desktop" else {"viewerPort": 8668}),
                 "breakpoint": str(data.get("breakpoint") or ""), "action": action,
                 "expression": expression, "kind": "debugger",
             }

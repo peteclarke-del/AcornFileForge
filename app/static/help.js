@@ -12,6 +12,7 @@ function showHelp() {
         <nav class="help-toc" aria-label="Help topics">
           <strong>START HERE</strong>
           <a href="#help-start">Open or create an image</a>
+          <a href="#help-desktop">Linux desktop application</a>
           <a href="#help-workspace">Workspace and selection</a>
           <a href="#help-checkpoints">Undo and checkpoints</a>
           <a href="#help-files">Files and folders</a>
@@ -90,6 +91,39 @@ function showHelp() {
                 <tr><td>ROMFS</td><td>BBC/Master/Electron files in a data ROM</td><td>Flat, case-sensitive, 10-character names; 8 or 16 KiB</td></tr>
               </tbody>
             </table></div>
+          </section>
+          <section id="help-desktop">
+            <h3>Linux desktop application</h3>
+            <p class="help-lead">The Linux edition is the same Acorn File Forge workbench in a native GTK 4 window. Format support, editors, validation and saved packages stay aligned with the Docker edition.</p>
+            <div class="help-task">
+              <h4>Install and launch</h4>
+              <ol>
+                <li>Install Python 3, GTK 4, Libadwaita, WebKitGTK 6 and their Python GObject bindings using your Linux package manager.</li>
+                <li>From the project checkout, run <code>tools/install-linux-desktop.sh</code>.</li>
+                <li>Launch <strong>Acorn File Forge</strong> from the application menu or run <code>tools/acorn-file-forge-desktop</code>.</li>
+              <li>Use the native folder button or <kbd>Ctrl</kbd>+<kbd>O</kbd> to select one or several images. Opening a registered image in the file manager also sends it to the workbench.</li>
+                <li>The native chooser uses automatic target detection. Use <strong>File → Open image</strong> inside a pane when you need to choose an explicit ADFS target or combine several ROM components.</li>
+              </ol>
+            </div>
+            <ul>
+              <li>DAT and DSC partners with the same basename are paired automatically.</li>
+              <li>The selected source is copied into XDG application storage before editing. The original is not changed in place.</li>
+              <li>Saved ZIPs use the normal Linux Downloads directory and contain the same image, sidecars and README as the web edition.</li>
+              <li>Managed emulators appear as native windows. In Docker they continue to appear in the browser display.</li>
+              <li>Install the optional official Greaseweazle tools to write SSD, DSD, ADFS floppy and HFE images to real disks. At an MMB index, select one formatted slot to write it as an SSD.</li>
+            </ul>
+            <div class="help-task"><h4>Write a physical floppy with Greaseweazle</h4><ol>
+              <li>Confirm <code>gw info</code> can see the connected device and that the Linux udev rules permit access.</li>
+              <li>Open a supported floppy image. For an MMB, select exactly one formatted disk slot.</li>
+              <li>Choose <strong>Tools → Write physical floppy</strong>, or right-click the image title or coloured format badge.</li>
+              <li>Select drive A, B, 0, 1, 2 or 3, insert the destination disk, then acknowledge that every existing byte on it will be overwritten.</li>
+              <li>Follow the live cylinder, head and verification progress. Abort stops Greaseweazle, but leaves the physical disk potentially incomplete; the working image remains unchanged.</li>
+              <li>Keep a sector disk only after the completion dialog confirms verification. HFE contains raw bitcells and cannot be automatically verified, so test that disk on suitable hardware.</li>
+            </ol></div>
+            <div class="help-note"><strong>Stable source:</strong> the working image is finalised and copied to a private snapshot before the physical write begins. Later edits cannot alter an in-progress disk, and temporary slot images and snapshots are removed afterwards.</div>
+            <div class="help-note"><strong>One product, two hosts:</strong> the desktop application embeds the shared frontend and starts the shared API on a private random loopback port. A launch token protects it, and the local-path adapter is not exposed by the web host.</div>
+            <div class="help-note"><strong>Icon opens no window:</strong> pull the current code and rerun <code>tools/install-linux-desktop.sh</code>. The launcher handles Ubuntu systems that deny WebKitGTK's Bubblewrap user namespace. Run <code>~/.local/bin/acorn-file-forge</code> in a terminal if startup diagnostics are still needed.</div>
+            <div class="help-warning"><strong>Updating the source:</strong> pull the new version and rerun the desktop installer when Python dependencies change. Working sessions remain under <code>~/.local/share/acorn-file-forge</code>, or the configured XDG data directory.</div>
           </section>
           <section id="help-workspace">
             <h3>Workspace, navigation and selection</h3>
