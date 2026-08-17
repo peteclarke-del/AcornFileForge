@@ -95,7 +95,7 @@ project documentation. An unchecked item remains in scope.
       workflows and saved README.
 - [x] Define a versioned consolidated compatibility-report schema and use it
       for the current selection dry-run.
-- [ ] Present that shared report before every cross-format batch from drag and
+- [x] Present that shared report before every cross-format batch from drag and
       drop, File commands and Online Library. The headless CLI already uses it
       for imports and exposes it directly through `preflight`.
 - [x] Export a generated compatibility report directly as JSON or Markdown.
@@ -167,14 +167,14 @@ project documentation. An unchecked item remains in scope.
       emulator capabilities in hardware profiles.
 - [x] Validate images and saved packages against the selected profile and
       generate a technical README with applicable warnings.
-- [ ] Model deployment layouts for Gotek, MMFS, BeebSCSI, Pi1MHz and supported
+- [x] Model deployment layouts for Gotek, MMFS, BeebSCSI, Pi1MHz and supported
       RISC OS targets, including filenames, directories, companion files and
       capacity rules.
-- [ ] Generate the chosen SD-card or host-directory tree in a downloadable ZIP
+- [x] Generate the chosen SD-card or host-directory tree in a downloadable ZIP
       without changing the open working images.
-- [ ] Include a hardware-specific installation, backup, verification and
+- [x] Include a hardware-specific installation, backup, verification and
       rollback guide generated from the exact profile and package contents.
-- [ ] Validate the generated layout itself before download and report anything
+- [x] Validate the generated layout itself before download and report anything
       that still requires a manual hardware step.
 
 ## 11. Cheat analysis and verified patches

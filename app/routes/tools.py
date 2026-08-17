@@ -30,6 +30,11 @@ from ..checksum import sha256_bytes
 from ..archive_browser import read_archive_member_details
 from ..cheat_analysis import analyse_basic, analyse_disassembly, cheat_report, disassembly_diagnostics
 from ..disk_service import DiskError, DiskService
+from ..deployment_service import (
+    available_deployment_targets,
+    build_deployment_archive,
+    deployment_plan,
+)
 from ..emulator_config import configured_emulator, emulator_command, emulator_status
 from ..hardware_profiles import normalise_hardware_profile
 from ..image_diff import compare_images, manifest_fingerprint
@@ -351,7 +356,16 @@ def create_tools_blueprint(
     @blueprint.post("/api/images/<image_id>/preflight")
     @request_effect("read-only", "building an import preflight report")
     def preflight(image_id):
-        return jsonify(preflight_report(service, service.get(image_id), payload()))
+        data = payload()
+        with operations.tracked(
+            data.get("operationId"),
+            "Reviewing proposed cross-format changes",
+            "Compatibility preflight complete",
+        ) as progress:
+            progress("Checking destination names and metadata", 0, 1)
+            report = preflight_report(service, service.get(image_id), data)
+            progress("Compatibility report ready", 1, 1)
+            return jsonify(report)
 
     @blueprint.post("/api/images/<image_id>/preflight/accept")
     @request_effect("external", "retaining an accepted compatibility report")
@@ -362,6 +376,61 @@ def create_tools_blueprint(
         return jsonify(
             acceptedAt=report["acceptedAt"],
             retained=len(session.compatibility_reports),
+        )
+
+    @blueprint.get("/api/images/<image_id>/deployment/targets")
+    @request_effect("read-only", "checking hardware deployment targets")
+    def deployment_targets(image_id):
+        session = service.get(image_id)
+        return jsonify(targets=available_deployment_targets(service, session))
+
+    @blueprint.post("/api/images/<image_id>/deployment/plan")
+    @request_effect("read-only", "validating a hardware deployment layout")
+    def plan_deployment(image_id):
+        data = payload()
+        operation_id = data.get("operationId")
+        with operations.tracked(
+            operation_id,
+            "Preparing an isolated deployment snapshot",
+            "Hardware deployment plan ready",
+        ) as progress:
+            return jsonify(deployment_plan(service, service.get(image_id), data, progress))
+
+    @blueprint.post("/api/images/<image_id>/deployment/package")
+    @request_effect("read-only", "building a hardware deployment package")
+    def package_deployment(image_id):
+        session = service.get(image_id)
+        data = payload()
+        operation_id = data.get("operationId")
+        with tempfile.NamedTemporaryFile(
+            dir=service.work_dir,
+            prefix="hardware-deployment-",
+            suffix=".zip",
+            delete=False,
+        ) as temporary:
+            archive_path = Path(temporary.name)
+        try:
+            with operations.tracked(
+                operation_id,
+                "Preparing an isolated deployment snapshot",
+                "Hardware deployment package ready",
+            ) as progress:
+                plan = build_deployment_archive(service, session, data, archive_path, progress)
+        except Exception:
+            archive_path.unlink(missing_ok=True)
+            raise
+
+        @after_this_request
+        def remove_deployment_archive(response):
+            archive_path.unlink(missing_ok=True)
+            return response
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
+        return send_file(
+            archive_path,
+            mimetype="application/zip",
+            as_attachment=True,
+            download_name=f"{Path(session.name).stem}-{plan['target']}-{timestamp}.zip",
         )
 
     @blueprint.get("/api/images/<image_id>/health")

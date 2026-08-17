@@ -3,7 +3,8 @@
 The Linux desktop edition gives Acorn File Forge a normal application window,
 file chooser, application-menu entry and Acorn image file associations. It
 uses the same workbench and backend as the Docker edition, so format support,
-editors, validation, recipes, checkpoints and save packages stay in step.
+editors, validation, recipes, checkpoints, deployment packages and save
+packages stay in step.
 
 ## Requirements
 
@@ -83,6 +84,9 @@ target-specific changes.
   browser-owned sessions do.
 - Save image produces the same timestamped ZIP and technical README. WebKitGTK
   writes it to the user's normal Downloads directory.
+- **Tools → Build hardware deployment** uses the same isolated snapshot and
+  target layouts as Docker. The finished Gotek, MMFS, BeebSCSI, Pi1MHz or RISC
+  OS ZIP is written through WebKitGTK to the normal Downloads directory.
 - Run and Debug use native emulator windows. The Docker edition continues to
   use its browser-visible noVNC display.
 - Supported floppy images and one selected MMB slot can be written through a

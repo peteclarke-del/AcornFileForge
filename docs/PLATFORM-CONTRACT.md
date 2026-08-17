@@ -17,7 +17,7 @@ logic.
 2. `app/static/` is the only product frontend. The desktop package embeds it
    with WebKitGTK and must not carry a copied HTML, CSS or JavaScript tree.
 3. Image opening, editing, validation, conversion, menus, metadata, recipes,
-   undo and saving remain in shared `app/` modules.
+   hardware deployment, undo and saving remain in shared `app/` modules.
 4. Host adapters contain only work that a browser cannot perform. Current
    examples are choosing an absolute local path, owning a native window,
    launching an emulator on the host display and accessing a Greaseweazle USB
@@ -49,6 +49,10 @@ The route-map test constructs both hosts and fails when an undeclared endpoint
 appears on only one. It also verifies that both hosts serve the same static
 tree. These checks prevent accidental drift, but they do not replace a manual
 desktop smoke test for native file selection, downloading and emulator windows.
+
+Platform contract version 3 adds hardware deployment as a shared capability.
+The target planner, isolated snapshot, ZIP builder and browser interface are
+therefore identical in Docker and the Linux desktop host.
 
 ## Storage and security
 
