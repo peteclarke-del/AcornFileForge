@@ -115,6 +115,10 @@ class CheckpointStore:
         }
 
     def list(self, session: ImageSession) -> list[dict]:
+        return [self._public(item) for item in self._metadata(session)]
+
+    def _metadata(self, session: ImageSession) -> list[dict]:
+        """Return valid checkpoint metadata newest first for internal consumers."""
         root = self._root(session)
         if not root.is_dir():
             return []
@@ -124,7 +128,25 @@ class CheckpointStore:
             if folder.is_dir() and (metadata := self._read_metadata(folder)) is not None
         ]
         checkpoints.sort(key=lambda item: int(item.get("created") or 0), reverse=True)
-        return [self._public(item) for item in checkpoints]
+        return checkpoints
+
+    def oldest_snapshot(
+        self, session: ImageSession
+    ) -> tuple[Path, Path | None, dict] | None:
+        """Return the oldest retained image, optional descriptor and full metadata."""
+        checkpoints = self._metadata(session)
+        if not checkpoints:
+            return None
+        metadata = checkpoints[-1]
+        folder = self._root(session) / str(metadata["id"])
+        descriptor = (
+            folder / "descriptor.bin" if metadata.get("hasDescriptor") else None
+        )
+        if descriptor is not None and not descriptor.is_file():
+            raise CheckpointError(
+                "The earliest workflow checkpoint has lost its DSC companion."
+            )
+        return folder / "image.bin", descriptor, metadata
 
     def create(
         self,

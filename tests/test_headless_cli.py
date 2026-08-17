@@ -180,6 +180,22 @@ class HeadlessCliTests(unittest.TestCase):
             with self.assertRaisesRegex(DiskError, "unverified source alias"):
                 load_recipe(recipe_path)
 
+    def test_recipe_rejects_patch_action_that_bypasses_source_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            recipe_path = Path(temporary) / "unsafe-patch.json"
+            recipe_path.write_text(json.dumps({
+                "format": RECIPE_FORMAT,
+                "version": RECIPE_VERSION,
+                "name": "Unsafe patch",
+                "sources": {
+                    "image": {"size": 1, "sha256": "a" * 64},
+                },
+                "actions": [{"action": "apply-patch", "source": "unchecked"}],
+                "output": {"path": "result.ssd", "files": []},
+            }), encoding="utf-8")
+            with self.assertRaisesRegex(DiskError, "unverified source alias"):
+                load_recipe(recipe_path)
+
     def test_recipe_output_identity_must_match_rebuild(self):
         document = {"output": {"files": [{"size": 10, "sha256": "a" * 64}]}}
         with self.assertRaisesRegex(cli.IdentityError, "does not match"):

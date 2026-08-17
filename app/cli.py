@@ -614,6 +614,8 @@ def _recipe_run(args, progress) -> dict:
                 continue
             elif kind == "convert-uef":
                 session, _files = service.convert_uef(session, action["format"])
+            elif kind == "apply-patch":
+                apply_patch(service, session, paths[action["source"]], progress)
             else:
                 raise DiskError(f"Recipe action is not supported: {kind}")
         if args.dry_run:
