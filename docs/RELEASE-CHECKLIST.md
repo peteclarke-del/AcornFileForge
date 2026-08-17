@@ -7,6 +7,11 @@ gate must be reproducible from a clean checkout without anything in `samples/`.
 Return to the [documentation index](README.md) for the operator and technical
 handbooks validated by this gate.
 
+Retained local evidence is stored under `docs/release-evidence/`. The
+[17 August 2026 AMD64 RC2 record](release-evidence/2026-08-17-amd64-rc2.md)
+covers the current complete automated and browser suites. It does not satisfy
+the independent ARM64, ARMv7 or physical-hardware rows below.
+
 Record the intended version before starting:
 
 ```bash
