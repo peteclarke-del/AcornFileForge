@@ -1222,6 +1222,21 @@ browser preference rather than part of the imported project. The project is
 kept small by referring to private working sessions; image bytes remain in the
 Docker volume and in the normal timestamped image ZIP backups.
 
+The same **Portable project** screen can export a completed image as a
+deterministic workflow bundle. It starts from the earliest retained pre-change
+checkpoint, builds and proves a guarded `.affpatch.zip`, records the physical
+and logical identity of the required base image and DSC companion, and
+calculates the exact hashes produced by that deterministic replay.
+Hardware-profile choices and accepted
+compatibility reports are retained as non-secret decisions. The bundled
+README gives the complete `recipe-run` command. Rebuild stops if the base,
+descriptor, patch payload or final output differs from the recorded identity.
+Original image bytes are not duplicated in the workflow ZIP.
+
+This facility covers writable DFS, MMB, ADFS, ROM and ROMFS sessions. UEF and
+HFE workflow export remains disabled because replay must preserve their tape
+timing or track-container details, not merely the decoded filesystem.
+
 ### Persistent jobs
 
 Long transfer records are written to `operations.json` in the work volume.
@@ -2490,6 +2505,9 @@ Backend routes are split by responsibility:
 - `app/image_diff.py` assigns filesystem-aware manifest identities, produces
   deterministic logical fingerprints and classifies cross-image content and
   metadata changes without coupling that work to HTTP or browser state.
+- `app/workflow_recipe.py` proves completed GUI workflows by replaying a
+  guarded patch from the earliest retained base, comparing byte-exact saved
+  outputs and packaging the versioned recipe, patch and rebuild guide.
 - `app/content_kind.py` owns bounded content classification and BASIC, script,
   text, binary and UEF recognition.
 - `app/archive_browser.py` owns safe read-only UEF and compressed archive

@@ -51,6 +51,7 @@ from ..file_editor import (
     encode_editor_replacement,
 )
 from ..operations import OperationRegistry
+from ..workflow_recipe import build_workflow_recipe_bundle
 from ..menu.adfs import audit_adfs_menu_pages
 from ..metadata_lookup import lookup_online, parse_distribution_filename
 from ..menu.mmb import (
@@ -505,6 +506,41 @@ def create_tools_blueprint(
             mimetype="application/zip",
             as_attachment=True,
             download_name=f"{Path(base.name).stem}-to-{Path(candidate.name).stem}.affpatch.zip",
+        )
+
+    @blueprint.get("/api/images/<image_id>/workflow-recipe")
+    @request_effect("read-only", "building a deterministic workflow recipe")
+    def create_workflow_recipe(image_id):
+        session = service.get(image_id)
+        operation_id = request.args.get("operationId")
+        with tempfile.NamedTemporaryFile(
+            dir=service.work_dir,
+            prefix="workflow-recipe-",
+            suffix=".affrecipe.zip",
+            delete=False,
+        ) as temporary:
+            bundle_path = Path(temporary.name)
+        try:
+            with operations.tracked(
+                operation_id,
+                "Building deterministic workflow recipe",
+                "Deterministic workflow recipe ready",
+            ) as progress:
+                build_workflow_recipe_bundle(service, session, bundle_path, progress)
+        except Exception:
+            bundle_path.unlink(missing_ok=True)
+            raise
+
+        @after_this_request
+        def remove_workflow_recipe(response):
+            bundle_path.unlink(missing_ok=True)
+            return response
+
+        return send_file(
+            bundle_path,
+            mimetype="application/zip",
+            as_attachment=True,
+            download_name=f"{Path(session.name).stem}-workflow.affrecipe.zip",
         )
 
     @blueprint.post("/api/images/<image_id>/patch")

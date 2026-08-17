@@ -48,6 +48,20 @@ class CheckpointTests(unittest.TestCase):
             self.assertFalse(session.dirty)
             self.assertEqual(session.warnings, [])
 
+    def test_oldest_snapshot_exposes_validated_primary_descriptor_and_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            service, session = self.make_session(Path(directory), paired=True)
+            oldest = service.create_checkpoint(session, "Workflow base")
+            session.path.write_bytes(b"later")
+            service.create_checkpoint(session, "Later point")
+
+            image, descriptor, metadata = service.oldest_checkpoint_snapshot(session)
+
+            self.assertEqual(metadata["id"], oldest["id"])
+            self.assertEqual(image.read_bytes(), b"original image")
+            self.assertEqual(descriptor.read_bytes(), b"original descriptor")
+            self.assertEqual(metadata["reason"], "Workflow base")
+
     def test_undo_restores_and_consumes_latest_automatic_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             service, session = self.make_session(Path(directory))

@@ -252,6 +252,15 @@ class SessionDiskMixin:
         with session.lock:
             return self.checkpoints.list(session)
 
+    def oldest_checkpoint_snapshot(
+        self, session: ImageSession
+    ) -> tuple[Path, Path | None, dict] | None:
+        with session.lock:
+            try:
+                return self.checkpoints.oldest_snapshot(session)
+            except CheckpointError as exc:
+                raise DiskError(str(exc)) from exc
+
     def create_checkpoint(
         self,
         session: ImageSession,
