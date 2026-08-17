@@ -122,6 +122,7 @@ function showHelp() {
             </ol></div>
             <div class="help-note"><strong>Stable source:</strong> the working image is finalised and copied to a private snapshot before the physical write begins. Later edits cannot alter an in-progress disk, and temporary slot images and snapshots are removed afterwards.</div>
             <div class="help-note"><strong>One product, two hosts:</strong> the desktop application embeds the shared frontend and starts the shared API on a private random loopback port. A launch token protects it, and the local-path adapter is not exposed by the web host.</div>
+            <div class="help-note"><strong>Icon opens no window:</strong> pull the current code and rerun <code>tools/install-linux-desktop.sh</code>. The launcher handles Ubuntu systems that deny WebKitGTK's Bubblewrap user namespace. Run <code>~/.local/bin/acorn-file-forge</code> in a terminal if startup diagnostics are still needed.</div>
             <div class="help-warning"><strong>Updating the source:</strong> pull the new version and rerun the desktop installer when Python dependencies change. Working sessions remain under <code>~/.local/share/acorn-file-forge</code>, or the configured XDG data directory.</div>
           </section>
           <section id="help-workspace">

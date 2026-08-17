@@ -47,6 +47,13 @@ still finds the checkout and virtual environment. It also removes Snap-private
 GTK module paths when started from an IDE terminal, preventing incompatible
 Snap libraries from being loaded into the native application.
 
+Some Ubuntu installations deny the unprivileged user namespace that
+WebKitGTK's Bubblewrap process normally creates. The launcher enables WebKit's
+fallback mode so the application does not disappear before drawing its first
+window. This fallback is deliberately limited to the desktop host, whose
+WebView loads only the authenticated service bound to `127.0.0.1`; it does not
+change the Docker/browser edition.
+
 Launch **Acorn File Forge** from the desktop application menu, run
 `~/.local/bin/acorn-file-forge`, or open a registered SSD, DSD, MMB, ADFS,
 BeebSCSI, UEF, HFE or ROM image from the file manager. DAT and DSC partners are
@@ -142,3 +149,17 @@ Then launch the desktop host and verify opening from GTK, opening from a file
 manager, recovery after restart, a complete image download and a native
 emulator launch. Web browser regressions remain mandatory because the frontend
 is shared.
+
+## Troubleshooting application-menu launch
+
+Rerun `tools/install-linux-desktop.sh` after pulling an update. If the icon is
+present but no window appears, run `~/.local/bin/acorn-file-forge` in a terminal
+to retain startup diagnostics. Older installations may report `bwrap: setting
+up uid map: Permission denied`; rerunning the current installer refreshes the
+launcher with the WebKitGTK fallback described above.
+
+The application entry is
+`~/.local/share/applications/uk.co.acornfileforge.AcornFileForge.desktop`.
+`desktop-file-validate` should report no errors for it. A checkout may live in
+a path containing spaces because the desktop entry calls the stable launcher
+under `~/.local/bin`, not the checkout path directly.

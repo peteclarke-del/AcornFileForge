@@ -93,6 +93,7 @@ def run(argv: list[str] | None = None) -> int:
                 toolbar.add_top_bar(header)
                 self.webview = WebKit.WebView()
                 self.webview.connect("load-changed", self._loaded)
+                self.webview.connect("decide-policy", self._navigation_policy)
                 toolbar.set_content(self.webview)
                 self.window.set_content(toolbar)
                 request = WebKit.URIRequest.new(server.url)
@@ -102,6 +103,20 @@ def run(argv: list[str] | None = None) -> int:
                 self.webview.load_request(request)
                 self.window.connect("close-request", self._closing)
             self.window.present()
+
+        def _navigation_policy(self, _view, decision, decision_type) -> bool:
+            if decision_type not in (
+                WebKit.PolicyDecisionType.NAVIGATION_ACTION,
+                WebKit.PolicyDecisionType.NEW_WINDOW_ACTION,
+            ):
+                return False
+            uri = decision.get_navigation_action().get_request().get_uri()
+            if uri.startswith(server.url) or uri == "about:blank" or uri.startswith("blob:"):
+                return False
+            decision.ignore()
+            if uri.startswith(("http://", "https://")):
+                Gio.AppInfo.launch_default_for_uri(uri, None)
+            return True
 
         def do_open(self, files, _count, _hint) -> None:
             self.pending_paths.extend(
