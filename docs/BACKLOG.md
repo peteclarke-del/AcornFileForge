@@ -1,9 +1,9 @@
 # Acorn File Forge backlog
 
-This is the product backlog agreed after the 1.0.0-rc.1 feature review. It is
-separate from the [release checklist](RELEASE-CHECKLIST.md): the checklist is a
-repeatable validation gate, while this page records product work that is not
-finished yet.
+This product backlog was established after the `1.0.0-rc.1` feature review and
+reviewed again against `1.0.0-rc.2` on 17 August 2026. It is separate from the
+[release checklist](RELEASE-CHECKLIST.md): the checklist is a repeatable
+validation gate, while this page records product work that is not finished.
 
 Items are split so completed work can be checked without hiding the remaining
 part of a larger idea. A checked item is implemented and covered by the normal
@@ -20,7 +20,9 @@ project documentation. An unchecked item remains in scope.
 - [ ] Run and retain the complete AMD64, ARM64 and ARMv7 clean-build matrix for
       the release candidate.
 - [x] Run the generated-media and fault-injection gates for the candidate and
-      retain the AMD64 evidence in `docs/release-evidence/`.
+      retain the AMD64 evidence in `docs/release-evidence/`. RC1 and current
+      RC2 records are retained separately so the historical result remains
+      auditable.
 - [ ] Complete the real-hardware gate for the affected BBC, Electron,
       BeebSCSI, MMFS and RISC OS workflows.
 - [ ] Choose the release version, update `VERSION`, create the signed or

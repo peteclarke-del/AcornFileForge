@@ -21,6 +21,7 @@ that match the running frontend.
 | Inspect, preserve or edit load and execution addresses | [Acorn file catalogue metadata](FILE-METADATA-GUIDE.md) |
 | Inspect, compare, build, patch or program ROM and ROMFS images | [ROM image handbook](ROM-GUIDE.md) |
 | Build and validate a release | [Release checklist](RELEASE-CHECKLIST.md) |
+| Review retained validation evidence | [Current AMD64 RC2 evidence](release-evidence/2026-08-17-amd64-rc2.md) |
 | Review completed and outstanding product improvements | [Product backlog](BACKLOG.md) |
 | Audit the emulator firmware shipped in the image | [Firmware notes](../firmware/README.md) |
 | Review the Oaknut FileCore integration and format limits | [Oaknut FileCore support](OAKNUT-FILECORE-SUPPORT.md) |
@@ -141,6 +142,12 @@ and a smaller report export remain separate. See the
 
 ## Documentation conventions
 
+- Write direct, factual prose. State the supported operation, its validation
+  boundary and the observable failure mode. Do not imply support that has not
+  been exercised.
+- Use commas, colons, semicolons or separate sentences instead of em dashes.
+- Distinguish implemented behaviour, retained test evidence and work that
+  still requires hardware or architecture-specific validation.
 - Menu paths use **File → Save image** style notation.
 - Acorn paths use their native syntax, such as `$.Games.Repton` or `R.Loader`.
 - Sizes use KiB, MiB and GiB when describing byte capacity.
@@ -162,6 +169,8 @@ Documentation changes are part of feature work. A change is complete when:
 4. Local links and image references resolve.
 5. Changed UI screenshots are captured from a clean current build.
 6. The release checklist includes any new generated-media or manual test gate.
+7. Documentation regression tests pass and the published prose contains no em
+   dashes or obsolete pane-count claims.
 
 Do not use files from `samples/` as published documentation assets. That
 directory is intentionally excluded from Git, release archives and the Docker

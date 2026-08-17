@@ -7,10 +7,10 @@ services and editors, so a format fix or feature is not maintained twice.
 
 Open as many image panes as the browser and computer can comfortably handle,
 browse their real filing systems and drag files between them. You can add,
-export, rename, move, delete, lock, compact and
-validate files without touching the original image on your computer. MMB and
-ADFS menu tools, private session recovery, undo points, health checks and
-format-aware imports are built in rather than left to separate utilities.
+export, rename, move, delete, lock, compact and validate files without touching
+the original image on your computer. MMB and ADFS menu tools, private session
+recovery, undo points, health checks and format-aware imports are part of the
+same workflow.
 
 ![Acorn File Forge in light mode](docs/images/acorn-file-forge-light.png)
 
@@ -101,21 +101,31 @@ they will not be committed or packaged.
 
 ## Current status
 
-The current release candidate is `1.0.0-rc.2`. It supports the editing and transfer workflows described in
-this guide, including movable, resizable and stackable panes, undo and named
-checkpoints, browser-private recovery, background job tracking, MMB and ADFS
-menu maintenance, HFE handling, UEF extraction, an Online Library and
-hardware-aware ADFS checks. A browser-private IndexedDB catalogue can retain
-owned image manifests, hashes, menu titles, publishers, machines and physical
-locations, then report duplicates, variants and missing wanted titles even
-when those images are closed.
+The current release candidate is `1.0.0-rc.2`. It provides the editing and
+transfer workflows described in this guide, including movable, resizable and
+stackable panes, undo and named checkpoints, browser-private recovery,
+background job tracking, MMB and ADFS menu maintenance, HFE handling, an Online
+Library and hardware-aware ADFS checks. UEF projects expose the physical chunk
+layout and permit same-length member edits only when the recording can be
+rebuilt without altering timing or unknown chunks. A browser-private IndexedDB
+catalogue retains owned-image manifests, hashes, menu titles, publishers,
+machines and physical locations, then reports duplicates, variants and missing
+wanted titles even when those images are closed.
+
 Raw and banked ROM analysis, editable Acorn ROMFS data images, content-aware
-file editors, archive and UEF browsing, guarded BASIC transformations, annotated
-6502/ARM/68000 disassembly, read-only cheat-candidate analysis and optional
-emulator hand-off are also included.
-The application is useful today, but Acorn media images can contain unusual loaders,
-copy protection and filesystem variants. Keep a known-good source image and
-test important downloads before putting them onto real hardware.
+file editors, archive browsing, guarded BASIC transformations and annotated
+6502, ARM and 68000 disassembly are included. Cheat analysis combines static
+evidence with tester-supplied emulator observations; proven changes can be
+packaged as exact-hash guarded patches and retained in a private browser
+library. Managed Elkulator, B-em and MAME sessions support the media each tool
+can mount. Electron MMFS profiles can test a complete MMB through a generated
+private FAT32 card and the Pi1MHz adapter. Recognised menu programs can also be
+captured in the emulator sandbox for comparison with their decoded preview.
+
+Acorn media can contain unusual loaders, copy protection and filesystem
+variants. Keep a known-good source image and test important downloads before
+putting them onto real hardware. The application reports uncertainty rather
+than claiming that an unproved conversion or launch path is safe.
 
 Bug reports and proposed improvements can be raised in the
 [GitHub repository](https://github.com/peteclarke-del/AcornFileForge).
