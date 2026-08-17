@@ -17,6 +17,7 @@ from .effects import image_mutation, request_effect
 
 from ..analysis_service import (
     build_manifest,
+    accept_compatibility_report,
     dependency_report,
     duplicate_report,
     health_report,
@@ -331,6 +332,17 @@ def create_tools_blueprint(
     @request_effect("read-only", "building an import preflight report")
     def preflight(image_id):
         return jsonify(preflight_report(service, service.get(image_id), payload()))
+
+    @blueprint.post("/api/images/<image_id>/preflight/accept")
+    @request_effect("external", "retaining an accepted compatibility report")
+    def accept_preflight(image_id):
+        session = service.get(image_id)
+        report = accept_compatibility_report(service, session, payload())
+        service._persist_session(session)
+        return jsonify(
+            acceptedAt=report["acceptedAt"],
+            retained=len(session.compatibility_reports),
+        )
 
     @blueprint.get("/api/images/<image_id>/health")
     def health(image_id):
