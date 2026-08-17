@@ -20,6 +20,7 @@ that match the running frontend.
 | Review completed and outstanding product improvements | [Product backlog](BACKLOG.md) |
 | Audit the emulator firmware shipped in the image | [Firmware notes](../firmware/README.md) |
 | Review the Oaknut FileCore integration and format limits | [Oaknut FileCore support](OAKNUT-FILECORE-SUPPORT.md) |
+| Automate creation, validation, imports, menus, comparison and patching | [Headless CLI and deterministic recipes](CLI-GUIDE.md) |
 | Complete a task while the application is open | Select **Help** in the application header |
 
 ## Capability map
@@ -92,6 +93,15 @@ ordinary refresh. Saving builds a timestamped ZIP only after the image and its
 documentation are complete. Each package includes the image, partner and
 metadata files where applicable, checksums, target details, warnings and a
 generated README.
+
+### Automate a repeatable build
+
+The supported headless CLI exposes image creation, finalisation, validation,
+manifest export, host-file import, UEF conversion, compaction, MMB and ADFS
+menu creation, comparison and guarded patches. Mutating commands have a dry-run
+mode with stable JSON status and exit codes. Completed commands can record a
+versioned recipe containing exact source hashes and replayable non-secret
+decisions. See the [CLI guide](CLI-GUIDE.md).
 
 ## Documentation conventions
 

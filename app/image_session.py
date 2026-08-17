@@ -55,6 +55,7 @@ class ImageSession:
     rom_component_names: list[str] = field(default_factory=list)
     rom_project: dict = field(default_factory=lambda: normalise_project({}))
     editor_projects: dict[str, dict] = field(default_factory=dict)
+    compatibility_reports: list[dict] = field(default_factory=list)
     content_kind_cache: dict[tuple, str] = field(default_factory=dict)
     owner_id: str | None = field(default_factory=lambda: SESSION_OWNER.get())
     lock: threading.RLock = field(default_factory=threading.RLock)

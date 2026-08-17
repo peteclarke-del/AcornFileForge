@@ -96,6 +96,11 @@ class SessionDiskMixin:
                     str(key): normalise_editor_project(value)
                     for key, value in dict(metadata.get("editorProjects") or {}).items()
                 },
+                compatibility_reports=[
+                    dict(report)
+                    for report in list(metadata.get("compatibilityReports") or [])[-10:]
+                    if isinstance(report, dict)
+                ],
                 finalised_mtime_ns=(
                     int(metadata["finalisedMtimeNs"])
                     if metadata.get("finalisedMtimeNs") is not None

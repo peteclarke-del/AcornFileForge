@@ -4,6 +4,8 @@ import csv
 import io
 import re
 from collections import defaultdict, deque
+from copy import deepcopy
+from datetime import datetime, timezone
 
 from .checksum import sha256_bytes, sha256_path
 from .dfs_compat import dfs_catalogue_files, infer_dfs_launch_page
@@ -826,6 +828,48 @@ def health_report(service, session, progress=None) -> dict:
 
 COMPATIBILITY_REPORT_FORMAT = "acorn-file-forge-compatibility-report"
 COMPATIBILITY_REPORT_VERSION = 1
+
+
+def accept_compatibility_report(service, session, document: dict) -> dict:
+    """Regenerate and retain one reviewed report for the next saved package."""
+    if not isinstance(document, dict):
+        raise DiskError("The compatibility report is not a JSON object.")
+    if (
+        document.get("format") != COMPATIBILITY_REPORT_FORMAT
+        or document.get("version") != COMPATIBILITY_REPORT_VERSION
+    ):
+        raise DiskError(
+            f"Only {COMPATIBILITY_REPORT_FORMAT} version "
+            f"{COMPATIBILITY_REPORT_VERSION} reports can be retained."
+        )
+    if not document.get("dryRun") or not isinstance(document.get("changes"), list):
+        raise DiskError("Only a complete dry-run compatibility report can be retained.")
+    if not isinstance(document.get("source"), dict) or not isinstance(document.get("target"), dict):
+        raise DiskError("The compatibility report source or target is incomplete.")
+    target = document.get("target") or {}
+    if target.get("image") != session.name or target.get("kind") != session.kind:
+        raise DiskError("The compatibility report belongs to a different image or filesystem.")
+    report = preflight_report(
+        service,
+        session,
+        {
+            "operation": document.get("operation"),
+            "changes": deepcopy(document["changes"]),
+            "sourceKind": document["source"].get("kind"),
+            "targetKind": target.get("kind"),
+        },
+    )
+    if not report["canProceed"]:
+        raise DiskError("Resolve the report's blocking findings before accepting it.")
+    report["acceptedAt"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    report["acceptedImage"] = {
+        "name": session.name,
+        "kind": session.kind,
+        "size": session.path.stat().st_size,
+        "modifiedNs": session.path.stat().st_mtime_ns,
+    }
+    session.compatibility_reports = [*session.compatibility_reports[-9:], report]
+    return report
 
 
 def compatibility_report_markdown(report: dict) -> str:
