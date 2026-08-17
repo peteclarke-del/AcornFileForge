@@ -15,6 +15,15 @@ cd "$project_root"
 PATH="$(dirname -- "$python"):$PATH"
 export PATH
 
+# WebKitGTK normally isolates its web process with Bubblewrap. Ubuntu's
+# restricted unprivileged-user-namespace policy can reject that setup before
+# the first window is drawn ("bwrap: setting up uid map: Permission denied").
+# This host only loads Acorn File Forge from its authenticated, loopback-only
+# server, so use WebKit's supported fallback instead of silently failing to
+# launch on those systems.
+WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
+export WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS
+
 # IDEs packaged as Snaps can leak their private GTK modules and XDG locations
 # into an integrated terminal. This application is not confined by that Snap,
 # so those paths can load incompatible libraries or hide its normal sessions.

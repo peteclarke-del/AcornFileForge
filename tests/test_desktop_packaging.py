@@ -28,6 +28,15 @@ class DesktopPackagingTests(unittest.TestCase):
         self.assertIn("GSETTINGS_SCHEMA_DIR", launcher)
         self.assertIn('"$HOME"/snap/*', launcher)
 
+    def test_launcher_handles_restricted_webkit_user_namespaces(self) -> None:
+        launcher = (ROOT / "tools/acorn-file-forge-desktop").read_text(encoding="utf-8")
+        desktop_host = (ROOT / "desktop/__main__.py").read_text(encoding="utf-8")
+
+        self.assertIn("WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1", launcher)
+        self.assertIn("authenticated, loopback-only", launcher)
+        self.assertIn('self.webview.connect("decide-policy", self._navigation_policy)', desktop_host)
+        self.assertIn("Gio.AppInfo.launch_default_for_uri", desktop_host)
+
     def test_installer_rejects_snap_private_xdg_data_home(self) -> None:
         paths = (ROOT / "tools/linux-xdg-paths.sh").read_text(encoding="utf-8")
         installer = (ROOT / "tools/install-linux-desktop.sh").read_text(encoding="utf-8")
