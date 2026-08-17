@@ -88,10 +88,14 @@ The current release candidate is `1.0.0-rc.1`. It supports the editing and trans
 this guide, including movable, resizable and stackable panes, undo and named
 checkpoints, browser-private recovery, background job tracking, MMB and ADFS
 menu maintenance, HFE handling, UEF extraction, an Online Library and
-hardware-aware ADFS checks.
+hardware-aware ADFS checks. A browser-private IndexedDB catalogue can retain
+owned image manifests, hashes, menu titles, publishers, machines and physical
+locations, then report duplicates, variants and missing wanted titles even
+when those images are closed.
 Raw and banked ROM analysis, editable Acorn ROMFS data images, content-aware
 file editors, archive and UEF browsing, guarded BASIC transformations, annotated
-6502/ARM/68000 disassembly and optional emulator hand-off are also included.
+6502/ARM/68000 disassembly, read-only cheat-candidate analysis and optional
+emulator hand-off are also included.
 The application is useful today, but Acorn media images can contain unusual loaders,
 copy protection and filesystem variants. Keep a known-good source image and
 test important downloads before putting them onto real hardware.
@@ -114,6 +118,8 @@ the reusable release checklist.
   disassembly projects, archives, synchronized bytes and emulator hand-off.
 - The [installation guide](docs/INSTALLATION.md) covers desktop and Raspberry Pi builds, updates, retained sessions and common failures.
 - The [headless CLI guide](docs/CLI-GUIDE.md) covers automation, stable JSON results, dry-runs and deterministic recipes.
+- The [private collection guide](docs/COLLECTION-GUIDE.md) covers browser-owned indexing, stale revisions, reports, backups and privacy boundaries.
+- The [cheat-candidate analysis guide](docs/CHEAT-ANALYSIS-GUIDE.md) covers BASIC and machine-code evidence, confidence, online references and safe emulator verification.
 - The [release checklist](docs/RELEASE-CHECKLIST.md) defines the generated-media, fault-injection, benchmark, browser and real-hardware gates.
 - **Help** in the application contains illustrated, task-based instructions and
   stays with the running version of the frontend.
@@ -484,6 +490,26 @@ menu PAGE value can be replaced when the selected tokenised BASIC launcher has
 a different saved address. Missing launchers and ambiguous dependencies remain
 for review. The repair dialog itemises what is eligible and creates an undo
 checkpoint before writing.
+
+### Cheat-candidate analysis
+
+Open one tokenised BBC BASIC or machine-code file and choose **Tools → Find
+cheat candidates** in its editor. The read-only report correlates semantic
+BASIC state, plausible initial values, updates and terminal paths. For machine
+code it joins initialisation, access to the same storage, updates, forward
+terminal branches and saved labels.
+Results are grouped by likely purpose and marked Strong, Likely or Possible.
+
+The analyser suppresses unexplained memory writes, opaque BASIC countdowns,
+backward decrement loops and likely copy, clear, scan or delay counters. It
+retains reachable unlabelled state changes with a forward decision as Possible,
+but excludes bytes reached only by speculative linear decoding. Loader commands
+and packed or runtime-generated payloads are identified instead of being shown
+as an unexplained zero-result scan. It explains the evidence and the risk, then
+recommends an emulator watchpoint or control-flow check. Optional online title identification and configured
+specialist searches can locate published research, but never modify the image
+or claim that similarly named software has identical bytes. See the
+[cheat-candidate analysis guide](docs/CHEAT-ANALYSIS-GUIDE.md).
 
 ### Opening and editing files
 

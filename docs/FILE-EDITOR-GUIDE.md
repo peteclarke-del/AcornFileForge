@@ -361,6 +361,39 @@ disassembly. Compare with saved file shows the current and
 persisted source side by side. The selected-data inspector renders text,
 hexadecimal bytes, both 16-bit byte orders and a bounded one-bit bitmap preview.
 
+## Cheat-candidate analysis
+
+The editor's **Tools > Find cheat candidates** command accepts tokenised BBC
+BASIC and files that normal content inspection classifies as machine code. The
+report opens inside that editor window, is read-only and does not alter the
+editor project or image.
+
+At normal desktop widths the report docks to the right of the code and scrolls
+independently at the full listing height. Narrow windows place it below the
+editor so the code and evidence remain readable. Its separator is draggable
+and keyboard adjustable. Selecting a candidate centres and highlights the
+corresponding BASIC line or disassembly address.
+
+For BASIC, it correlates semantic variables, plausible initial values, updates,
+zero or one tests and terminal paths. Unexplained direct memory writes and
+opaque countdown loops are suppressed. For machine code, it uses the
+profile-aware disassembly to join constant initialisation, access to the same
+storage, updates, forward terminal branches and saved semantic labels. Generic
+backward decrement loops and likely copy, clear, scan or delay counters are
+discarded. Reachable unlabelled memory updates with a forward decision remain
+visible as Possible candidates, while speculative instructions decoded from
+data are excluded. Loader commands and payloads with almost no reachable code
+are called out explicitly, including the need for a post-loader memory snapshot.
+Every retained result contains its source line or decoded address,
+corroborating evidence, confidence, suggested runtime check and remaining risk.
+
+Purpose and confidence filters help separate lives, energy, ammunition, timer,
+score and collision evidence from generic counters or memory writes. Optional
+internet title identification uses the existing bounded metadata lookup.
+Specialist browser searches come from `app/cheat_sources.json` and open only
+when selected. See the [cheat analysis guide](CHEAT-ANALYSIS-GUIDE.md) for the
+safe checkpoint, watchpoint and hardware-test workflow.
+
 ## Managed emulator and debugger
 
 Open **Workbench → Hardware profiles → Emulator and debugger integration**.
@@ -446,6 +479,11 @@ their reconstructed load and execution addresses and whether the cassette
 block sequence was complete. UEF remains read-only. Readable members in the
 other formats can be edited through a checksum-guarded rebuild of the complete
 container and the normal image checkpoint.
+
+Inspect, disassembly, Hex and cheat-candidate analysis retain the outer image,
+container and member path as one context. A nested name such as
+`Arcadians/ARCAD2` is therefore resolved inside its UEF or archive rather than
+being mistaken for an ADFS path containing a slash.
 
 Archive handling rejects parent traversal, non-regular TAR objects, archives
 over 512 MiB, individual expanded members over 128 MiB and catalogues with

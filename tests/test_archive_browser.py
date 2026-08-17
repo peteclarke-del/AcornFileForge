@@ -22,6 +22,7 @@ try:
     from app.operations import OperationRegistry
     from app.routes.files import create_files_blueprint
     from app.routes.hex_editor import create_hex_editor_blueprint
+    from app.routes.tools import create_tools_blueprint
 except ModuleNotFoundError:  # Flask is installed in the production image.
     Flask = None
 
@@ -134,7 +135,7 @@ class ArchiveBrowserTests(unittest.TestCase):
 
         class Service:
             session = SimpleNamespace(
-                kind="adfs", target_hardware="bbc", hfe_read_only=False,
+                kind="adfs", target_hardware="bbc", hardware_profile={}, hfe_read_only=False,
             )
             written = None
 
@@ -168,6 +169,7 @@ class ArchiveBrowserTests(unittest.TestCase):
         app = Flask(__name__)
         app.register_blueprint(create_files_blueprint(service, Path("/tmp"), OperationRegistry()))
         app.register_blueprint(create_hex_editor_blueprint(service))
+        app.register_blueprint(create_tools_blueprint(service, OperationRegistry()))
         app.register_error_handler(DiskError, lambda error: (jsonify(error=str(error)), 400))
         client = app.test_client()
         tree = client.get("/api/images/test/tree?path=$").get_json()
@@ -189,6 +191,12 @@ class ArchiveBrowserTests(unittest.TestCase):
         ).get_json()
         self.assertEqual(disassembly["architecture"], "6502")
         self.assertEqual(disassembly["origin"], 0x8000)
+        cheat_report = client.get(
+            "/api/images/test/cheat-candidates?path=$.games.zip&name=games.zip"
+            "&member=Games/CODE"
+        ).get_json()
+        self.assertEqual(cheat_report["path"], "Games/CODE")
+        self.assertEqual(cheat_report["kind"], "6502")
         hex_page = client.get(
             "/api/images/test/archive-hex?path=$.games.zip&name=games.zip"
             "&member=Games/CODE&offset=0&length=16"
