@@ -84,11 +84,17 @@ def inspect_editable_file(
     side: int | None,
 ) -> dict:
     data, metadata, size, digest = _context(service, session, path, slot, side, MAX_DISASSEMBLY_FILE)
-    return inspect_file_data(
+    tape_proof = None
+    if session.kind == "tape":
+        tape_proof = service.tape_member_editability(session, path)
+    report = inspect_file_data(
         data, metadata, path,
-        read_only=bool(session.hfe_read_only or session.kind == "tape"),
+        read_only=bool(session.hfe_read_only or (tape_proof and not tape_proof["editable"])),
         size=size, digest=digest,
     )
+    if tape_proof is not None:
+        report["tapeProject"] = tape_proof
+    return report
 
 
 def inspect_file_data(
@@ -895,6 +901,9 @@ def replace_file_bytes(service, session, path, slot, side, content: bytes, expec
     current = service.read_file(session, slot, path, side)
     if sha256_bytes(current) != expected_sha256:
         raise DiskError("The file changed after the editor opened it. Reopen the file before saving.")
+    if session.kind == "tape":
+        service.replace_tape_member(session, path, content)
+        return service.summary(session)
     row = _find_row(service, session, path, slot, side)
     with tempfile.NamedTemporaryFile(dir=service.work_dir, prefix="file-edit-", delete=False) as temporary:
         temporary.write(content)

@@ -6,6 +6,7 @@ import re
 from collections import defaultdict, deque
 from copy import deepcopy
 from datetime import datetime, timezone
+from pathlib import Path
 
 from .checksum import sha256_bytes, sha256_path
 from .dfs_compat import dfs_catalogue_files, infer_dfs_launch_page
@@ -697,6 +698,49 @@ def health_report(service, session, progress=None) -> dict:
             "status": "fail" if menu_tests["failed"] else "pass",
             "detail": f"{menu_tests['passed']} passed, {menu_tests['failed']} failed",
             "findings": _failed_menu_findings(menu_tests),
+        })
+        project = service.editor_project(session, "$MMB", None, None)
+        project = project if isinstance(project, dict) else {}
+        sandbox_runs = [
+            row for row in project.get("tests", [])
+            if row.get("kind") == "menu-sandbox"
+        ]
+        source_path = getattr(session, "path", None)
+        current_hash = (
+            sha256_path(source_path)
+            if isinstance(source_path, Path) and source_path.is_file()
+            else ""
+        )
+        current_runs = [
+            row for row in sandbox_runs
+            if row.get("sourceSha256") == current_hash
+        ]
+        latest_run = current_runs[-1] if current_runs else None
+        checks.append({
+            "name": "Whole-MMB emulator evidence",
+            "status": (
+                "pass" if latest_run and latest_run.get("inputChangedDisplay") and latest_run.get("repeatable")
+                else "warn"
+            ),
+            "detail": (
+                latest_run.get("summary", "Current image captured in the menu sandbox")
+                if latest_run else
+                "No isolated emulator capture matches the current MMB revision. Use Preview installed menu > Capture actual menu."
+            ),
+            "findings": (
+                [{
+                    "time": latest_run.get("time"),
+                    "menuSlot": latest_run.get("menuSlot"),
+                    "menuType": latest_run.get("menuType"),
+                    "machine": latest_run.get("machine"),
+                    "frameHashes": latest_run.get("frameHashes", []),
+                    "changedPixels": latest_run.get("changedPixels"),
+                    "repeatable": bool(latest_run.get("repeatable")),
+                    "pageEvidence": (
+                        "The menu display and navigation are emulator-proven. Individual launcher PAGE values remain governed by the itemised static menu checks above."
+                    ),
+                }] if latest_run else []
+            ),
         })
         page_problems = sum(
             any(problem.startswith("PAGE should be") for problem in item["problems"])

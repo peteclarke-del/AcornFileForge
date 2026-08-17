@@ -949,6 +949,13 @@ dialog:has(.patch-preflight-dialog) { width: min(760px, calc(100vw - 30px)); }
 .editor-choice-shade.editor-global-overlay { position: fixed; border-radius: 0; }
 .editor-choice-card { width: min(480px, 100%); padding: 20px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--paper); box-shadow: var(--shadow); }
 .editor-choice-card p { color: var(--muted); font-size: 12px; line-height: 1.55; }
+.uef-structural-review { width: min(920px, calc(100vw - 3rem)); max-height: min(720px, calc(100vh - 3rem)); overflow: auto; }
+.uef-project-dialog { width: min(1100px, calc(100vw - 3rem)); }
+.uef-project-table { overflow: auto; max-height: 19rem; border: 1px solid var(--line); border-radius: 8px; }
+.uef-project-table table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.uef-project-table th { position: sticky; top: 0; z-index: 1; background: var(--panel); text-align: left; }
+.uef-project-table th, .uef-project-table td { padding: .55rem .65rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+.uef-project-table tr.changed td { background: color-mix(in srgb, var(--orange) 14%, transparent); }
 .disassembly-controls { display: flex; align-items: end; gap: 8px; flex-wrap: wrap; padding: 4px 0; }
 .disassembly-controls label { display: grid; gap: 4px; color: var(--muted); font: 700 8px DM Mono, monospace; letter-spacing: .06em; text-transform: uppercase; }
 .disassembly-controls input { width: 116px; }
@@ -1183,6 +1190,14 @@ dialog:has(.help-guide) { width: min(1120px, calc(100vw - 24px)); }
 .menu-preview-layout { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(220px, .8fr); gap: 14px; }
 .menu-interpretation-note { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--cream); color: var(--muted); font: 9px/1.45 "DM Mono", monospace; text-transform: uppercase; }
 .menu-preview-monitor { min-width: 0; padding: 14px; border: 8px solid var(--preview-bezel); border-radius: 12px; background: var(--preview-case); box-shadow: inset 0 0 0 2px var(--preview-rim), 0 7px 18px var(--preview-shadow); }
+.menu-sandbox-evidence { margin-top: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+.menu-sandbox-evidence h3 { margin: 2px 0 6px; }
+.menu-sandbox-evidence > p { margin: 0 0 10px; }
+.menu-sandbox-frames { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.menu-sandbox-frames figure { margin: 0; min-width: 0; }
+.menu-sandbox-frames img { display: block; width: 100%; max-height: 360px; object-fit: contain; border: 1px solid var(--line-strong); background: var(--emulator-background); }
+.menu-sandbox-frames figcaption { padding-top: 5px; overflow-wrap: anywhere; color: var(--text-muted); font-size: .75rem; }
+@media (max-width: 760px) { .menu-sandbox-frames { grid-template-columns: 1fr; } }
 .menu-preview-screen { display: grid; grid-template-rows: repeat(3, 1fr) 26fr 3fr; width: 100%; aspect-ratio: 4 / 3; min-width: 0; overflow: hidden; padding: 3.2% 5%; background: var(--bbc-bg, var(--preview-screen)); color: var(--bbc-detail, var(--preview-cyan)); box-shadow: inset 0 0 32px var(--preview-glow); font: clamp(7px, .78vw, 12px)/1 "Courier New", "Liberation Mono", monospace; letter-spacing: 0; }
 .bbc-menu-title, .bbc-menu-banner, .bbc-menu-status { width: 40ch; max-width: 100%; overflow: hidden; white-space: pre; }
 .bbc-menu-title { color: var(--bbc-title, var(--preview-green)); }
@@ -1517,3 +1532,17 @@ dialog:has(.online-library-heading), dialog:has(.online-source-list) { width: mi
 .cheat-analysis-diagnostic strong,
 .cheat-analysis-diagnostic p { display: block; margin: 0; }
 .cheat-analysis-diagnostic p { margin-top: .25rem; font-size: .78rem; line-height: 1.4; }
+.cheat-candidate.selected { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.guarded-cheat-patch-dialog { width: min(820px, calc(100vw - 48px)); }
+.guarded-cheat-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.guarded-cheat-grid > label { display: grid; gap: 4px; min-width: 0; }
+.guarded-cheat-grid > label.wide { grid-column: 1 / -1; }
+.guarded-cheat-grid input, .guarded-cheat-grid textarea, .guarded-cheat-grid fieldset { min-width: 0; width: 100%; }
+.guarded-cheat-grid fieldset { display: grid; gap: 7px; margin: 0; padding: 10px; border: 1px solid var(--line); border-radius: 7px; }
+.cheat-library-dialog { width: min(900px, calc(100vw - 48px)); }
+.cheat-library-list { display: grid; gap: 7px; max-height: min(52vh, 520px); overflow: auto; }
+.cheat-library-list article { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
+.cheat-library-list article > div { display: grid; min-width: 0; gap: 2px; }
+.cheat-library-list article > span { display: flex; flex-wrap: wrap; justify-content: end; gap: 5px; }
+.cheat-library-list small, .cheat-library-list code { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 700px) { .guarded-cheat-grid { grid-template-columns: 1fr; } .guarded-cheat-grid > label.wide { grid-column: auto; } }

@@ -72,6 +72,17 @@ const target = process.env.ACORN_FILE_FORGE_URL || "http://127.0.0.1:8666";
     const navigation = JSON.parse(await firstCandidate.getAttribute("data-cheat-navigation"));
     await firstCandidate.click();
     await editor.locator(`.disassembly-source-line.found[data-address="${navigation.address}"]`).waitFor({ state: "visible" });
+    const prepare = editor.locator("[data-cheat-prove]");
+    if (await prepare.isDisabled()) throw new Error("An exact-offset machine-code candidate did not enable guarded patch preparation");
+    await prepare.click();
+    const guarded = page.locator("#modal .guarded-cheat-patch-dialog");
+    await guarded.waitFor({ state: "visible" });
+    const guardedText = await guarded.textContent();
+    if (!guardedText.includes("does not prove a cheat automatically") || !guardedText.includes("Exact source")) {
+      throw new Error(`Guarded patch dialog omitted its proof boundary: ${guardedText}`);
+    }
+    await guarded.locator("[data-cheat-patch-cancel]").click();
+    await editor.locator(".guarded-cheat-patch-dialog").waitFor({ state: "detached" });
     const bounds = await editor.boundingBox();
     if (!bounds || bounds.width > 1120 || bounds.height > 820) {
       throw new Error(`Cheat analysis dialog is oversized: ${JSON.stringify(bounds)}`);

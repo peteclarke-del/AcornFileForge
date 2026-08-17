@@ -84,10 +84,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform:
-          - linux/amd64
-          - linux/arm64
-          - linux/arm/v7
+        include:
+          - platform: linux/amd64
+            tag: amd64
+          - platform: linux/arm64
+            tag: arm64
+          - platform: linux/arm/v7
+            tag: armv7
     steps:
       - uses: actions/checkout@v6
 
@@ -101,5 +104,40 @@ jobs:
           context: .
           platforms: ${{ matrix.platform }}
           push: false
+          load: true
+          tags: acorn-file-forge:matrix-${{ matrix.tag }}
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+
+      - name: Verify native dependencies and complete Python suite
+        run: |
+          mkdir -p output/release-evidence
+          docker run --rm \
+            --volume "${{ github.workspace }}:/source" \
+            --workdir /source \
+            acorn-file-forge:matrix-${{ matrix.tag }} \
+            sh -lc 'uname -m; python -c "from capstone import CS_ARCH_ARM, CS_ARCH_M68K, CS_ARCH_MOS65XX, Cs; Cs(CS_ARCH_MOS65XX, 0); print(\"Capstone architecture gate passed\")"; python -m unittest discover -s tests -v' \
+            2>&1 | tee output/release-evidence/${{ matrix.tag }}.log
+
+      - name: Verify service health on the target architecture
+        run: |
+          container="acorn-file-forge-${{ matrix.tag }}"
+          docker run --detach --name "$container" --publish 8666:8666 acorn-file-forge:matrix-${{ matrix.tag }}
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent http://127.0.0.1:8666/api/health | tee output/release-evidence/${{ matrix.tag }}-health.json; then
+              docker rm --force "$container"
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs "$container" | tee -a output/release-evidence/${{ matrix.tag }}.log
+          docker rm --force "$container"
+          exit 1
+
+      - name: Retain architecture evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-evidence-${{ matrix.tag }}
+          path: output/release-evidence/
+          if-no-files-found: warn

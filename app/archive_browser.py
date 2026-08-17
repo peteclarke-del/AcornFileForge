@@ -13,7 +13,7 @@ from copy import copy
 from .acorn_metadata import parse_inf, spark_metadata
 from .content_kind import LISTING_SNIFF_LIMIT, analyse_content, is_uef_container, metadata_kind
 from .disk_service import DiskError
-from .uef import UEFError, parse_uef
+from .uef import UEFError, parse_uef, replace_uef_file, uef_editability
 
 
 ARCHIVE_EXTENSIONS = (
@@ -212,7 +212,7 @@ def list_archive(data: bytes, filename: str, directory: str = "") -> dict:
     entries = sorted(children.values(), key=lambda row: (row["type"] != "dir", row["name"].casefold()))
     return {
         "entries": entries,
-        "description": f"{'Read-only ' if kind == 'uef' else ''}{kind.upper()} {'tape container' if kind == 'uef' else 'archive'} · {len(members):,} member(s)",
+        "description": f"{'Proof-gated UEF tape container project' if kind == 'uef' else f'{kind.upper()} archive'} · {len(members):,} member(s)",
         "archiveKind": kind,
         "member": current,
     }
@@ -265,9 +265,49 @@ def read_archive_member(data: bytes, filename: str, member_name: str) -> bytes:
     return read_archive_member_details(data, filename, member_name)[0]
 
 
-def archive_member_editable(data: bytes, filename: str) -> bool:
+def archive_member_editable(data: bytes, filename: str, member_name: str | None = None) -> bool:
     """Return whether a container can be rebuilt without changing its semantics."""
-    return _archive_kind(data, filename) in {"zip", "tar", "gzip", "bz2", "xz"}
+    kind = _archive_kind(data, filename)
+    if kind != "uef":
+        return kind in {"zip", "tar", "gzip", "bz2", "xz"}
+    if not member_name:
+        return False
+    _kind, members = _members(data, filename)
+    wanted = _safe_name(member_name)
+    match = next((row for row in members if row["name"] == wanted and not row["dir"]), None)
+    if not match:
+        return False
+    try:
+        return bool(uef_editability(data, int(match["source"]))["editable"])
+    except UEFError:
+        return False
+
+
+def preview_archive_member_replacement(
+    data: bytes, filename: str, member_name: str, content: bytes,
+) -> dict:
+    """Return the exact structural proof that would guard a UEF rebuild."""
+    wanted = _safe_name(member_name)
+    kind, members = _members(data, filename)
+    if kind != "uef":
+        return {
+            "schema": "acorn-file-forge/archive-rebuild-preview/v1",
+            "archiveKind": kind,
+            "member": wanted,
+            "structuralProofRequired": False,
+        }
+    match = next((row for row in members if row["name"] == wanted and not row["dir"]), None)
+    if not match:
+        raise ArchiveError("That UEF member no longer exists.")
+    try:
+        _rebuilt, report = replace_uef_file(data, int(match["source"]), content)
+    except UEFError as exc:
+        raise ArchiveError(str(exc)) from exc
+    return report | {
+        "archiveKind": "uef",
+        "member": wanted,
+        "structuralProofRequired": True,
+    }
 
 
 def _tar_write_mode(data: bytes, filename: str) -> str:
@@ -284,9 +324,10 @@ def _tar_write_mode(data: bytes, filename: str) -> str:
 def replace_archive_member(data: bytes, filename: str, member_name: str, content: bytes) -> bytes:
     """Rebuild a supported archive with one regular member replaced.
 
-    The caller performs the outer image transaction.  This function keeps ZIP
-    metadata and TAR member metadata where the standard libraries permit it,
-    and refuses UEF because reconstructing its tape timing is not byte-neutral.
+    The caller performs the outer image transaction. This function keeps ZIP
+    metadata and TAR member metadata where the standard libraries permit it.
+    UEF writes are accepted only when the cassette block map proves a
+    same-length replacement can preserve all physical structure.
     """
     wanted = _safe_name(member_name)
     kind, members = _members(data, filename)
@@ -344,10 +385,14 @@ def replace_archive_member(data: bytes, filename: str, member_name: str, content
         output.write(bz2.compress(content))
     elif kind == "xz":
         output.write(lzma.compress(content))
+    elif kind == "uef":
+        try:
+            rebuilt, _report = replace_uef_file(data, int(match["source"]), content)
+        except UEFError as exc:
+            raise ArchiveError(str(exc)) from exc
+        output.write(rebuilt)
     else:
-        raise ArchiveError(
-            "UEF members remain read-only because rebuilding a tape stream can alter timing and loader behaviour."
-        )
+        raise ArchiveError("That archive format cannot be rebuilt safely.")
     rebuilt = output.getvalue()
     if len(rebuilt) > MAX_ARCHIVE_BYTES:
         raise ArchiveError("The rebuilt archive exceeds the safe 512 MiB limit.")

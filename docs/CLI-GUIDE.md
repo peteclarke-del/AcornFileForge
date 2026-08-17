@@ -158,7 +158,8 @@ python -m app.cli compact /media/work.ssd \
 ```
 
 MMB disk compaction uses `--slot`. ROMFS is already rebuilt into storage order
-after each edit and UEF is read-only, so those requests are rejected honestly.
+after each edit. UEF has no sector-compaction operation, so that request is
+rejected even when a member would be editable in the browser's tape project.
 
 ### Create a menu
 
@@ -295,8 +296,9 @@ be proved lossless.
 - Mutating commands require a separate output and reject existing files unless
   `--force` is given.
 - DAT and DSC are treated as one hardware image. Keep both files together.
-- The CLI does not bypass read-only UEF, protected HFE, composite ROMFS or
-  incomplete geometry rules.
+- The CLI does not bypass ambiguous UEF reconstruction, protected HFE,
+  composite ROMFS or incomplete geometry rules. Proof-gated UEF member edits
+  currently use the browser tape-project review rather than a headless command.
 - Keep the JSON result with automated build logs. It records the exact failure
   category even when the filesystem utility writes additional diagnostics to
   standard error.

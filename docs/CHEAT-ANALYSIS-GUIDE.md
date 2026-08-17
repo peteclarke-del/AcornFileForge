@@ -55,7 +55,9 @@ loop, copy, scan, clear, delay, row, column and byte contexts are treated as
 loop evidence unless semantic game-state evidence overrides them. This matters
 because countdown loops are normal 6502 code.
 Simply replacing a retained instruction with NOP bytes can still break flags,
-timing or control flow, so the report does not offer an automatic patch.
+timing or control flow. A selected result with an exact file offset can open
+the guarded patch builder, but it never invents replacement bytes or claims a
+static result is proved.
 
 The analyser honours the disassembler's reachability map. Bytes which were
 only decoded by the linear fallback are ignored, preventing compressed data,
@@ -98,6 +100,31 @@ also indexes contemporary magazine cheat programs for many titles.
 7. Retest loading, normal play, death, restart, level transition and scoring.
 8. Keep the original image and checkpoint until the edited build has also been
    tested on the target hardware.
+
+## Guarded patches and the private library
+
+After steps 4 and 5, select the machine-code candidate and choose **Prepare
+guarded patch**. Enter the actual watched address, two distinct gameplay events
+and their before and after values. Also supply the reviewed same-length machine
+code replacement, a rationale and an author. Acorn File Forge validates the
+record against the exact current file and downloads it as `.affcheat.json`.
+
+The patch is bound to the complete source SHA-256, source size, file offset and
+original bytes. Apply repeats every check and creates the usual automatic image
+checkpoint. This prevents a patch for one build being applied to a similarly
+named but different release. It does not prove that the tester's observations
+were correctly interpreted, which is why target-hardware retesting remains
+part of the workflow.
+
+Validated records are also retained in a browser-private library. The library
+contains metadata and replacement bytes, not disk images. It is capped at 500
+entries, can export individual records and can be cleared independently. An
+entry can only apply when the current file has the exact recorded hash and
+guarded bytes. Titles are descriptive only and never participate in matching.
+
+Automatic watchpoint capture and correlation with repeatable gameplay events
+remains a backlog item. Until that gate is complete, the user records debugger
+observations and the interface labels them as such.
 
 Compressed, encrypted, self-modifying and indirectly addressed games may
 produce no useful static candidates. The panel now explains this condition and
