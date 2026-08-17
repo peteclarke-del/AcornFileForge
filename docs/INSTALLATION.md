@@ -5,6 +5,10 @@ the web service, filesystem tools, conversion tools and managed emulators into
 one image. The supported build targets are `linux/amd64`, `linux/arm64` and
 32-bit `linux/arm/v7`.
 
+A native GTK 4 host is also available for Linux. It shares the complete Flask
+application and frontend rather than maintaining a separate editor. See the
+[Linux desktop guide](LINUX-DESKTOP.md) for its system packages and installer.
+
 Return to the [documentation index](README.md) for media, editor, ROM, firmware
 and release references.
 

@@ -192,6 +192,22 @@ project documentation. An unchecked item remains in scope.
 - [ ] Add a user-owned cheat library that matches exact image and file hashes,
       never title alone.
 
+## 12. Linux desktop host
+
+- [x] Add a GTK 4 and Libadwaita application host around the shared frontend.
+- [x] Run the shared Flask application on an authenticated random loopback
+      port with XDG working storage.
+- [x] Open registered Acorn image types through a native multi-file chooser
+      and a desktop-only, authenticated local-path adapter.
+- [x] Keep browser and desktop behaviour under an explicit route, capability,
+      documentation and test contract.
+- [x] Launch managed emulators on the native display while retaining noVNC for
+      the Docker edition.
+- [x] Provide a user-local installer, launcher, icon, MIME definitions and
+      uninstaller for Debian and Ubuntu class desktops.
+- [ ] Produce signed distribution packages after the project licence and
+      release-signing policy are finalised.
+
 ## Delivery order
 
 Work should normally proceed in this order:

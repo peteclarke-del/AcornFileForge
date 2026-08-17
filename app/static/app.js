@@ -8199,6 +8199,14 @@ function openBrowserEmulator(pane, result) {
   attachEditorOverlay(shade);
 }
 
+function showInteractiveEmulator(pane, result) {
+  if (result.displayMode === "native") {
+    toast(result.summary || `${result.emulator || "The emulator"} is running in a desktop window.`);
+    return;
+  }
+  openBrowserEmulator(pane, result);
+}
+
 function paneEmulatorTarget(index) {
   const pane = panes[index];
   if (pane.image.kind !== "mmb") return { slot: pane.slot, label: pane.image.name, modePrefix: "parent" };
@@ -8247,7 +8255,7 @@ async function launchPaneEmulator(index, debug = false) {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  openBrowserEmulator(pane, response.result);
+  showInteractiveEmulator(pane, response.result);
   return true;
 }
 
@@ -8268,7 +8276,7 @@ async function runFileInConfiguredEmulator(pane, entry, path, target = null, isB
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path, slot: pane.slot, side: pane.side, mode, interactive: true, source: isBasic ? source : undefined, hardwareProfile: editorTargetProfile(pane) }),
     });
-    if (result.result.interactive) openBrowserEmulator(pane, result.result);
+    if (result.result.interactive) showInteractiveEmulator(pane, result.result);
     else toast(result.result.bounded ? "The managed emulator completed its compatibility-check window." : `Emulator finished with return code ${result.result.returnCode}.`);
     return result;
   } catch (error) {
@@ -8318,7 +8326,7 @@ async function openDebuggerWorkspace(pane, entry, path, architecture = "6502", i
       });
       if (result.result.interactive) {
         transcript.textContent += `[interactive ${result.result.emulator} started]\n`;
-        openBrowserEmulator(pane, result.result);
+        showInteractiveEmulator(pane, result.result);
       } else transcript.textContent += `${result.result.stdout || ""}${result.result.stderr ? `\n${result.result.stderr}` : ""}\n[return ${result.result.returnCode}]\n`;
       transcript.scrollTop = transcript.scrollHeight;
     } catch (error) { transcript.textContent += `[error] ${error.message}\n`; }
@@ -10147,5 +10155,27 @@ themeToggle.onclick = () => {
 };
 updateThemeButton();
 updateAddPaneButton();
+
+window.AcornDesktopHost = Object.freeze({
+  async acceptImage(image) {
+    if (!workspacePersistence.isReady()) {
+      setTimeout(() => window.AcornDesktopHost.acceptImage(image), 50);
+      return;
+    }
+    let index = panes.findIndex(pane => !pane.image);
+    if (index < 0) index = addPane();
+    try {
+      await acceptImage(index, image);
+      paneWindowManager.bringToFront(index);
+      rememberOpenPanes();
+      toast(`${image.name} opened from the Linux desktop`);
+    } catch (error) {
+      toast(`Could not display ${image.name}: ${error.message}`, true);
+    }
+  },
+  showError(message) {
+    toast(String(message || "The Linux desktop operation failed."), true);
+  },
+});
 
 restoreOpenPanes();
