@@ -87,6 +87,23 @@ class EmulatorConfigurationTests(unittest.TestCase):
         self.assertEqual(cwd, "/opt/elkulator/profiles/base")
 
     @patch("app.emulator_config.Path.is_file", return_value=True)
+    def test_elkulator_whole_mmb_uses_pi1mhz_sd_and_mmfs_rom(self, _available):
+        session = SimpleNamespace(
+            hardware_profile={
+                "machine": "electron", "emulator": "auto", "emulatorBoot": "boot",
+                "filingSystem": "mmfs", "mmfsBuild": "unpaged", "addons": ["mmfs"],
+            },
+            target_hardware="auto", emulator_media_kind="mmfs-sd",
+        )
+        command, cwd = emulator_command(session, "/work/mmfs-card.img")
+        self.assertIn("PI1MHZ_MAILBOX=live", command)
+        self.assertIn("PI1MHZ_SD_IMAGE=/work/mmfs-card.img", command)
+        self.assertIn("/opt/elkulator/roms/EMMFS.rom", command)
+        self.assertIn("-autokeys", command)
+        self.assertNotIn("-disc", command)
+        self.assertEqual(cwd, "/opt/elkulator/profiles/base")
+
+    @patch("app.emulator_config.Path.is_file", return_value=True)
     def test_interactive_elkulator_uses_the_shared_browser_display(self, _available):
         session = SimpleNamespace(hardware_profile={"machine": "electron", "emulator": "auto"}, target_hardware="auto")
         command, _cwd = emulator_command(session, "/work/game.ssd", interactive=True)
@@ -298,16 +315,42 @@ class EmulatorConfigurationTests(unittest.TestCase):
             mmb = service.create_blank("mmb", "COLLECTION")
             app = Flask(__name__)
             app.register_blueprint(create_tools_blueprint(service, OperationRegistry()))
-            response = app.test_client().get(
-                f"/api/images/{mmb.id}/editor-emulator",
-                query_string={"hardwareProfile": json.dumps({
-                    "machine": "bbc-b", "emulator": "b-em", "addons": [],
-                })},
-            )
+            with patch("app.emulator_config.Path.is_file", return_value=True):
+                response = app.test_client().get(
+                    f"/api/images/{mmb.id}/editor-emulator",
+                    query_string={"hardwareProfile": json.dumps({
+                        "machine": "bbc-b", "emulator": "b-em", "addons": [],
+                    })},
+                )
             result = response.get_json()
         self.assertEqual(response.status_code, 200)
         self.assertFalse(result["available"])
-        self.assertIn("MMFS-capable SD-card emulator adapter", result["parentMessage"])
+        self.assertIn("managed Pi1MHz raw-SD adapter", result["parentMessage"])
+
+    def test_whole_mmb_status_accepts_electron_mmfs_adapter(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            service = DiskService(temporary)
+            mmb = service.create_blank("mmb", "COLLECTION")
+            app = Flask(__name__)
+            app.register_blueprint(create_tools_blueprint(service, OperationRegistry()))
+            profile = {
+                "machine": "electron", "emulator": "elkulator-pi1mhz",
+                "filingSystem": "mmfs", "mmfsBuild": "unpaged", "addons": ["mmfs"],
+            }
+            with patch("app.routes.tools.emulator_status", return_value={
+                "available": True, "machine": "electron", "label": "Elkulator",
+                "message": "ready", "id": "elkulator-pi1mhz", "debugger": "elkulator-debug",
+                "configuredBy": "managed workbench profile",
+            }), patch("app.emulator_config.Path.is_file", return_value=True):
+                response = app.test_client().get(
+                    f"/api/images/{mmb.id}/editor-emulator",
+                    query_string={"hardwareProfile": json.dumps(profile)},
+                )
+        self.assertEqual(response.status_code, 200)
+        result = response.get_json()
+        self.assertTrue(result["available"])
+        self.assertTrue(result["parentMountable"])
+        self.assertEqual(result["mediaTarget"], "whole-mmb")
 
     def test_hardware_profile_retains_only_bounded_managed_choices(self):
         temporary = tempfile.TemporaryDirectory()

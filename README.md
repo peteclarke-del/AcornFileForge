@@ -534,6 +534,17 @@ specialist searches can locate published research, but never modify the image
 or claim that similarly named software has identical bytes. See the
 [cheat-candidate analysis guide](docs/CHEAT-ANALYSIS-GUIDE.md).
 
+For a machine-code candidate with an exact file offset, select the result and
+choose **Prepare guarded patch**. The patch builder requires the watched
+address, two distinct emulator gameplay observations, an explanation and an
+author. It records the complete source SHA-256, original and replacement bytes,
+hardware profile and rollback instructions. Apply checks that exact hash and
+the guarded bytes again, then uses the normal automatic image checkpoint. A
+browser-private library retains up to 500 of these small patch records and
+matches by exact file content, never by a title or filename. The observations
+are deliberately entered by the tester: automatic debugger-to-gameplay
+correlation remains an open proof gate and the UI does not pretend otherwise.
+
 ### Opening and editing files
 
 Double-click a file in any filesystem pane to open it. The same viewer is
@@ -546,12 +557,14 @@ contents instead of trusting the filename:
 - readable Latin-1 files open in the text editor;
 - binary files open in an annotated disassembly viewer;
 - UEF tape containers, including gzip-compressed or extensionless UEF files,
-  reconstruct their cassette files as a read-only hierarchy with load and
-  execution addresses;
+  reconstruct their cassette files as a hierarchy with load and execution
+  addresses. Complete, unambiguous standard-block members allow same-length
+  edits after a structural preservation review;
 - ZIP, TAR, TAR.GZ/TGZ, TAR.BZ2, TAR.XZ, standalone GZIP, BZIP2 and XZ files
-  appear as archives and open as read-only folder hierarchies in the same pane.
+  appear as archives and open as bounded folder hierarchies in the same pane.
   Double-clicking a member extracts it in memory and opens the appropriate
-  BASIC, command-script, text, disassembly or hex viewer;
+  BASIC, command-script, text, disassembly or hex viewer. Supported readable
+  members can be edited and written back through a verified container rebuild;
 - an empty or otherwise undecodable file falls back to the hex editor.
 
 The download arrow beside every filename exports the original file and its
@@ -954,9 +967,13 @@ machine code is disassembled; uncertain data opens in Hex. Readable members in
 ZIP, TAR, compressed TAR, GZIP, BZIP2 and XZ containers can be edited. Save
 rebuilds the complete container, checks both member and parent SHA-256 values,
 then replaces the outer file through the normal image transaction and undo
-checkpoint. UEF members remain read-only because reconstructing a tape stream
-could alter timing or loader behaviour. Use File or the row download arrow to
-export any unchanged member.
+checkpoint. A complete, unambiguous UEF member can also be edited when its
+encoded length does not change. Before Save, the tape-project review lists
+every physical chunk, its type, length and checksum, and highlights the exact
+standard-data chunks that will change. The rebuild preserves chunk order,
+baud-rate changes, carrier tones, gaps, security cycles and unknown chunks byte
+for byte. Incomplete, overlapping, cycle-level or length-changing edits remain
+read-only. Use File or the row download arrow to export any unchanged member.
 
 UEF detection examines the content rather than requiring a filename suffix.
 This means an ADFS file such as `$.UEF.THRUST` opens as a tape container even
@@ -1236,12 +1253,23 @@ Interactive Run and Debug open the managed emulator in a browser-embedded noVNC
 display on port 8668. The viewer supports full-screen display and an explicit
 Stop and close action. Only one managed interactive emulator runs at a time.
 
-The Tools menu also shows the separate whole-MMB target. It is disabled in the
-current build because Elkulator and B-em accept floppy and tape media but do not
-provide an MMFS-compatible virtual SD-card attachment. This is reported as a
-specific adapter limitation. It is not silently treated as slot zero and the
-application never claims that a whole MMB was mounted when only one SSD was
-extracted.
+The Tools menu also shows a separate whole-MMB target for Electron MMFS
+profiles. Acorn File Forge builds a private, deterministic FAT32 card containing
+the current image as root `BEEB.MMB`, attaches it through the Pi1MHz raw-SD
+adapter in the bundled Elkulator build, loads the selected paged or unpaged
+MMFS ROM, and starts drive 0. The working MMB is never given to the emulator.
+Run and Debug therefore cannot corrupt it. BBC and Master profiles still state
+that their selected emulator has no corresponding whole-card adapter; one-slot
+launch remains available there.
+
+The installed-menu preview can capture the actual MMFS display. It boots the
+isolated card on a private X server, records a settled PNG, sends one navigation
+key, records a second PNG and stores both hashes, the changed-pixel count,
+machine, MMFS build, menu slot and exact source-image hash. Run the capture
+twice to establish repeatability. Image Health accepts a passing whole-MMB
+evidence row only when the same revision reproduces its screen hashes and the
+input visibly changes the display. Static launcher and PAGE checks remain
+itemised separately, so screen evidence never hides a bad menu record.
 
 Online Library search results carry short-lived server-side download tokens.
 They are retained for one hour in the private application work area, so a safe
@@ -2174,6 +2202,10 @@ term, so the scanner skips that otherwise slow lookup and asks for local
 review. Named ambiguous titles are still checked online.
 After adding or regenerating entries, the installed menu preview opens at the
 newest entry so the result can be checked immediately.
+For an MMB, select **Capture actual menu** in that preview to compare the
+database rendering with a bounded capture of the real program. This is useful
+for unfamiliar machine-code menus, where the normal preview deliberately shows
+database records instead of pretending to interpret code it does not support.
 
 ## Archimedes and RISC OS images
 
@@ -2259,6 +2291,13 @@ UEF support reconstructs standard Acorn cassette filing-system blocks.
 - File names, load addresses, execute addresses, and block completeness are
   shown.
 - Reconstructed files can be exported or dragged to another image.
+- **Tools → UEF tape project** inventories the header and every physical chunk,
+  including control and unknown chunks, with offsets, lengths and SHA-256
+  fingerprints.
+- Complete standard-block members are editable only when their reconstructed
+  byte length remains unchanged. Save opens a structural comparison before it
+  touches the image. Only the selected data bytes and their cassette block CRCs
+  may differ; raw or gzip-compressed form and all other chunks are preserved.
 - A complete tape can be converted to SSD or DSD. Conversion analyses each
   tokenised BASIC program, replaces cassette-order calls such as an empty
   `*/` or `CHAIN ""` with the final DFS filename, and updates references when
@@ -2535,7 +2574,8 @@ Backend routes are split by responsibility:
 - `app/rom_disk_service.py` owns raw ROM bank inspection, layout, movement,
   replacement, physical-component export and persistent ROM/editor projects.
 - `app/tape_disk_service.py` owns cached UEF access and UEF-to-DFS conversion,
-  including generated boot files, filename allocation and loader rewrites. It
+  proof-gated same-length tape-member rebuilds, generated boot files, filename
+  allocation and loader rewrites. It
   is another focused `DiskService` mixin rather than a second service facade.
 - `app/menu_service.py` coordinates menu analysis, mutation and installation.
 - `app/menu/analysis.py`, `app/menu/adfs.py` and `app/menu/mmb.py` provide the
@@ -2560,8 +2600,12 @@ Backend routes are split by responsibility:
   outputs and packaging the versioned recipe, patch and rebuild guide.
 - `app/content_kind.py` owns bounded content classification and BASIC, script,
   text, binary and UEF recognition.
-- `app/archive_browser.py` owns safe read-only UEF and compressed archive
-  traversal, path validation and expansion limits.
+- `app/archive_browser.py` owns safe UEF and compressed archive traversal,
+  path validation, proof-gated member replacement and expansion limits.
+- `app/fat_media.py` builds deterministic, unprivileged FAT16 cards for the
+  complete-MMB Pi1MHz/MMFS emulator adapter.
+- `app/emulator_evidence.py` owns bounded private-display capture, input
+  evidence and reproducible screen fingerprints.
 - `app/file_editor.py` owns editable-file inspection, checked source writes,
   BASIC round trips, byte ranges and annotated file disassembly.
 - `app/editor_project.py` validates and bounds per-file notes, symbols,

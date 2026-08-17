@@ -38,7 +38,7 @@ that match the running frontend.
 | ADFS S, M, L, E and F floppy images | Yes, including directories | Yes, including load/execute words | Yes | Files, directories and images | Filesystem, map, launcher and compatibility checks | Image, metadata and README |
 | BeebSCSI DAT and DSC | Yes, including deep trees | Yes, including load/execute words | Yes | Files, trees and extracted disks | Geometry, map, directory and installed-software checks | DAT, DSC and README |
 | HDF, HDD, IMG, RAW and BIN FileCore media | Yes | Where the detected layout is writable | Selected layouts | Files and directories | Geometry, map and target-profile checks | Image and README |
-| UEF tapes | Yes, as a decoded hierarchy | Read-only source | No | Extracted files into writable media | Tape blocks, names and launch hints | Source export or converted media |
+| UEF tapes | Yes, as a decoded hierarchy | Same-length proven members | No | Extracted files into writable media | Physical chunks, reconstruction proof and structural comparison | Rebuilt source or converted media |
 | HFE floppy images | Yes | Clean sector HFE v1 only | Yes | Files and images | Track and sector capability checks | HFE and README |
 | ROM images | Banks, headers, commands and regions | Bytes, project data and supported structures | Yes | Banks and programmer files | Commands, help, code, data, checksums and compatibility | ROM, project JSON and README |
 | ROMFS data ROMs | Files and directories | Yes | Yes | Files and directories | Structure and capacity checks | ROM, project JSON and README |
@@ -80,7 +80,11 @@ Open one BASIC or machine-code file and use **Tools → Find cheat candidates**
 for a read-only gameplay-state report. It distinguishes strong,
 likely and possible evidence, supports purpose filters and links to optional
 online identification and specialist references. It does not patch uncertain
-code. See the [cheat analysis guide](CHEAT-ANALYSIS-GUIDE.md).
+code. Proven machine-code changes can be saved as exact-hash guarded patches;
+the browser-private library matches the complete file hash and original bytes,
+then applies through an automatic checkpoint. Runtime observations remain
+tester supplied until managed watchpoint correlation is complete. See the
+[cheat analysis guide](CHEAT-ANALYSIS-GUIDE.md).
 
 ### Build and maintain menus
 

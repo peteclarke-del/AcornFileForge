@@ -26,9 +26,14 @@ from ..analysis_service import (
     preflight_report,
     workspace_metadata_records,
 )
-from ..checksum import sha256_bytes
+from ..checksum import sha256_bytes, sha256_path
 from ..archive_browser import read_archive_member_details
 from ..cheat_analysis import analyse_basic, analyse_disassembly, cheat_report, disassembly_diagnostics
+from ..cheat_patches import (
+    CheatPatchError,
+    apply_guarded_cheat_patch,
+    build_guarded_cheat_patch,
+)
 from ..disk_service import DiskError, DiskService
 from ..deployment_service import (
     available_deployment_targets,
@@ -36,6 +41,7 @@ from ..deployment_service import (
     deployment_plan,
 )
 from ..emulator_config import configured_emulator, emulator_command, emulator_status
+from ..emulator_evidence import EmulatorEvidenceError, capture_emulator_evidence
 from ..hardware_profiles import normalise_hardware_profile
 from ..image_diff import compare_images, manifest_fingerprint
 from ..image_patch import apply_patch_archive, inspect_patch_archive, write_patch_archive
@@ -55,9 +61,11 @@ from ..file_editor import (
     verify_basic_source,
     encode_editor_replacement,
 )
+from ..fat_media import FatMediaError, build_mmfs_card
 from ..operations import OperationRegistry
 from ..platform_contract import PlatformRuntime
 from ..workflow_recipe import build_workflow_recipe_bundle
+from ..uef import UEFError, uef_project
 from ..menu.adfs import audit_adfs_menu_pages
 from ..metadata_lookup import lookup_online, parse_distribution_filename
 from ..menu.mmb import (
@@ -300,15 +308,33 @@ def create_tools_blueprint(
         finally:
             path.unlink(missing_ok=True)
 
+    @contextmanager
+    def whole_mmb_media(session, configured):
+        """Expose an isolated FAT32 card containing BEEB.MMB to Pi1MHz MMFS."""
+        if session.kind != "mmb":
+            raise DiskError("Whole-MMFS launch requires an MMB image.")
+        temporary = tempfile.NamedTemporaryFile(
+            dir=service.work_dir, prefix="mmfs-card-", suffix=".img", delete=False,
+        )
+        path = Path(temporary.name)
+        temporary.close()
+        launch = copy(configured)
+        launch.emulator_media_kind = "mmfs-sd"
+        try:
+            build_mmfs_card(session.path, path)
+            yield launch, path
+        except FatMediaError as exc:
+            raise DiskError(str(exc)) from exc
+        finally:
+            path.unlink(missing_ok=True)
+
     def selected_media_probe(session, configured, slot: int | None, *, debug: bool = False):
         """Build a command for a target without extracting or changing its bytes."""
         if getattr(session, "kind", "") == "mmb":
             if slot is None:
-                raise ValueError(
-                    "The bundled emulators cannot attach an MMB container directly. "
-                    "Select a formatted slot to mount its DFS disk. Whole-MMB execution "
-                    "requires an MMFS-capable SD-card emulator adapter."
-                )
+                probe = copy(configured)
+                probe.emulator_media_kind = "mmfs-sd"
+                return emulator_command(probe, Path("selected-whole-mmb.img"), debug=debug)
             slots = service.list_slots(session)
             if slot < 0 or slot >= len(slots) or not slots[slot].get("formatted"):
                 raise ValueError("Select one formatted MMB disk slot to run.")
@@ -326,7 +352,7 @@ def create_tools_blueprint(
                     yield configured, media
 
             return isolated()
-        if mode not in {"parent-auto", "parent-mount", "slot-auto", "slot-mount"}:
+        if mode not in {"parent-auto", "parent-mount", "slot-auto", "slot-mount", "whole-mmb-auto", "whole-mmb-mount"}:
             raise DiskError("Choose how the emulator should receive the selected file or its parent image.")
         slot = optional_int(data.get("slot"))
         launch = copy(configured)
@@ -335,10 +361,9 @@ def create_tools_blueprint(
 
         if getattr(session, "kind", "") == "mmb":
             if slot is None:
-                raise DiskError(
-                    "Whole-MMB mounting is not supported by the selected managed emulator. "
-                    "Select one formatted slot to mount its DFS disk instead."
-                )
+                if not mode.startswith("whole-mmb-"):
+                    raise DiskError("Choose whole-MMB mounting or select one formatted disk slot.")
+                return whole_mmb_media(session, launch)
 
             @contextmanager
             def slot_media():
@@ -709,6 +734,16 @@ def create_tools_blueprint(
             optional_int(request.args.get("side")),
         ))
 
+    @blueprint.get("/api/images/<image_id>/uef-project")
+    def inspect_uef_project(image_id):
+        session = service.get(image_id)
+        if session.kind != "tape":
+            raise DiskError("The tape project view is available only for UEF images.")
+        try:
+            return jsonify(uef_project(session.path.read_bytes()))
+        except UEFError as exc:
+            raise DiskError(str(exc)) from exc
+
     @blueprint.get("/api/images/<image_id>/dependencies")
     def dependencies(image_id):
         session = service.get(image_id)
@@ -783,6 +818,78 @@ def create_tools_blueprint(
                 machine=machine, matches=matches, diagnostics=diagnostics,
             ))
 
+    @blueprint.get("/api/images/<image_id>/cheat-patch/context")
+    def cheat_patch_context(image_id):
+        session = service.get(image_id)
+        path = str(request.args.get("path") or "")
+        if not path or request.args.get("member"):
+            raise DiskError("Guarded cheat patches currently require one file stored directly in an image.")
+        slot = optional_int(request.args.get("slot"))
+        side = optional_int(request.args.get("side"))
+        try:
+            offset = int(request.args.get("offset", "-1"))
+            length = max(1, min(32, int(request.args.get("length", "1"))))
+        except ValueError as exc:
+            raise DiskError("The patch offset or byte length is invalid.") from exc
+        original = service.read_file(session, slot, path, side)
+        if offset < 0 or offset + length > len(original):
+            raise DiskError("The selected candidate is outside the current file.")
+        return jsonify(
+            path=path, offset=offset, length=length,
+            originalHex=original[offset:offset + length].hex().upper(),
+            sourceSha256=sha256_bytes(original), sourceSize=len(original),
+            hardwareProfile=session.hardware_profile or {},
+        )
+
+    @blueprint.post("/api/images/<image_id>/cheat-patch/preview")
+    @request_effect("read-only", "validating a guarded cheat patch")
+    def preview_cheat_patch(image_id):
+        session = service.get(image_id)
+        data = payload()
+        path = str(data.get("path") or "")
+        if not path or data.get("member"):
+            raise DiskError("Guarded cheat patches currently require one file stored directly in an image.")
+        original = service.read_file(
+            session, optional_int(data.get("slot")), path, optional_int(data.get("side")),
+        )
+        try:
+            patch = build_guarded_cheat_patch(original, data)
+        except CheatPatchError as exc:
+            raise DiskError(str(exc)) from exc
+        return jsonify(patch=patch)
+
+    @blueprint.post("/api/images/<image_id>/cheat-patch/apply")
+    @image_mutation("applying an exact-hash guarded cheat patch")
+    def apply_cheat_patch(image_id):
+        session = service.get(image_id)
+        data = payload()
+        patch = dict(data.get("patch") or {})
+        path = str(data.get("path") or patch.get("path") or "")
+        if not path or data.get("member"):
+            raise DiskError("Guarded cheat patches currently require one file stored directly in an image.")
+        slot = optional_int(data.get("slot"))
+        side = optional_int(data.get("side"))
+        original = service.read_file(session, slot, path, side)
+        try:
+            replacement = apply_guarded_cheat_patch(original, patch)
+        except CheatPatchError as exc:
+            raise DiskError(str(exc)) from exc
+        image = replace_file_bytes(
+            service, session, path, slot, side, replacement, sha256_bytes(original),
+        )
+        project = service.editor_project(session, path, slot, side)
+        project["tests"] = [*project.get("tests", []), {
+            "kind": "guarded-cheat-patch",
+            "time": datetime.now(timezone.utc).isoformat(),
+            "patchId": patch.get("id"),
+            "sourceSha256": patch.get("sourceSha256"),
+            "resultSha256": sha256_bytes(replacement),
+            "summary": patch.get("title"),
+            "rollback": patch.get("rollback"),
+        }][-100:]
+        project = service.save_editor_project(session, path, slot, side, project)
+        return jsonify(image=image, patch=patch, project=project)
+
     @blueprint.get("/api/images/<image_id>/inspect/search")
     def search_inspected_files(image_id):
         session = service.get(image_id)
@@ -828,6 +935,27 @@ def create_tools_blueprint(
             bool(current["tokenisedBasic"]), str(data.get("sha256") or ""),
         )
         return jsonify(image=image, path=path, inspection=inspect_editable_file(service, session, path, slot, side))
+
+    @blueprint.post("/api/images/<image_id>/inspect/uef-rebuild-preview")
+    @request_effect("read-only", "proving a UEF tape member rebuild")
+    def preview_uef_member_rebuild(image_id):
+        data = payload()
+        session = service.get(image_id)
+        if session.kind != "tape":
+            raise DiskError("This structural comparison is only used by UEF tape projects.")
+        path = str(data.get("path") or "")
+        slot = optional_int(data.get("slot"))
+        side = optional_int(data.get("side"))
+        current = inspect_editable_file(service, session, path, slot, side)
+        if not current["editable"] or current["readOnly"]:
+            raise DiskError("This UEF member does not have a complete reconstruction proof.")
+        if str(data.get("sha256") or "") != current["sha256"]:
+            raise DiskError("The UEF member changed after the editor opened it. Reopen it before reviewing the rebuild.")
+        original = service.read_file(session, slot, path, side)
+        replacement = encode_editor_replacement(
+            original, str(data.get("text") or ""), bool(current["tokenisedBasic"]),
+        )
+        return jsonify(service.preview_tape_member_replacement(session, path, replacement))
 
     @blueprint.put("/api/images/<image_id>/inspect/properties")
     @image_mutation("editing file properties")
@@ -921,9 +1049,83 @@ def create_tools_blueprint(
             **status, hardware=configured.target_hardware,
             parentMountable=parent_mountable, parentMessage=parent_message,
             isolatedBasic=isolated_basic,
-            mediaTarget=("mmb-slot" if getattr(session, "kind", "") == "mmb" and slot is not None else "image"),
-            targetLabel=(f"MMB slot {slot}" if getattr(session, "kind", "") == "mmb" and slot is not None else getattr(session, "name", "Current image")),
+            mediaTarget=(
+                "mmb-slot" if getattr(session, "kind", "") == "mmb" and slot is not None
+                else "whole-mmb" if getattr(session, "kind", "") == "mmb"
+                else "image"
+            ),
+            targetLabel=(
+                f"MMB slot {slot}" if getattr(session, "kind", "") == "mmb" and slot is not None
+                else f"complete MMFS card · {getattr(session, 'name', 'BEEB.MMB')}" if getattr(session, "kind", "") == "mmb"
+                else getattr(session, "name", "Current image")
+            ),
         )
+
+    @blueprint.post("/api/images/<image_id>/menu-sandbox")
+    @request_effect("external", "capturing an installed MMB menu in an emulator sandbox")
+    def menu_sandbox(image_id):
+        session = service.get(image_id)
+        if session.kind != "mmb":
+            raise DiskError("The isolated menu sandbox currently requires a complete MMB image.")
+        menu_slot, menu_type = installed_mmb_menu(service, session)
+        if menu_slot is None:
+            raise DiskError("No installed MMB menu was found to run in the sandbox.")
+        data = payload()
+        configured = requested_emulator_session(session, data)
+        source_hash = sha256_path(session.path)
+        earlier = [
+            row for row in service.editor_project(session, "$MMB", None, None).get("tests", [])
+            if row.get("kind") == "menu-sandbox"
+            and row.get("sourceSha256") == source_hash
+            and row.get("menuSlot") == menu_slot
+            and row.get("menuType") == menu_type
+        ]
+        try:
+            with whole_mmb_media(session, configured) as (launch, media):
+                launch.hardware_profile = dict(launch.hardware_profile or {})
+                launch.hardware_profile["emulatorBoot"] = "boot"
+                arguments, cwd = emulator_command(launch, media)
+                evidence = capture_emulator_evidence(arguments, cwd)
+        except (ValueError, FatMediaError, EmulatorEvidenceError) as exc:
+            raise DiskError(f"The isolated menu capture could not complete: {exc}") from exc
+        public_frames = evidence.pop("frames")
+        frame_hashes = [frame["sha256"] for frame in public_frames]
+        repeatable = any(row.get("frameHashes") == frame_hashes for row in earlier)
+        linked_records = 0
+        if menu_type in {"universal", "universal-4r", "spi-game-menu"}:
+            data_path = "$.EGAMDAT" if menu_type == "universal-4r" else "$.GAMDATA"
+            linked_records = len(parse_mmb_menu_data(
+                service.read_file(session, menu_slot, data_path), menu_type,
+            ))
+        result = {
+            **evidence,
+            "time": datetime.now(timezone.utc).isoformat(),
+            "kind": "menu-sandbox",
+            "menuSlot": menu_slot,
+            "menuType": menu_type,
+            "sourceSha256": source_hash,
+            "emulator": configured_emulator(configured).label,
+            "machine": str(configured.hardware_profile.get("machine") or ""),
+            "frameHashes": frame_hashes,
+            "repeatable": repeatable,
+            "profileStatus": "repeatable-evidence" if repeatable else "first-capture",
+            "linkedMenuRecords": linked_records,
+            "capturedProfile": ({
+                "menuType": menu_type,
+                "menuSlot": menu_slot,
+                "settledFrameSha256": frame_hashes[0],
+                "inputFrameSha256": frame_hashes[1],
+                "input": evidence.get("input"),
+                "linkedMenuRecords": linked_records,
+            } if repeatable else None),
+            "summary": (
+                "The installed menu produced a captured display and responded to a navigation key."
+                if evidence.get("inputChangedDisplay")
+                else "The installed menu produced a captured display; the navigation key did not visibly change it."
+            ),
+        }
+        project = record_editor_run(session, "$MMB", None, None, result, kind="menu-sandbox")
+        return jsonify(result={**result, "frames": public_frames}, project=project)
 
     @blueprint.post("/api/images/<image_id>/editor-emulator")
     @request_effect("external", "launching an editor document in an emulator")
@@ -931,7 +1133,7 @@ def create_tools_blueprint(
         session = service.get(image_id)
         data = payload()
         configured = requested_emulator_session(session, data)
-        path = str(data.get("path") or "")
+        path = str(data.get("path") or ("$MMB" if session.kind == "mmb" and data.get("slot") is None else ""))
         slot, side = optional_int(data.get("slot")), optional_int(data.get("side"))
         if bool(data.get("interactive")):
             try:
@@ -1081,8 +1283,16 @@ def create_tools_blueprint(
             label=status["label"], machine=status["machine"],
             parentMountable=parent_mountable, parentMessage=parent_message,
             isolatedBasic=isolated_basic, actions=["launch"] if available else [],
-            mediaTarget=("mmb-slot" if getattr(session, "kind", "") == "mmb" and slot is not None else "image"),
-            targetLabel=(f"MMB slot {slot}" if getattr(session, "kind", "") == "mmb" and slot is not None else getattr(session, "name", "Current image")),
+            mediaTarget=(
+                "mmb-slot" if getattr(session, "kind", "") == "mmb" and slot is not None
+                else "whole-mmb" if getattr(session, "kind", "") == "mmb"
+                else "image"
+            ),
+            targetLabel=(
+                f"MMB slot {slot}" if getattr(session, "kind", "") == "mmb" and slot is not None
+                else f"complete MMFS card · {getattr(session, 'name', 'BEEB.MMB')}" if getattr(session, "kind", "") == "mmb"
+                else getattr(session, "name", "Current image")
+            ),
         )
 
     @blueprint.post("/api/images/<image_id>/editor-debugger")
@@ -1091,7 +1301,7 @@ def create_tools_blueprint(
         session = service.get(image_id)
         data = payload()
         configured = requested_emulator_session(session, data)
-        path = str(data.get("path") or "")
+        path = str(data.get("path") or ("$MMB" if session.kind == "mmb" and data.get("slot") is None else ""))
         slot, side = optional_int(data.get("slot")), optional_int(data.get("side"))
         action = str(data.get("action") or "launch").strip().lower()
         if action != "launch":
