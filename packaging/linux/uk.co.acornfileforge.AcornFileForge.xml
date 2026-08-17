@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-acorn-dfs">
+    <comment>Acorn DFS disk image</comment>
+    <glob pattern="*.ssd"/><glob pattern="*.dsd"/>
+  </mime-type>
+  <mime-type type="application/x-acorn-mmb">
+    <comment>MMFS MMB disk bank</comment>
+    <glob pattern="*.mmb"/>
+  </mime-type>
+  <mime-type type="application/x-acorn-adfs">
+    <comment>Acorn ADFS or FileCore image</comment>
+    <glob pattern="*.adf"/><glob pattern="*.adl"/><glob pattern="*.adm"/>
+    <glob pattern="*.ads"/><glob pattern="*.dat"/><glob pattern="*.dsc"/>
+    <glob pattern="*.hdf"/><glob pattern="*.hdd"/><glob pattern="*.hd4"/>
+  </mime-type>
+  <mime-type type="application/x-acorn-uef">
+    <comment>Unified Emulator Format tape image</comment>
+    <glob pattern="*.uef"/>
+  </mime-type>
+  <mime-type type="application/x-acorn-rom">
+    <comment>Acorn ROM image</comment>
+    <glob pattern="*.rom"/>
+  </mime-type>
+  <mime-type type="application/x-acorn-hfe">
+    <comment>HxC floppy image</comment>
+    <glob pattern="*.hfe"/>
+  </mime-type>
+</mime-info>

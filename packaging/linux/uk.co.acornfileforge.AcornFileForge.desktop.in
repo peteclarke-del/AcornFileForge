@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Acorn File Forge
+Comment=Open and maintain Acorn media images
+Exec=@EXEC@ %F
+Icon=uk.co.acornfileforge.AcornFileForge
+Terminal=false
+Categories=Utility;FileTools;
+MimeType=application/x-acorn-dfs;application/x-acorn-mmb;application/x-acorn-adfs;application/x-acorn-uef;application/x-acorn-rom;application/x-acorn-hfe;
+StartupNotify=true

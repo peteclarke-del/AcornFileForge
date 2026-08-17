@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+python="$project_root/.venv-desktop/bin/python"
+
+if [ ! -x "$python" ]; then
+    echo "Acorn File Forge desktop is not installed in this checkout." >&2
+    echo "Run tools/install-linux-desktop.sh first." >&2
+    exit 2
+fi
+
+cd "$project_root"
+PATH="$(dirname -- "$python"):$PATH"
+export PATH
+exec "$python" -m desktop "$@"
