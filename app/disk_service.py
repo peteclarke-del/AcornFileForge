@@ -227,33 +227,19 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
         rom_options: dict | None = None,
         force_kind: str | None = None,
     ) -> ImageSession:
-        safe_name = self.safe_filename(name)
-        kind = self.detect_kind(safe_name)
-        if force_kind:
-            if force_kind != "rom":
-                raise DiskError("Only the raw ROM format override is supported.")
-            kind = force_kind
-        if descriptor and not safe_name.lower().endswith(".dat"):
-            raise DiskError("A DSC descriptor can only accompany a BeebSCSI DAT image.")
-        if descriptor and Path(self.safe_filename(descriptor[0])).suffix.lower() != ".dsc":
-            raise DiskError("The BeebSCSI geometry file must use the DSC extension.")
-        if (
-            safe_name.lower().endswith(".dat")
-            and descriptor
-            and Path(self.safe_filename(descriptor[0])).stem.casefold()
-            != Path(safe_name).stem.casefold()
-        ):
-            raise DiskError(f"Choose {Path(safe_name).stem}.dsc for this DAT image.")
+        safe_name, kind, descriptor_name = self._new_session_source(
+            name,
+            descriptor[0] if descriptor else None,
+            force_kind,
+        )
         image_id = uuid.uuid4().hex
         folder = self.work_dir / image_id
         folder.mkdir()
         path = folder / safe_name
         try:
             self._copy_stream(stream, path)
-            descriptor_name = None
             descriptor_path = None
-            if descriptor:
-                descriptor_name = self.safe_filename(descriptor[0])
+            if descriptor and descriptor_name:
                 descriptor_path = folder / descriptor_name
                 self._copy_stream(descriptor[1], descriptor_path)
             return self._finalize_new_session(
@@ -269,6 +255,78 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
         except Exception:
             shutil.rmtree(folder, ignore_errors=True)
             raise
+
+    def create_from_path(
+        self,
+        source: Path,
+        descriptor: Path | None = None,
+        target_hardware: str = "auto",
+        rom_options: dict | None = None,
+        force_kind: str | None = None,
+    ) -> ImageSession:
+        """Create a private session from a trusted local desktop path.
+
+        Local paths use the filesystem clone/sparse-copy path instead of
+        passing hundreds of megabytes through multipart and a spooled upload.
+        The source remains untouched and all edits still target the session.
+        """
+        source = Path(source)
+        descriptor = Path(descriptor) if descriptor is not None else None
+        safe_name, kind, descriptor_name = self._new_session_source(
+            source.name,
+            descriptor.name if descriptor else None,
+            force_kind,
+        )
+        image_id = uuid.uuid4().hex
+        folder = self.work_dir / image_id
+        folder.mkdir()
+        path = folder / safe_name
+        try:
+            self._copy_local_file(source, path)
+            descriptor_path = None
+            if descriptor and descriptor_name:
+                descriptor_path = folder / descriptor_name
+                self._copy_local_file(descriptor, descriptor_path)
+            return self._finalize_new_session(
+                image_id,
+                safe_name,
+                path,
+                descriptor_name,
+                descriptor_path,
+                kind,
+                target_hardware,
+                rom_options,
+            )
+        except Exception:
+            shutil.rmtree(folder, ignore_errors=True)
+            raise
+
+    def _new_session_source(
+        self,
+        name: str,
+        descriptor_name: str | None,
+        force_kind: str | None,
+    ) -> tuple[str, str, str | None]:
+        """Validate and normalise names shared by stream and local opens."""
+        safe_name = self.safe_filename(name)
+        kind = self.detect_kind(safe_name)
+        if force_kind:
+            if force_kind != "rom":
+                raise DiskError("Only the raw ROM format override is supported.")
+            kind = force_kind
+        safe_descriptor = self.safe_filename(descriptor_name) if descriptor_name else None
+        if safe_descriptor and not safe_name.lower().endswith(".dat"):
+            raise DiskError("A DSC descriptor can only accompany a BeebSCSI DAT image.")
+        if safe_descriptor and Path(safe_descriptor).suffix.lower() != ".dsc":
+            raise DiskError("The BeebSCSI geometry file must use the DSC extension.")
+        if (
+            safe_name.lower().endswith(".dat")
+            and safe_descriptor
+            and Path(safe_descriptor).stem.casefold()
+            != Path(safe_name).stem.casefold()
+        ):
+            raise DiskError(f"Choose {Path(safe_name).stem}.dsc for this DAT image.")
+        return safe_name, kind, safe_descriptor
 
     def _finalize_new_session(
         self,
@@ -356,8 +414,6 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
             if detected_kind != kind:
                 session.kind = detected_kind
         self._normalise_beebscsi_dat_size(session)
-        if session.descriptor_path and session.path.suffix.lower() == ".dat":
-            self._optimise_sparse_file(session.path)
         self._apply_target_hardware(session)
         with self._lock:
             self.sessions[image_id] = session

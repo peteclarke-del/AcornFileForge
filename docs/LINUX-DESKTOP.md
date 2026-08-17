@@ -59,10 +59,11 @@ Launch **Acorn File Forge** from the desktop application menu, run
 BeebSCSI, UEF, HFE or ROM image from the file manager. DAT and DSC partners are
 matched automatically when they share a basename.
 
-The native chooser is a quick-open path and uses automatic target detection.
-Use **File → Open image** inside the workbench when an ambiguous ADFS image
-needs an explicit target profile or when several ROM components must be
-combined with a particular byte layout.
+The folder button in the native header, **File → Open image** in a pane and
+<kbd>Ctrl</kbd>+<kbd>O</kbd> all use the GTK file chooser. This keeps local media
+off the browser upload path. The chooser uses automatic target detection; use
+the Workbench hardware profile to describe the intended machine before making
+target-specific changes.
 
 ## Desktop behaviour
 
@@ -70,8 +71,14 @@ combined with a particular byte layout.
   closes it with the GTK application.
 - A launch token protects every private service request. It is removed from
   the visible WebView address immediately after startup.
-- Native path selection avoids uploading through a browser request, but the
-  selected source is still copied to a safe working session before editing.
+- Native path selection avoids uploading through a browser request. The source
+  is cloned by the filesystem when supported, otherwise it is sparse-copied to
+  a safe working session before editing. A 512 MiB BeebSCSI DAT therefore does
+  not need to be uploaded, spooled and copied a second time.
+- Opening a DAT validates its DSC pairing, geometry and root FileCore metadata.
+  The expensive full-image sparse optimisation is deferred until Save, where
+  the existing progress dialog describes directory repair, checksum and final
+  validation stages.
 - Working sessions are stored under the XDG data directory and recover just as
   browser-owned sessions do.
 - Save image produces the same timestamped ZIP and technical README. WebKitGTK
@@ -82,6 +89,25 @@ combined with a particular byte layout.
   locally installed Greaseweazle. Choose **Tools → Write physical floppy** or
   right-click the image title. The workflow includes drive selection,
   destructive confirmation, tracked progress, cancellation and verification.
+- GTK and Libadwaita own the title bar, window controls, application menu,
+  keyboard shortcuts, file chooser and symbolic header icons. The embedded
+  workbench inherits the desktop font, follows the system light or dark setting
+  until a user theme is chosen, and uses flatter desktop-sized controls. Its
+  BBC-inspired media colours remain consistent with the browser edition.
+
+### Why a large DAT used to pause at 24 percent
+
+The old pane chooser was an HTML upload control. Its percentage measured the
+transfer from WebKit into the loopback Flask request, not ADFS parsing. A large
+DAT was then spooled by Werkzeug, copied into the private session and scanned
+again for zero ranges. On a 512 MiB BeebSCSI image that meant several complete
+passes over the file before the root directory appeared.
+
+The native chooser now passes the selected local path through the authenticated
+desktop-only API and creates the private working copy directly. On filesystems
+with copy-on-write reflinks this is effectively immediate. Other filesystems
+perform one sparse copy, so removable media and network mounts can still take
+time, but the redundant loopback upload and eager zero scan are gone.
 
 There is intentionally no parallel GTK implementation of panes or editors.
 That would double the maintenance burden and allow filesystem safety fixes to

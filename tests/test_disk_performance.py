@@ -107,6 +107,27 @@ class DiskPerformanceTests(unittest.TestCase):
             self.assertEqual(target.read_bytes(), source.read_bytes())
             self.assertLess(target.stat().st_blocks * 512, target.stat().st_size // 4)
 
+    def test_trusted_local_open_uses_filesystem_copy_not_upload_stream(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "firmware.rom"
+            source.write_bytes(bytes([0xFF]) * (16 * 1024))
+            service = DiskService(root / "work")
+
+            with patch.object(
+                service,
+                "_copy_local_file",
+                wraps=service._copy_local_file,
+            ) as local_copy, patch.object(
+                service,
+                "_copy_stream",
+                side_effect=AssertionError("local open used the upload copy path"),
+            ):
+                session = service.create_from_path(source, force_kind="rom")
+
+            self.assertEqual(local_copy.call_count, 1)
+            self.assertEqual(session.path.read_bytes(), source.read_bytes())
+
     def test_sparse_optimisation_does_not_look_like_an_image_edit(self):
         with tempfile.TemporaryDirectory() as directory:
             image = Path(directory) / "scsi0.dat"
