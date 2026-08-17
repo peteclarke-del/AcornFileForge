@@ -55,9 +55,11 @@ required to install or run the application.
 
 Open <http://localhost:8666>.
 
-Linux users can instead install the GTK 4 desktop host. It provides a native
-window, local file chooser, file-manager associations and native emulator
-windows while embedding the same application:
+Linux users can instead install the GTK 4 desktop host. GTK and Libadwaita
+provide the window decorations, application menu, symbolic icons and local
+file chooser, while managed emulators use native windows. The shared workbench
+inherits the desktop font and colour preference. Large local images use a
+filesystem clone or one sparse working copy rather than a browser upload:
 
 ```bash
 tools/install-linux-desktop.sh

@@ -65,16 +65,20 @@ does not exist in the web host, so a remote browser cannot ask the server to
 read arbitrary host paths.
 
 Source images are still copied into a working session. The native file chooser
-does not grant in-place mutation. Downloads use WebKitGTK's normal Downloads
-directory handling, and saved packages retain the same timestamped image,
-metadata and README content as browser downloads.
+does not grant in-place mutation. Its desktop-only adapter uses a filesystem
+reflink where available and falls back to one sparse local copy, avoiding the
+browser multipart and upload-spooling path for large media. Downloads use
+WebKitGTK's normal Downloads directory handling, and saved packages retain the
+same timestamped image, metadata and README content as browser downloads.
 
 ## Native host scope
 
-The first native host deliberately reuses the mature web workbench. GTK owns
-the application lifecycle, primary window, file associations and local image
-chooser. WebKitGTK renders the shared workspace. Managed emulators use ordinary
-native windows rather than the Docker noVNC surface.
+The first native host deliberately reuses the mature web workbench. GTK and
+Libadwaita own the application lifecycle, primary window and decorations,
+application menu, symbolic header icons, file associations and local image
+chooser. WebKitGTK renders the shared workspace, inheriting the GTK font and
+system colour preference while retaining the Acorn media theme. Managed
+emulators use ordinary native windows rather than the Docker noVNC surface.
 
 Environment variables can point the desktop host at local emulator builds:
 
