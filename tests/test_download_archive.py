@@ -58,6 +58,32 @@ class DownloadArchiveTests(unittest.TestCase):
             with self.assertRaisesRegex(DiskError, "changed afterward"):
                 prepared_download(session)
 
+    def test_accepted_compatibility_report_is_packaged(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            service, session = self._mmb_session(Path(directory))
+            session.compatibility_reports = [{
+                "format": "acorn-file-forge-compatibility-report",
+                "version": 1,
+                "operation": "copy",
+                "markdown": "# Accepted report\n",
+                "acceptedAt": "2026-08-17T12:00:00+00:00",
+            }]
+            archive_path, _archive_name = build_download_archive(service, session)
+            with zipfile.ZipFile(archive_path) as archive:
+                self.assertIn("Compatibility/accepted-report.json", archive.namelist())
+                self.assertIn("Compatibility/accepted-report.md", archive.namelist())
+                self.assertEqual(archive.read("Compatibility/accepted-report.md"), b"# Accepted report\n")
+                document = archive.read("Compatibility/accepted-report.json").decode("utf-8")
+                self.assertNotIn('"markdown"', document)
+
+    def test_accepting_report_invalidates_previously_prepared_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            service, session = self._mmb_session(Path(directory))
+            build_download_archive(service, session)
+            session.compatibility_reports = [{"acceptedAt": "2026-08-17T12:00:00+00:00"}]
+            with self.assertRaisesRegex(DiskError, "Save it again"):
+                prepared_download(session)
+
     def test_sparse_beebscsi_archive_is_compressed_and_byte_exact(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

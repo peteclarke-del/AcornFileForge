@@ -78,12 +78,12 @@ project documentation. An unchecked item remains in scope.
       compatibility rewrites and menu policy.
 - [x] Export and restore a portable GUI project containing panes, paths,
       profiles and recipes.
-- [ ] Provide a supported headless CLI for image creation, imports, conversion,
+- [x] Provide a supported headless CLI for image creation, imports, conversion,
       validation, menu generation, comparison, patching and saving.
 - [ ] Export a completed GUI workflow as a versioned recipe with source
       identities, expected hashes and all non-secret decisions required for a
       deterministic rebuild.
-- [ ] Add a dry-run CLI report and stable machine-readable exit statuses.
+- [x] Add a dry-run CLI report and stable machine-readable exit statuses.
 
 ## 5. Compatibility and conversion reports
 
@@ -95,9 +95,10 @@ project documentation. An unchecked item remains in scope.
 - [x] Define a versioned consolidated compatibility-report schema and use it
       for the current selection dry-run.
 - [ ] Present that shared report before every cross-format batch from drag and
-      drop, File commands, Online Library and the future CLI.
+      drop, File commands and Online Library. The headless CLI already uses it
+      for imports and exposes it directly through `preflight`.
 - [x] Export a generated compatibility report directly as JSON or Markdown.
-- [ ] Include the final accepted report in the saved image package.
+- [x] Include the final accepted report in the saved image package.
 - [x] Record explicit filename, directory and filetype losses or conversions
       per item rather than only as batch-level prose.
 

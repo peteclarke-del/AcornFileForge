@@ -59,6 +59,7 @@ class CheckpointStore:
             "romComponentNames": list(session.rom_component_names),
             "romProject": dict(session.rom_project),
             "editorProjects": dict(session.editor_projects),
+            "compatibilityReports": list(session.compatibility_reports),
         }
 
     @classmethod
@@ -239,6 +240,11 @@ class CheckpointStore:
             str(key): normalise_editor_project(value)
             for key, value in dict(state.get("editorProjects") or session.editor_projects).items()
         }
+        session.compatibility_reports = [
+            dict(report)
+            for report in list(state.get("compatibilityReports") or [])[-10:]
+            if isinstance(report, dict)
+        ]
         return self._public(metadata)
 
     def latest_automatic(self, session: ImageSession) -> dict | None:

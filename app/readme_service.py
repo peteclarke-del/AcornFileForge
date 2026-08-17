@@ -234,6 +234,13 @@ def build_download_readme(
                 f"- Descriptor SHA-256: `{descriptor_checksum or sha256_path(session.descriptor_path)}`",
             )
         )
+    if session.compatibility_reports:
+        accepted = session.compatibility_reports[-1]
+        lines.extend((
+            f"- Accepted compatibility report: {accepted.get('acceptedAt') or 'retained with this package'}",
+            f"- Accepted operation: {accepted.get('operation') or 'review'}",
+            "- Compatibility evidence: `Compatibility/accepted-report.json` and `Compatibility/accepted-report.md`",
+        ))
     if session.hfe_original_path:
         lines.extend(
             (

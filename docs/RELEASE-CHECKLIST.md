@@ -153,6 +153,10 @@ For a broad release, cover all of these:
       multi-selection and installation.
 - [ ] Menu metadata priority, launch action, PAGE derivation, multi-title disk,
       keep-off-menu and complete regeneration.
+- [ ] Headless CLI create, save, validate, preflight, import, menu, compare and patch
+      commands return the versioned JSON envelope and documented exit codes.
+- [ ] CLI dry-run writes no output, deterministic recipes reject changed
+      inputs, and accepted compatibility reports appear in saved ZIPs.
 
 ## 7. Editor and emulator gate
 

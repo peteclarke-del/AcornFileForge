@@ -113,6 +113,7 @@ the reusable release checklist.
   content detection, BASIC and script editing, source transformations,
   disassembly projects, archives, synchronized bytes and emulator hand-off.
 - The [installation guide](docs/INSTALLATION.md) covers desktop and Raspberry Pi builds, updates, retained sessions and common failures.
+- The [headless CLI guide](docs/CLI-GUIDE.md) covers automation, stable JSON results, dry-runs and deterministic recipes.
 - The [release checklist](docs/RELEASE-CHECKLIST.md) defines the generated-media, fault-injection, benchmark, browser and real-hardware gates.
 - **Help** in the application contains illustrated, task-based instructions and
   stays with the running version of the frontend.
@@ -129,7 +130,8 @@ workspace so they do not expose retained sessions or personal media.
 
 1. The app starts with one full-width work pane. Open or create an image there.
 2. Select **Add Pane** in the header when you need a source, destination or
-   scratch area. Add a third in the same way; three is the maximum.
+   scratch area. There is no fixed pane-count limit. The practical limit is
+   the browser, memory and available workspace area.
 3. Double-click directories or MMB slots to browse them. SSD and DSD panes open
    directly on `$`; files from populated A-Z catalogue prefixes are grouped
    underneath. Use the `..` row to return to the parent where applicable, or
@@ -1074,7 +1076,10 @@ source and target format, proposed target name, load and execute addresses,
 access state and filetype for every selected item. Filename conversions,
 directory loss and unsupported RISC OS filetype metadata are attached to the
 individual item that caused them. The reviewed report can be downloaded as
-JSON for automation or Markdown for a package record.
+JSON for automation or Markdown for a package record. Choose **Keep with saved
+image** after a report passes to retain it with the working session. The next
+saved ZIP includes the accepted JSON and Markdown below `Compatibility/`, and
+the generated README identifies the accepted operation and review time.
 
 **Find duplicates / variants** uses full SHA-256 hashes for byte-identical
 content and a conservative normalised-title comparison for likely release or

@@ -110,6 +110,21 @@ def build_download_archive(
             (path, f"ROM-components/{name}")
             for path, name in service.rom_component_exports(session)
         )
+    if session.compatibility_reports:
+        accepted = session.compatibility_reports[-1]
+        report_json = session.path.parent / "accepted-compatibility-report.json"
+        report_markdown = session.path.parent / "accepted-compatibility-report.md"
+        json_document = dict(accepted)
+        markdown = str(json_document.pop("markdown", ""))
+        report_json.write_text(
+            json.dumps(json_document, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        report_markdown.write_text(markdown, encoding="utf-8")
+        files.extend((
+            (report_json, "Compatibility/accepted-report.json"),
+            (report_markdown, "Compatibility/accepted-report.md"),
+        ))
     byte_total = sum(path.stat().st_size for path, _name in files)
     byte_current = 0
 
@@ -157,6 +172,11 @@ def build_download_archive(
                         if session.descriptor_path
                         else None
                     ),
+                    "compatibilityReportAcceptedAt": (
+                        session.compatibility_reports[-1].get("acceptedAt")
+                        if session.compatibility_reports
+                        else None
+                    ),
                 },
                 separators=(",", ":"),
             ),
@@ -191,6 +211,11 @@ def prepared_download(session: ImageSession) -> tuple[Path, str]:
             and int(metadata.get("imageSize", -1)) == image_stat.st_size
             and int(metadata.get("imageMtimeNs", -1)) == image_stat.st_mtime_ns
             and metadata.get("descriptorMtimeNs") == descriptor_mtime
+            and metadata.get("compatibilityReportAcceptedAt") == (
+                session.compatibility_reports[-1].get("acceptedAt")
+                if session.compatibility_reports
+                else None
+            )
         )
         if not valid:
             raise ValueError
