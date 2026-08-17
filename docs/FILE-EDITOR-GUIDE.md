@@ -81,7 +81,8 @@ The menus follow desktop editor conventions:
 - **Tools** contains language checks, outlines, transformation history,
   normalisation, BASIC verification, Condense and Refactor.
 - **Project** contains notes, bookmarks, symbols, code and data regions, test
-  history and the optional emulator hand-off.
+  history and managed emulator execution or debugging where the selected
+  profile supports the source media.
 - **Help** contains the language overview, searchable command reference,
   document symbols and current diagnostics.
 

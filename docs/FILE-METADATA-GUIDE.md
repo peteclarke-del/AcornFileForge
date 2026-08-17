@@ -21,7 +21,7 @@ derives an address merely because the bytes resemble BASIC or machine code.
 | ADFS and FileCore floppy images | Yes | Yes when the detected layout is writable | Directories are excluded because they do not have file load and execution semantics. |
 | BeebSCSI DAT with matching DSC | Yes | Yes | Uses the same ADFS catalogue operation while retaining BeebSCSI geometry and map safety. |
 | ROMFS data ROM | Yes | Yes | The ROMFS catalogue record is changed without altering the file payload. |
-| UEF and supported archive members | Yes when metadata exists | Read-only in the hierarchy | UEF blocks, SparkFS extra fields and companion `.inf` files can supply the words. Extract into writable media to change them. |
+| UEF and supported archive members | Yes when metadata exists | Address words are read-only in the hierarchy | UEF blocks, SparkFS extra fields and companion `.inf` files can supply the words. A proven UEF payload may be edited at the same length, but its catalogue address words are preserved. Extract into writable media to change those words. |
 | Raw ROM banks | Not applicable | Not applicable | A sideways ROM is decoded as banks and structures, not presented as a conventional file catalogue. |
 | Directories and virtual DFS catalogue groups | Not applicable | Not applicable | These rows organise files and do not carry executable file metadata. |
 
