@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from app.analysis_service import (
+    accept_compatibility_report,
     build_manifest,
     dependency_report,
     duplicate_report,
@@ -113,6 +114,39 @@ class AnalysisServiceTests(unittest.TestCase):
             self.assertEqual(len(report["items"][0]["losses"]), 2)
             self.assertIn("hierarchical directory", report["items"][0]["losses"][0])
             self.assertIn("RISC OS filetype", report["items"][0]["losses"][1])
+
+    def test_accepted_preflight_is_retained_with_canonical_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "disk.ssd"
+            path.write_bytes(b"image")
+            session = ImageSession("c" * 32, path.name, "dfs", path)
+            report = preflight_report(
+                DiskService(folder), session,
+                {"operation": "copy", "changes": [{"name": "GAME"}]},
+            )
+            accepted = accept_compatibility_report(DiskService(folder), session, report)
+            self.assertEqual(session.compatibility_reports, [accepted])
+            self.assertIn("acceptedAt", accepted)
+            self.assertEqual(accepted["acceptedImage"]["name"], "disk.ssd")
+            self.assertIn("# Acorn File Forge compatibility report", accepted["markdown"])
+
+    def test_blocking_preflight_cannot_be_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "disk.ssd"
+            path.write_bytes(b"image")
+            session = ImageSession("d" * 32, path.name, "dfs", path)
+            report = preflight_report(
+                DiskService(folder), session,
+                {"operation": "copy", "changes": [{"name": "Games", "type": "directory"}]},
+            )
+            with self.assertRaisesRegex(DiskError, "blocking findings"):
+                accept_compatibility_report(DiskService(folder), session, report)
+
+            report["canProceed"] = True
+            report["issues"] = []
+            report["items"] = []
+            with self.assertRaisesRegex(DiskError, "blocking findings"):
+                accept_compatibility_report(DiskService(folder), session, report)
 
     def test_inspector_decodes_plain_text_loader_commands(self) -> None:
         service = Mock()

@@ -7304,7 +7304,7 @@ async function showSelectionPreflight(index) {
     if (!replaceAnalysisLoading(`<div class="analysis-dialog wide-analysis"><small>PREFLIGHT / NO IMAGE WRITES</small><h2>${esc(report.summary)}</h2>
       <div class="preflight-list">${report.items.map(item => `<article><b>${item.index + 1}</b><span><strong>${esc(item.sourceName)}${item.targetName !== item.sourceName ? ` → ${esc(item.targetName)}` : ""}</strong><small>${esc(item.source)} · ${esc(item.type)}${item.metadata.load ? ` · load ${esc(item.metadata.load)}` : ""}${item.metadata.execute ? ` · execute ${esc(item.metadata.execute)}` : ""}</small>${[...item.conversions, ...item.losses].map(note => `<em>${esc(note)}</em>`).join("")}</span></article>`).join("")}</div>
       <div class="finding-list">${report.issues.map(item => `<p class="finding ${esc(item.severity)}"><b>${esc(item.severity)}</b>${esc(item.message)}</p>`).join("") || '<p class="finding pass"><b>ready</b>No truncation or clashes were detected.</p>'}</div>
-      <div class="modal-actions"><button class="button ghost" type="button" data-export-preflight="json">Export JSON</button><button class="button ghost" type="button" data-export-preflight="markdown">Export Markdown</button><button class="button primary" value="cancel">Close</button></div></div>`)) return;
+      <div class="modal-actions"><button class="button ghost" type="button" data-export-preflight="json">Export JSON</button><button class="button ghost" type="button" data-export-preflight="markdown">Export Markdown</button><button class="button" type="button" data-accept-preflight ${report.canProceed ? "" : "disabled"}>Keep with saved image</button><button class="button primary" value="cancel">Close</button></div></div>`)) return;
     modalContent.querySelector('[data-export-preflight="json"]').onclick = () => {
       const documentValue = { ...report }; delete documentValue.markdown;
       downloadJson(documentValue, `${pathNameWithoutExtension(pane.image.name)}-compatibility-report.json`);
@@ -7312,6 +7312,18 @@ async function showSelectionPreflight(index) {
     modalContent.querySelector('[data-export-preflight="markdown"]').onclick = () => downloadDocument(
       `${pathNameWithoutExtension(pane.image.name)}-compatibility-report.md`, report.markdown, "text/markdown;charset=utf-8",
     );
+    modalContent.querySelector("[data-accept-preflight]").onclick = async event => {
+      event.currentTarget.disabled = true;
+      try {
+        const accepted = await api(`/api/images/${pane.image.id}/preflight/accept`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(report),
+        });
+        toast(`Compatibility report retained for the next saved package · ${accepted.acceptedAt}`);
+      } catch (error) {
+        event.currentTarget.disabled = false;
+        toast(error.message, true);
+      }
+    };
   } catch (error) { toast(error.message, true); modal.close(); }
 }
 
