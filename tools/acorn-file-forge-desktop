@@ -1,0 +1,47 @@
+#!/bin/sh
+set -eu
+
+launcher_path=$(readlink -f -- "$0")
+project_root=$(CDPATH= cd -- "$(dirname -- "$launcher_path")/.." && pwd)
+python="$project_root/.venv-desktop/bin/python"
+
+if [ ! -x "$python" ]; then
+    echo "Acorn File Forge desktop is not installed in this checkout." >&2
+    echo "Run tools/install-linux-desktop.sh first." >&2
+    exit 2
+fi
+
+cd "$project_root"
+PATH="$(dirname -- "$python"):$PATH"
+export PATH
+
+# WebKitGTK normally isolates its web process with Bubblewrap. Ubuntu's
+# restricted unprivileged-user-namespace policy can reject that setup before
+# the first window is drawn ("bwrap: setting up uid map: Permission denied").
+# This host only loads Acorn File Forge from its authenticated, loopback-only
+# server, so use WebKit's supported fallback instead of silently failing to
+# launch on those systems.
+WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
+export WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS
+
+# IDEs packaged as Snaps can leak their private GTK modules and XDG locations
+# into an integrated terminal. This application is not confined by that Snap,
+# so those paths can load incompatible libraries or hide its normal sessions.
+case ${SNAP:-} in
+    "") ;;
+    *)
+        unset \
+            GDK_PIXBUF_MODULEDIR GDK_PIXBUF_MODULE_FILE GIO_MODULE_DIR \
+            GSETTINGS_SCHEMA_DIR GTK_EXE_PREFIX GTK_IM_MODULE_FILE GTK_MODULES \
+            GTK_PATH LOCPATH
+        case ${XDG_DATA_HOME:-} in
+            "$HOME"/snap/*) unset XDG_DATA_HOME ;;
+        esac
+        if [ -n "${XDG_DATA_DIRS_VSCODE_SNAP_ORIG:-}" ]; then
+            XDG_DATA_DIRS=$XDG_DATA_DIRS_VSCODE_SNAP_ORIG
+            export XDG_DATA_DIRS
+        fi
+        ;;
+esac
+
+exec "$python" -m desktop "$@"

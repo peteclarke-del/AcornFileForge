@@ -128,6 +128,13 @@ Fault tests must cover:
       cues satisfy the documented WCAG 2.2 AA target.
 - [ ] Save downloads do not announce completion until the ZIP is genuinely
       available to the browser.
+- [ ] The platform-contract tests report no undeclared web or desktop route
+      differences and both hosts serve the same static frontend.
+- [ ] On Linux, the GTK host starts without Docker, opens multiple associated
+      image files from both the native chooser and file manager, pairs DAT/DSC,
+      recovers its XDG sessions and saves a complete package to Downloads.
+- [ ] A managed emulator opens in a native window from the Linux host, closes
+      with the application, and still uses noVNC when launched from Docker.
 
 ## 6. Format and workflow gate
 

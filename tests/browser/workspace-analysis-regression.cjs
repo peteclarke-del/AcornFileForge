@@ -86,14 +86,22 @@ const target = process.env.ACORN_FILE_FORGE_URL || "http://127.0.0.1:8666";
     }
     await page.locator("#modal").waitFor({ state: "hidden" });
 
-    await firstPane.locator("summary", { hasText: "Analyse" }).click();
-    const findDuplicates = firstPane.locator(".find-duplicates");
-    await findDuplicates.waitFor({ state: "visible" });
-    await page.waitForFunction(
-      command => !command.disabled && command.getAttribute("aria-disabled") !== "true",
-      await findDuplicates.elementHandle(),
-    );
-    await findDuplicates.click();
+    // A completed tracked operation replaces the pane once to clear its busy
+    // state. In slower CI renderers that replacement can land between opening
+    // this menu and Playwright's stability check. Resolve the command afresh
+    // and reopen its containing menu for the single permitted retry.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const analyseMenu = firstPane.locator("summary", { hasText: "Analyse" });
+      const findDuplicates = firstPane.locator(".find-duplicates");
+      try {
+        if (!(await findDuplicates.isVisible())) await analyseMenu.click();
+        await findDuplicates.click({ timeout: 5000 });
+        break;
+      } catch (error) {
+        if (attempt === 1) throw error;
+        if (await analyseMenu.isVisible()) await analyseMenu.click();
+      }
+    }
     await page.locator("#modal").waitFor({ state: "visible" });
     await page.locator("#modal .duplicate-groups").waitFor({ state: "visible" });
     const duplicateJob = await page.evaluate(async () => {
