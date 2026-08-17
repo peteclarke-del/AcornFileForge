@@ -357,12 +357,14 @@ class SessionDiskMixin:
     def summary(self, session: ImageSession) -> dict:
         checkpoints = self.list_checkpoints(session)
         romfs = self.romfs_details(session) if session.kind == "romfs" else None
-        image_size = session.path.stat().st_size
+        image_stat = session.path.stat()
+        image_size = image_stat.st_size
         return {
             "id": session.id,
             "name": session.name,
             "kind": session.kind,
             "size": image_size,
+            "revision": f"{image_size:x}-{image_stat.st_mtime_ns:x}",
             "hardDisk": session.kind == "adfs" and (
                 bool(session.descriptor_path)
                 or session.path.suffix.lower() in {".dat", ".dsc", ".hdf", ".hd4"}

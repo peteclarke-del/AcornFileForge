@@ -21,6 +21,8 @@ that match the running frontend.
 | Audit the emulator firmware shipped in the image | [Firmware notes](../firmware/README.md) |
 | Review the Oaknut FileCore integration and format limits | [Oaknut FileCore support](OAKNUT-FILECORE-SUPPORT.md) |
 | Automate creation, validation, imports, menus, comparison and patching | [Headless CLI and deterministic recipes](CLI-GUIDE.md) |
+| Catalogue owned images and find cross-image duplicates or missing titles | [Private collection catalogue](COLLECTION-GUIDE.md) |
+| Find possible lives, energy, timer or collision modifications in game code | [Cheat-candidate analysis](CHEAT-ANALYSIS-GUIDE.md) |
 | Complete a task while the application is open | Select **Help** in the application header |
 
 ## Capability map
@@ -65,6 +67,12 @@ safe save and save-as operations, local export, folding, language help, BASIC
 formatting and guarded source transformations. See the
 [editor handbook](FILE-EDITOR-GUIDE.md) for the exact save and byte-sync rules.
 
+Open one BASIC or machine-code file and use **Tools → Find cheat candidates**
+for a read-only gameplay-state report. It distinguishes strong,
+likely and possible evidence, supports purpose filters and links to optional
+online identification and specialist references. It does not patch uncertain
+code. See the [cheat analysis guide](CHEAT-ANALYSIS-GUIDE.md).
+
 ### Build and maintain menus
 
 MMB and ADFS menu workflows discover existing records before consulting image
@@ -102,6 +110,15 @@ menu creation, comparison and guarded patches. Mutating commands have a dry-run
 mode with stable JSON status and exit codes. Completed commands can record a
 versioned recipe containing exact source hashes and replayable non-secret
 decisions. See the [CLI guide](CLI-GUIDE.md).
+
+### Catalogue a collection
+
+The header **Collection** command indexes complete manifests in browser-private
+IndexedDB. It records user-supplied locations and machines, identifies exact
+cross-image content and title variants, maintains a wanted-title list and marks
+entries stale when an open image revision changes. Full database backup/import
+and a smaller report export remain separate. See the
+[collection guide](COLLECTION-GUIDE.md).
 
 ## Documentation conventions
 

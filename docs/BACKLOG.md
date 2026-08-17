@@ -151,13 +151,13 @@ project documentation. An unchecked item remains in scope.
       likely title variants and duplicate games across differently named disks.
 - [x] Filter Online Library results against remembered distributions, disk
       titles and installed menu entries.
-- [ ] Maintain a browser-private catalogue of owned images, titles, publishers,
+- [x] Maintain a browser-private catalogue of owned images, titles, publishers,
       target machines, hashes, menu entries and user-supplied locations.
-- [ ] Refresh the catalogue incrementally after edits and invalidate stale
+- [x] Refresh the catalogue incrementally after edits and invalidate stale
       records using the exact image revision fingerprint.
-- [ ] Produce collection, duplicate, variant and missing-title reports across
+- [x] Produce collection, duplicate, variant and missing-title reports across
       images that are not currently open.
-- [ ] Add explicit export, import, backup and clear controls for the private
+- [x] Add explicit export, import, backup and clear controls for the private
       catalogue without exposing one browser owner's records to another.
 
 ## 10. Hardware deployment assistant
@@ -175,6 +175,21 @@ project documentation. An unchecked item remains in scope.
       rollback guide generated from the exact profile and package contents.
 - [ ] Validate the generated layout itself before download and report anything
       that still requires a manual hardware step.
+
+## 11. Cheat analysis and verified patches
+
+- [x] Find conservative BBC BASIC gameplay variables, direct memory writes and
+      terminal-value tests from one selected file.
+- [x] Find counter, comparison, branch and semantically labelled state evidence
+      in supported 6502, 65C02, 65816, ARM and 68000 disassembly.
+- [x] Present confidence, purpose filters, risk, online title identification
+      and configured specialist reference searches as a read-only Analyse tool.
+- [ ] Correlate static candidates with emulator watchpoints and repeatable
+      gameplay events before offering a patch.
+- [ ] Save a proved cheat as a guarded project patch with original-byte hash,
+      machine profile, rationale, author and rollback instructions.
+- [ ] Add a user-owned cheat library that matches exact image and file hashes,
+      never title alone.
 
 ## Delivery order
 

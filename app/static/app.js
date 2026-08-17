@@ -40,6 +40,8 @@ const {
 const { archiveCrumbs, capacityMarkup, crumbs, paneFormat } = window.AcornPaneView.create({ esc, humanSize });
 const { folderTargetPlans } = window.AcornTransferPlanning.create({ targetNameRule });
 const { confirmPageOverride } = window.AcornSafetyDialogs.create({ esc, normalisePage, trapFocus });
+const collectionCatalogue = window.AcornCollectionCatalogue.create({ uuid: newUuid });
+const collectionRevisionsSeen = new Map();
 const showHelp = window.AcornHelp.create({ showModal, modalContent });
 const formats = window.AcornFormats;
 const OPEN_PANES_STORAGE_KEY = "acorn-file-forge-dynamic-panes";
@@ -550,6 +552,10 @@ function loadingMarkup(pane) {
 
 function renderPane(index, preserveScroll = false) {
   const pane = panes[index];
+  if (pane.image && collectionCatalogue.available && collectionRevisionsSeen.get(pane.image.id) !== pane.image.revision) {
+    collectionRevisionsSeen.set(pane.image.id, pane.image.revision);
+    collectionCatalogue.markStale(pane.image).catch(() => {});
+  }
   const host = document.querySelector(`.pane[data-pane="${index}"]`);
   const previousScrollTop = preserveScroll ? (host.querySelector(".list-wrap")?.scrollTop || 0) : 0;
   if (!pane.image) {
@@ -754,10 +760,13 @@ function renderPane(index, preserveScroll = false) {
       ${isDsd ? `<button class="menu-command switch-side"><b>⇄</b><span>Switch to side ${pane.side === 2 ? "0" : "2"}</span></button>` : ""}
     </div>
   </details>`;
-  const libraryTools = isArchive || isTape || isRom || pane.image.readOnly ? "" : `<details class="tool-menu library-tools">
+  const onlineLibraryAction = isArchive || isTape || isRom || pane.image.readOnly ? "" :
+    `<button class="menu-command online-library" ${!isSlots && isDfsRoot ? 'disabled title="Open a DFS catalogue group before installing files."' : ""}><b>⌕</b><span>${isSlots ? "Find disks online…" : "Find software online…"}</span></button>`;
+  const libraryTools = `<details class="tool-menu library-tools">
     <summary class="tool"><b>⌕</b><span>Library</span></summary>
     <div class="tool-menu-panel">
-      <button class="menu-command online-library" ${!isSlots && isDfsRoot ? 'disabled title="Open a DFS catalogue group before installing files."' : ""}><b>⌕</b><span>${isSlots ? "Find disks online…" : "Find software online…"}</span></button>
+      ${onlineLibraryAction}
+      <button class="menu-command collection-catalogue"><b>▦</b><span>Private collection…</span></button>
     </div>
   </details>`;
   const menuTools = isArchive ? "" : pane.image.kind === "mmb"
@@ -787,7 +796,7 @@ function renderPane(index, preserveScroll = false) {
     <div class="tool-menu-panel tool-menu-panel-right">
       <button class="menu-command health-dashboard"><b>♥</b><span>Image health dashboard</span></button>
       ${isRom || isArchive ? "" : '<button class="menu-command preflight-selection"><b>◫</b><span>Dry-run selected items</span></button>'}
-      ${!isArchive && !isRom && !isSlots && selected && selected.type !== "dir" && selected.type !== "directory" ? '<button class="menu-command inspect-file"><b>⌕</b><span>Open selected file</span></button><button class="menu-command inspect-dependencies"><b>⛓</b><span>Check loader dependencies</span></button>' : ""}
+      ${!isArchive && !isRom && !isSlots ? `<button class="menu-command inspect-file" ${selected && selected.type !== "dir" && selected.type !== "directory" ? "" : "disabled"}><b>⌕</b><span>Open selected file</span></button><button class="menu-command inspect-dependencies" ${selected && selected.type !== "dir" && selected.type !== "directory" ? "" : "disabled"}><b>⛓</b><span>Check loader dependencies</span></button>` : ""}
       ${["mmb", "adfs"].includes(pane.image.kind) ? `<button class="menu-command test-menu-entries" ${(
         pane.image.kind === "mmb"
           ? pane.menuDetected && !pane.menuDetectionPending
@@ -907,6 +916,7 @@ function renderPane(index, preserveScroll = false) {
   host.querySelector(".switch-side")?.addEventListener("click", () => switchDsdSide(index));
   host.querySelector(".insert-disk")?.addEventListener("click", () => guardedPaneAction(index, () => chooseSlotImage(index)));
   host.querySelector(".online-library")?.addEventListener("click", () => guardedPaneAction(index, () => showOnlineLibrary(index)));
+  host.querySelector(".collection-catalogue")?.addEventListener("click", () => showCollectionCatalogue(index));
   host.querySelector(".menu-entry")?.addEventListener("click", () => guardedPaneAction(index, () => scanMenuEntry(index)));
   host.querySelector(".setup-menu")?.addEventListener("click", () => guardedPaneAction(index, () => setupMmbMenu(index)));
   host.querySelector(".validate-image")?.addEventListener("click", () => guardedPaneAction(index, () => validateImage(index)));
@@ -1291,6 +1301,9 @@ function refreshSelectionDisplay(index) {
   disable(".insert-disk", !selected?.empty);
   disable(".insert-new-disc", !selected?.empty);
   disable(".menu-entry", !selected?.formatted);
+  const hasInspectableSelection = Boolean(selected && selected.type !== "dir" && selected.type !== "directory");
+  disable(".inspect-file", !hasInspectableSelection);
+  disable(".inspect-dependencies", !hasInspectableSelection);
   if (isSlots) {
     const oneFormattedDisk = selectedKeys.size === 1 && Boolean(selected?.formatted);
     disable(".run-pane-emulator", !oneFormattedDisk);
@@ -2265,6 +2278,7 @@ function archiveMemberTarget(pane, name) {
     displayPath: `${pane.archiveName}/${member}`,
     inspectEndpoint: `/api/images/${pane.image.id}/archive/inspect`,
     disassemblyEndpoint: `/api/images/${pane.image.id}/archive/disassembly`,
+    cheatEndpoint: `/api/images/${pane.image.id}/cheat-candidates`,
     hexEndpoint: `/api/images/${pane.image.id}/archive-hex`,
     downloadUrl: `/api/images/${pane.image.id}/archive/file?${new URLSearchParams(metadataContext)}`,
     exportUrl: rawDownloadUrl,
@@ -5390,7 +5404,16 @@ async function showOnlineLibrary(index) {
       const parameters = new URLSearchParams({ q: modalContent.querySelector('[name="query"]').value, machine: requestedMachine || modalContent.querySelector('[name="machine"]').value, scope: modalContent.querySelector('[name="scope"]').value, path: pane.path });
       if (pane.slot !== null) parameters.set("slot", pane.slot);
       const data = await api(`/api/images/${pane.image.id}/catalog/search?${parameters}`);
-      resultItems = data.items.filter(item => item.downloadable);
+      const collectionTitles = new Set();
+      if (collectionCatalogue.available) {
+        try {
+          (await collectionCatalogue.list()).forEach(image => (image.titles || []).forEach(title => collectionTitles.add(title.key)));
+        } catch (_error) { /* Online search remains usable if IndexedDB is unavailable. */ }
+      }
+      resultItems = data.items.filter(item => item.downloadable).map(item => ({
+        ...item,
+        installed: item.installed || collectionTitles.has(window.AcornCollectionCatalogue.titleKey(item.title)),
+      }));
       resultFailures = data.failures;
       resultSort = { key: "title", direction: "asc" };
       status.textContent = `${resultItems.length} result${resultItems.length === 1 ? "" : "s"}${data.failures.length ? ` · ${data.failures.length} source${data.failures.length === 1 ? "" : "s"} unavailable` : ""}`;
@@ -7432,7 +7455,7 @@ function disassemblySource(report) {
     const address = Number(row.address).toString(16).toUpperCase().padStart(4, "0");
     const comments = disassemblyComment(row);
     const instruction = `${row.mnemonic}${row.operand ? ` ${row.operand}` : ""}`;
-    return `${row.label ? `<div class="disassembly-label"><span class="disassembly-fold-cell"></span><span>${esc(row.label)}:</span></div>` : ""}<div class="disassembly-source-line${row.reachable === false ? " unreachable" : ""}" data-offset="${Number(row.offset)}" tabindex="0" title="Double-click to open these bytes in Hex">
+    return `${row.label ? `<div class="disassembly-label"><span class="disassembly-fold-cell"></span><span>${esc(row.label)}:</span></div>` : ""}<div class="disassembly-source-line${row.reachable === false ? " unreachable" : ""}" data-offset="${Number(row.offset)}" data-address="${Number(row.address)}" tabindex="0" title="Double-click to open these bytes in Hex">
       <span class="disassembly-fold-cell" aria-hidden="true"></span><span class="disassembly-address">&amp;${address}</span><span class="disassembly-bytes" title="${esc(row.bytes)}">${esc(row.bytes)}</span><span class="disassembly-instruction" title="${esc(instruction)}">${esc(instruction)}</span><span class="disassembly-comment" ${comments ? `title="${esc(comments)}"` : ""}>${comments ? `; ${esc(comments)}` : ""}</span>
     </div>`;
   }).join("");
@@ -7501,6 +7524,7 @@ function editorMenus({ downloadUrl, downloadLabel = "Download with metadata…",
       <button type="button" data-editor-action="format-code" ${canEdit ? "" : "disabled"}><span>Format selection or file…</span></button>
       ${basic ? `<button type="button" data-editor-action="verify-basic"><span>Verify BASIC round trip</span></button><button type="button" data-editor-action="program-outline"><span>Program outline and call graph</span></button>` : ""}
       <button type="button" data-editor-action="dependencies"><span>Analyse file dependencies</span></button>
+      ${basic ? '<button type="button" data-editor-action="cheat-candidates"><span>Find cheat candidates…</span></button>' : ""}
       <button type="button" data-editor-action="editor-history"><span>Editor history</span></button>
       <button type="button" data-editor-action="compare-saved"><span>Compare with saved file</span></button>
       <button type="button" data-editor-action="hex"><span>Open raw bytes in Hex</span></button>
@@ -7549,6 +7573,7 @@ function disassemblyMenus(downloadUrl, exportUrl, exportLabel = "Export original
     </div></details>
     <details class="editor-menu"><summary>Tools</summary><div class="editor-menu-panel">
       <button type="button" data-disassembly-action="inspect-data"><span>Inspect selected data…</span></button>
+      <button type="button" data-disassembly-action="cheat-candidates"><span>Find cheat candidates…</span></button>
       <button type="button" data-disassembly-action="assemble"><span>Edit and reassemble…</span></button>
       <button type="button" data-disassembly-action="debug"><span>Emulator debugger workspace…</span></button>
       <button type="button" data-disassembly-action="hex"><span>Open raw bytes in Hex</span></button>
@@ -8493,6 +8518,7 @@ function installSourceEditorControls(index, pane, entry, path, report, canEdit, 
       const report = await api(`/api/images/${pane.image.id}/dependencies?${fileContextQuery(pane, path)}`);
       intelligence?.showCustom("Cross-file dependencies", `<p class="code-empty-message">Indexed ${Number(report.filesIndexed || 0).toLocaleString()} files. ${report.safeForSubdirectory ? "Every direct dependency was resolved without a rooted path." : "Review unresolved, ambiguous or root-relative references before moving this launcher."}</p><div class="code-dependency-list">${report.dependencies.map(row => `<article class="${row.resolved && !row.ambiguous ? "resolved" : "warning"}"><b>${esc(row.action)} ${esc(row.target)}</b><span>${row.path ? esc(row.path) : row.ambiguous ? `${row.candidates.length} possible files` : "Not found"}</span>${row.rootRelative ? "<small>Root-relative reference</small>" : ""}</article>`).join("") || "<p>No direct CHAIN, EXEC, RUN, LOAD, DIR or LIB references were found.</p>"}</div>`);
     }
+    else if (action === "cheat-candidates") await showEditorCheatCandidates(root, intelligence, pane, path, false, target);
     else if (action === "editor-history") intelligence?.showHistory();
     else if (action === "compare-saved") intelligence?.compareWith(editor.dataset.savedValue || "");
     else if (action === "project-notes") {
@@ -8735,6 +8761,7 @@ async function renderDisassemblyEditor(index, entry, path, inspection, architect
     else if (action === "fold-toggle-all") intelligence?.toggleAll();
     else if (action === "sync-bytes") { synchronizedBytes = !synchronizedBytes; syncPanel.hidden = !synchronizedBytes; control.querySelector("span").textContent = synchronizedBytes ? "Hide synchronized bytes" : "Show synchronized bytes"; if (synchronizedBytes) await updateDisassemblyBytes(); }
     else if (action === "inspect-data") await inspectSelectedData();
+    else if (action === "cheat-candidates") await showEditorCheatCandidates(root, intelligence, pane, path, false, target);
     else if (action === "assemble") {
       if (target) return toast("Extract this archive member before replacing it with assembler output.", true);
       const status = await api(`/api/images/${pane.image.id}/editor-assembler`);
@@ -8984,6 +9011,163 @@ async function showDependencyReport(index) {
   } catch (error) { toast(error.message, true); modal.close(); }
 }
 
+async function showEditorCheatCandidates(root, intelligence, pane, path, online = false, target = null) {
+  intelligence?.showCustom("Cheat candidates", `<div class="analysis-loading compact"><span class="modal-progress-icon">↻</span><p>${online ? "Analysing code and checking online title evidence…" : "Correlating gameplay state, memory writes and control flow…"}</p></div>`);
+  dockEditorIntelligence(root);
+  const query = new URLSearchParams(target?.context || Object.fromEntries(fileContextQuery(pane, path)));
+  query.set("online", String(online));
+  try {
+    query.set("operationId", newUuid());
+    const report = await api(`${target?.cheatEndpoint || `/api/images/${pane.image.id}/cheat-candidates`}?${query}`);
+    const categories = [...new Set(report.findings.map(item => item.category))].sort();
+    const cards = report.findings.map((item, itemIndex) => `<button type="button" class="cheat-candidate ${esc(item.confidence)}" data-cheat-index="${itemIndex}" data-cheat-category="${esc(item.category)}" data-cheat-confidence="${esc(item.confidence)}" data-cheat-navigation="${esc(JSON.stringify(item.navigation || {}))}" title="Go to this candidate in the code">
+      <header><span class="pill">${esc(item.confidence)}</span><b>${esc(item.category)}</b><code>${esc(item.location)}</code></header>
+      <strong>${esc(item.summary)}</strong><small>${esc(item.evidence)}</small><p>${esc(item.suggestion)}</p><em>${esc(item.risk)}</em>
+    </button>`).join("");
+    const matches = report.identificationMatches.map(item => `<li><a href="${esc(item.url)}" target="_blank" rel="noopener noreferrer">${esc(item.title)}</a><small>${esc([item.publisher, item.year, item.source].filter(Boolean).join(" · "))}</small></li>`).join("");
+    const diagnostics = (report.diagnostics || []).map(item => `<article class="cheat-analysis-diagnostic ${esc(item.kind)}"><strong>${esc(item.title)}</strong><p>${esc(item.detail)}</p></article>`).join("");
+    const references = report.referenceSearches.map(item => `<a class="button small" href="${esc(item.url)}" target="_blank" rel="noopener noreferrer">Search ${esc(item.name)}</a>`).join("");
+    intelligence?.showCustom("Cheat candidates", `<div class="cheat-analysis-dialog">
+      <header><div><small>READ-ONLY CODE AND GAME-STATE ANALYSIS</small><strong>${esc(report.title)}</strong></div><span class="health-score ${report.findings.length ? "attention" : "healthy"}">${report.findings.length} found</span></header>
+      <p class="help-warning"><strong>Candidate evidence, not a proven cheat.</strong> ${esc(report.warning)}</p>
+      <div class="operation-summary"><span><b>${Number(report.counts.strong)}</b><small>Strong</small></span><span><b>${Number(report.counts.likely)}</b><small>Likely</small></span><span><b>${Number(report.counts.possible)}</b><small>Possible</small></span><span><b>${esc(report.kind)}</b><small>Detected code</small></span></div>
+      ${diagnostics ? `<div class="cheat-analysis-diagnostics">${diagnostics}</div>` : ""}
+      <div class="cheat-analysis-filters"><label>Purpose<select name="cheatCategory"><option value="">All candidate types</option>${categories.map(category => `<option value="${esc(category)}">${esc(category)}</option>`).join("")}</select></label><label>Confidence<select name="cheatConfidence"><option value="">All confidence levels</option><option value="strong">Strong</option><option value="likely">Likely</option><option value="possible">Possible</option></select></label></div>
+      <div class="cheat-candidate-list">${cards || `<div class="empty-list">No static candidate was found in this file.${diagnostics ? " The analysis notes above explain the most likely reason." : " Encrypted, compressed, self-modifying or indirectly addressed code needs runtime tracing."}</div>`}</div>
+      <details class="cheat-online-evidence" ${matches ? "open" : ""}><summary>Game identification and published references</summary><p>Detected title: <strong>${esc(report.title)}</strong> · target: ${esc(report.machine || "not configured")}</p>${matches ? `<ul>${matches}</ul>` : '<p>No internet identification was requested. The searches below open only when selected.</p>'}<div class="collection-transfer">${references}</div></details>
+      ${online ? "" : '<div class="modal-actions"><button class="button primary" type="button" data-cheat-online>Check online title evidence</button></div>'}
+    </div>`);
+    dockEditorIntelligence(root);
+    const panel = root.querySelector(".cheat-analysis-dialog");
+    if (!panel) return;
+    const filter = () => {
+      const category = panel.querySelector('[name="cheatCategory"]').value;
+      const confidence = panel.querySelector('[name="cheatConfidence"]').value;
+      panel.querySelectorAll("[data-cheat-index]").forEach(card => {
+        card.hidden = Boolean((category && card.dataset.cheatCategory !== category) || (confidence && card.dataset.cheatConfidence !== confidence));
+      });
+    };
+    panel.querySelector('[name="cheatCategory"]').onchange = filter;
+    panel.querySelector('[name="cheatConfidence"]').onchange = filter;
+    panel.querySelectorAll("[data-cheat-navigation]").forEach(card => card.addEventListener("click", () => {
+      try { focusEditorCheatCandidate(root, JSON.parse(card.dataset.cheatNavigation)); }
+      catch (_error) { toast("That candidate could not be located in the current editor view.", true); }
+    }));
+    panel.querySelector("[data-cheat-online]")?.addEventListener("click", () => showEditorCheatCandidates(root, intelligence, pane, path, true, target));
+  } catch (error) {
+    intelligence?.showCustom("Cheat candidates", `<p class="code-empty-message">${esc(error.message)}</p>`);
+    dockEditorIntelligence(root);
+    toast(error.message, true);
+  }
+}
+
+function focusEditorCheatCandidate(root, navigation) {
+  if (navigation?.kind === "disassembly") {
+    const lines = [...root.querySelectorAll(".disassembly-source-line")];
+    const line = lines.find(item => Number(item.dataset.address) === Number(navigation.address))
+      || lines.find(item => Number(item.dataset.offset) === Number(navigation.offset));
+    if (!line) throw new Error("Candidate is outside the decoded range");
+    lines.forEach(item => item.classList.remove("found"));
+    line.classList.add("found");
+    line.scrollIntoView({ block: "center", behavior: "smooth" });
+    line.focus({ preventScroll: true });
+    return;
+  }
+  if (navigation?.kind === "basic-line") {
+    const editor = root.querySelector(".source-content");
+    const lines = editor.value.split("\n");
+    const lineIndex = lines.findIndex(line => Number(line.match(/^\s*(\d+)/)?.[1]) === Number(navigation.line));
+    if (lineIndex < 0) throw new Error("BASIC line is not present");
+    const start = lines.slice(0, lineIndex).reduce((total, line) => total + line.length + 1, 0);
+    editor.focus();
+    editor.setSelectionRange(start, start + lines[lineIndex].length);
+    editor.scrollTop = Math.max(0, lineIndex * parseFloat(getComputedStyle(editor).lineHeight || "16") - editor.clientHeight / 2);
+    editor.dispatchEvent(new Event("select", { bubbles: true }));
+    return;
+  }
+  throw new Error("Candidate has no editor target");
+}
+
+function dockEditorIntelligence(root) {
+  const drawer = root?.querySelector(".code-intelligence-drawer");
+  const editorSurface = root?.querySelector(".code-editor-surface, .disassembly-source");
+  if (!drawer || !editorSurface) return;
+  let workspace = root.querySelector(":scope > .code-editor-drawer-workspace");
+  if (!workspace) {
+    workspace = document.createElement("div");
+    workspace.className = "code-editor-drawer-workspace";
+    const splitter = document.createElement("button");
+    splitter.type = "button";
+    splitter.className = "code-editor-drawer-splitter";
+    splitter.setAttribute("role", "separator");
+    splitter.setAttribute("aria-label", "Resize code and cheat-candidate panels");
+    splitter.setAttribute("aria-valuemin", "20");
+    splitter.setAttribute("aria-valuemax", "75");
+    splitter.setAttribute("aria-valuenow", "40");
+    editorSurface.before(workspace);
+    workspace.append(editorSurface, splitter, drawer);
+    installEditorDrawerSplitter(workspace, splitter);
+  }
+  root.classList.add("code-drawer-docked-right");
+  drawer.classList.add("code-intelligence-drawer-docked");
+  const close = drawer.querySelector(".code-drawer-close");
+  close?.addEventListener("click", () => {
+    root.classList.remove("code-drawer-docked-right");
+    drawer.classList.remove("code-intelligence-drawer-docked");
+  }, { once: true });
+}
+
+function installEditorDrawerSplitter(workspace, splitter) {
+  const narrow = () => matchMedia("(max-width: 900px)").matches;
+  const updateOrientation = () => splitter.setAttribute("aria-orientation", narrow() ? "horizontal" : "vertical");
+  const resize = event => {
+    const bounds = workspace.getBoundingClientRect();
+    if (narrow()) {
+      const height = Math.max(180, Math.min(bounds.height - 150, bounds.bottom - event.clientY));
+      workspace.style.setProperty("--code-drawer-height", `${height}px`);
+      splitter.setAttribute("aria-valuenow", String(Math.round(height / Math.max(1, bounds.height) * 100)));
+    } else {
+      const width = Math.max(280, Math.min(bounds.width - 320, bounds.right - event.clientX));
+      workspace.style.setProperty("--code-drawer-width", `${width}px`);
+      splitter.setAttribute("aria-valuenow", String(Math.round(width / Math.max(1, bounds.width) * 100)));
+    }
+  };
+  splitter.addEventListener("pointerdown", event => {
+    event.preventDefault();
+    updateOrientation();
+    splitter.setPointerCapture(event.pointerId);
+    workspace.classList.add("resizing");
+  });
+  splitter.addEventListener("pointermove", event => {
+    if (splitter.hasPointerCapture(event.pointerId)) resize(event);
+  });
+  const finish = event => {
+    if (splitter.hasPointerCapture(event.pointerId)) splitter.releasePointerCapture(event.pointerId);
+    workspace.classList.remove("resizing");
+  };
+  splitter.addEventListener("pointerup", finish);
+  splitter.addEventListener("pointercancel", finish);
+  splitter.addEventListener("keydown", event => {
+    updateOrientation();
+    const keys = narrow() ? ["ArrowUp", "ArrowDown"] : ["ArrowLeft", "ArrowRight"];
+    if (!keys.includes(event.key)) return;
+    event.preventDefault();
+    const bounds = workspace.getBoundingClientRect();
+    const drawer = workspace.querySelector(".code-intelligence-drawer").getBoundingClientRect();
+    const delta = (event.key === "ArrowLeft" || event.key === "ArrowUp") ? 24 : -24;
+    if (narrow()) {
+      const height = Math.max(180, Math.min(bounds.height - 150, drawer.height + delta));
+      workspace.style.setProperty("--code-drawer-height", `${height}px`);
+      splitter.setAttribute("aria-valuenow", String(Math.round(height / Math.max(1, bounds.height) * 100)));
+    } else {
+      const width = Math.max(280, Math.min(bounds.width - 320, drawer.width + delta));
+      workspace.style.setProperty("--code-drawer-width", `${width}px`);
+      splitter.setAttribute("aria-valuenow", String(Math.round(width / Math.max(1, bounds.width) * 100)));
+    }
+  });
+  updateOrientation();
+}
+
 async function showMenuTests(index) {
   const pane = panes[index];
   analysisLoading("Testing menu entries", "Checking disk selection, launcher, action and PAGE…");
@@ -9202,6 +9386,147 @@ function downloadJson(documentValue, filename) {
   link.download = filename;
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+async function fetchCollectionManifest(index) {
+  const pane = panes[index];
+  const presentingProgress = modal.open;
+  if (presentingProgress) modal.classList.add("busy");
+  try {
+    const response = await trackedPaneOperation(
+      index,
+      "Indexing image for the private collection",
+      operationId => fetch(`/api/images/${pane.image.id}/manifest?${new URLSearchParams({ format: "json", operationId })}`),
+      { abortMode: "read-only" },
+    );
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || `Collection indexing failed (${response.status})`);
+    }
+    return response.json();
+  } finally {
+    if (presentingProgress) modal.classList.remove("busy");
+  }
+}
+
+function collectionEntryMatchesPane(entry, pane) {
+  return entry.sessionId === pane.image.id || (entry.name === pane.image.name && entry.kind === pane.image.kind);
+}
+
+async function indexPaneInCollection(index, entries, options = {}) {
+  const pane = panes[index];
+  const previous = entries.find(entry => entry.id === options.id) || entries.find(entry => collectionEntryMatchesPane(entry, pane));
+  const manifest = await fetchCollectionManifest(index);
+  const profile = pane.image.hardwareProfile || {};
+  return collectionCatalogue.upsertManifest(manifest, {
+    id: previous?.id,
+    sessionId: pane.image.id,
+    location: options.location ?? previous?.location ?? "",
+    notes: options.notes ?? previous?.notes ?? "",
+    machines: options.machines || previous?.machines || [profile.name || profile.machine || pane.image.targetHardware].filter(Boolean),
+  });
+}
+
+async function showCollectionCatalogue(initialIndex = null) {
+  if (!collectionCatalogue.available) {
+    return toast("This browser does not provide IndexedDB, so its private collection cannot be opened.", true);
+  }
+  try {
+    const entries = (await collectionCatalogue.list()).sort((left, right) => left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: "base" }));
+    const preferences = await collectionCatalogue.settings();
+    const report = window.AcornCollectionCatalogue.collectionReport(entries, preferences.wanted);
+    const openPanes = panes.map((pane, index) => ({ pane, index })).filter(item => item.pane.image);
+    const selectedIndex = openPanes.some(item => item.index === initialIndex) ? initialIndex : openPanes[0]?.index;
+    const selectedPane = panes[selectedIndex];
+    const selectedEntry = selectedPane ? entries.find(entry => collectionEntryMatchesPane(entry, selectedPane)) : null;
+    const paneOptions = openPanes.map(({ pane, index }) => `<option value="${index}" ${index === selectedIndex ? "selected" : ""}>Pane ${index + 1} · ${esc(pane.image.name)}</option>`).join("");
+    const duplicateSummary = report.exactDuplicates.slice(0, 200).map(group => `<li><code>${esc(group[0].sha256.slice(0, 12))}…</code> ${group.map(item => `${esc(item.image)} · ${esc(item.title)}`).join(" / ")}</li>`).join("");
+    const variantSummary = report.titleVariants.slice(0, 200).map(group => `<li><b>${esc(group[0].title)}</b> ${group.map(item => esc(item.image)).join(" / ")}</li>`).join("");
+    const rows = entries.map(entry => `<tr data-collection-id="${esc(entry.id)}"><td><input type="checkbox" name="collectionImage" value="${esc(entry.id)}" aria-label="Select ${esc(entry.name)}"></td><td><strong>${esc(entry.name)}</strong><small>${esc(entry.location || "No user-supplied location")}</small></td><td>${esc(entry.kind.toUpperCase())}</td><td>${esc(entry.machines.join(", ") || "Not specified")}</td><td>${(entry.records || []).length.toLocaleString()}</td><td><span class="pill ${entry.stale ? "collection-stale" : ""}">${entry.stale ? "Refresh needed" : "Current"}</span><small>${esc(new Date(entry.indexedAt).toLocaleString())}</small></td></tr>`).join("");
+    showModal(`<div class="collection-dialog wide-analysis">
+      <header><div><small>BROWSER-PRIVATE INDEXEDDB CATALOGUE</small><h2>My Acorn collection</h2></div><div class="collection-totals"><b>${report.images}</b> images <b>${report.records.toLocaleString()}</b> records <b>${report.titles}</b> titles</div></header>
+      <p>This catalogue belongs only to this browser profile. It stores manifests and user-supplied locations, never image bytes.</p>
+      <label class="collection-search">Search saved names, paths, titles, publishers, machines or SHA-256<input type="search" name="collectionQuery" placeholder="Search the complete private catalogue"></label>
+      <section class="collection-index-controls"><label>Open image<select name="collectionPane" ${paneOptions ? "" : "disabled"}>${paneOptions || '<option>No open images</option>'}</select></label><label>Location or shelf<input name="collectionLocation" value="${esc(selectedEntry?.location || "")}" placeholder="SD card, NAS path, archive box…"></label><label>Machines<input name="collectionMachines" value="${esc((selectedEntry?.machines || []).join(", "))}" placeholder="BBC B, Electron…"></label><button class="button primary" type="button" data-index-pane ${paneOptions ? "" : "disabled"}>Add / update image</button><button class="button" type="button" data-refresh-open ${entries.length && paneOptions ? "" : "disabled"}>Refresh indexed open images</button></section>
+      <div class="collection-list"><table><thead><tr><th></th><th>Image and location</th><th>Format</th><th>Machines</th><th>Records</th><th>Status</th></tr></thead><tbody>${rows || '<tr><td colspan="6">No images have been indexed yet.</td></tr>'}</tbody></table></div>
+      <div class="collection-reports"><details><summary>Exact content duplicates (${report.exactDuplicates.length})</summary><ul>${duplicateSummary || "<li>No cross-image duplicate content found.</li>"}</ul></details><details><summary>Title variants (${report.titleVariants.length})</summary><ul>${variantSummary || "<li>No repeated titles found across images.</li>"}</ul></details><details><summary>Wanted and missing titles (${report.missingTitles.length})</summary><label>One wanted title per line<textarea name="wantedTitles" rows="4">${esc((preferences.wanted || []).join("\n"))}</textarea></label><ul>${report.missingTitles.map(title => `<li>${esc(title)}</li>`).join("") || "<li>Every listed title is present.</li>"}</ul><button class="button small" type="button" data-save-wanted>Save wanted list</button></details></div>
+      <div class="collection-transfer"><button class="button" type="button" data-export-collection-report>Export report</button><button class="button" type="button" data-backup-collection>Back up database</button><label class="button">Import backup<input type="file" accept="application/json,.json" data-import-collection hidden></label><button class="button danger" type="button" data-remove-collection disabled>Remove selected</button><button class="button danger" type="button" data-clear-collection ${entries.length ? "" : "disabled"}>Clear catalogue</button></div>
+      <div class="modal-actions"><button class="button primary" value="cancel">Close</button></div>
+    </div>`, null, { replace: modal.open });
+    const paneSelect = modalContent.querySelector('[name="collectionPane"]');
+    const locationInput = modalContent.querySelector('[name="collectionLocation"]');
+    const machinesInput = modalContent.querySelector('[name="collectionMachines"]');
+    const selectedIds = () => [...modalContent.querySelectorAll('[name="collectionImage"]:checked')].map(input => input.value);
+    modalContent.querySelector('[name="collectionQuery"]').oninput = event => {
+      const query = event.target.value.trim().toLocaleLowerCase();
+      entries.forEach(entry => {
+        const searchable = [entry.name, entry.kind, entry.location, entry.notes, ...(entry.machines || []),
+          ...(entry.titles || []).flatMap(title => [title.title, title.publisher]),
+          ...(entry.records || []).flatMap(record => [record.path, record.diskTitle, record.title, record.sha256])]
+          .filter(Boolean).join(" ").toLocaleLowerCase();
+        modalContent.querySelector(`[data-collection-id="${CSS.escape(entry.id)}"]`)?.toggleAttribute("hidden", Boolean(query && !searchable.includes(query)));
+      });
+    };
+    modalContent.querySelectorAll('[name="collectionImage"]').forEach(input => input.onchange = () => { modalContent.querySelector("[data-remove-collection]").disabled = !selectedIds().length; });
+    paneSelect?.addEventListener("change", () => {
+      const pane = panes[Number(paneSelect.value)];
+      const previous = entries.find(entry => collectionEntryMatchesPane(entry, pane));
+      locationInput.value = previous?.location || "";
+      machinesInput.value = (previous?.machines || []).join(", ");
+    });
+    modalContent.querySelector("[data-index-pane]")?.addEventListener("click", async event => {
+      event.currentTarget.disabled = true;
+      try {
+        const index = Number(paneSelect.value);
+        await indexPaneInCollection(index, entries, { location: locationInput.value.trim(), machines: machinesInput.value.split(",").map(value => value.trim()).filter(Boolean) });
+        toast(`${panes[index].image.name} added to the private collection.`);
+        await showCollectionCatalogue(index);
+      } catch (error) { event.currentTarget.disabled = false; toast(error.message, true); }
+    });
+    modalContent.querySelector("[data-refresh-open]")?.addEventListener("click", async event => {
+      event.currentTarget.disabled = true;
+      let refreshed = 0;
+      try {
+        for (const { pane, index } of openPanes) {
+          if (!entries.some(entry => collectionEntryMatchesPane(entry, pane))) continue;
+          await indexPaneInCollection(index, entries);
+          refreshed += 1;
+        }
+        toast(`${refreshed} open collection image${refreshed === 1 ? "" : "s"} refreshed.`);
+        await showCollectionCatalogue(initialIndex);
+      } catch (error) { event.currentTarget.disabled = false; toast(error.message, true); }
+    });
+    modalContent.querySelector("[data-save-wanted]").onclick = async () => {
+      await collectionCatalogue.saveSettings({ wanted: modalContent.querySelector('[name="wantedTitles"]').value.split(/\r?\n/) });
+      await showCollectionCatalogue(initialIndex);
+    };
+    modalContent.querySelector("[data-export-collection-report]").onclick = () => downloadJson({ format: "acorn-file-forge-collection-report", version: 1, generatedAt: new Date().toISOString(), ...report }, "acorn-file-forge-collection-report.json");
+    modalContent.querySelector("[data-backup-collection]").onclick = async () => downloadJson(await collectionCatalogue.exportBackup(), `acorn-file-forge-collection-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
+    modalContent.querySelector("[data-import-collection]").onchange = async event => {
+      const file = event.target.files[0];
+      if (!file || file.size > 128 * 1024 * 1024) return toast("Collection backups are limited to 128 MiB.", true);
+      try {
+        const document = JSON.parse(await file.text());
+        const replace = confirm("Replace the private catalogue with this backup? Choose Cancel to merge it instead.");
+        const count = await collectionCatalogue.importBackup(document, replace);
+        toast(`${count} collection image${count === 1 ? "" : "s"} imported.`);
+        await showCollectionCatalogue(initialIndex);
+      } catch (error) { toast(error.message, true); }
+    };
+    modalContent.querySelector("[data-remove-collection]").onclick = async () => {
+      const ids = selectedIds();
+      if (!ids.length || !confirm(`Remove ${ids.length} selected collection record${ids.length === 1 ? "" : "s"}? Image files are not affected.`)) return;
+      await collectionCatalogue.remove(ids);
+      await showCollectionCatalogue(initialIndex);
+    };
+    modalContent.querySelector("[data-clear-collection]").onclick = async () => {
+      if (!confirm("Clear this browser's complete private collection catalogue? Image files are not affected.")) return;
+      await collectionCatalogue.clear();
+      await showCollectionCatalogue(initialIndex);
+    };
+  } catch (error) {
+    toast(`Could not open the private collection: ${error.message}`, true);
+  }
 }
 
 async function downloadResponse(response, fallbackFilename) {
@@ -9748,6 +10073,7 @@ document.querySelector("#helpButton").onclick = showHelp;
 document.querySelector("#workbenchButton").onclick = () => renderWorkbench();
 document.querySelector("#jobsButton").onclick = showJobsPanel;
 document.querySelector("#workspaceSearchButton").onclick = showWorkspaceSearch;
+document.querySelector("#collectionButton").onclick = () => showCollectionCatalogue();
 document.addEventListener("keydown", event => {
   const editing = event.target.closest("input, textarea, select, [contenteditable=true]");
   if (editing || modal.open) return;
