@@ -101,13 +101,15 @@ function showHelp() {
                 <li>Install Python 3, GTK 4, Libadwaita, WebKitGTK 6 and their Python GObject bindings using your Linux package manager.</li>
                 <li>From the project checkout, run <code>tools/install-linux-desktop.sh</code>.</li>
                 <li>Launch <strong>Acorn File Forge</strong> from the application menu or run <code>tools/acorn-file-forge-desktop</code>.</li>
-              <li>Use the native folder button or <kbd>Ctrl</kbd>+<kbd>O</kbd> to select one or several images. Opening a registered image in the file manager also sends it to the workbench.</li>
-                <li>The native chooser uses automatic target detection. Use <strong>File → Open image</strong> inside a pane when you need to choose an explicit ADFS target or combine several ROM components.</li>
+                <li>Use the native folder button, <strong>File → Open image</strong> in a pane or <kbd>Ctrl</kbd>+<kbd>O</kbd> to select one or several images with the GTK chooser. Opening a registered image in the file manager also sends it to the workbench.</li>
+                <li>The native chooser uses automatic target detection. Configure the Workbench hardware profile before making target-specific ADFS changes.</li>
               </ol>
             </div>
             <ul>
               <li>DAT and DSC partners with the same basename are paired automatically.</li>
-              <li>The selected source is copied into XDG application storage before editing. The original is not changed in place.</li>
+              <li>The selected source is cloned by the filesystem when possible, or sparse-copied once into XDG application storage. The original is not changed in place.</li>
+              <li>Large BeebSCSI DAT files bypass browser upload and spooling. The former pause near 24 percent was the embedded browser transferring the DAT, not ADFS analysis. Expensive hardware finalisation remains deferred to Save and reports its stages there.</li>
+              <li>GTK and Libadwaita supply the title bar, window controls, application menu, chooser and symbolic header icons. The workbench inherits the desktop font and initially follows the system light or dark setting.</li>
               <li>Saved ZIPs use the normal Linux Downloads directory and contain the same image, sidecars and README as the web edition.</li>
               <li>Managed emulators appear as native windows. In Docker they continue to appear in the browser display.</li>
               <li>Install the optional official Greaseweazle tools to write SSD, DSD, ADFS floppy and HFE images to real disks. At an MMB index, select one formatted slot to write it as an SSD.</li>

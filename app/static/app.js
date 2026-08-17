@@ -2624,6 +2624,11 @@ function acceptFileDrop(zone, onFiles) {
 function chooseImage(index) {
   const pane = panes[index];
   if (pane.loading) return;
+  const nativeChooser = window.webkit?.messageHandlers?.acornDesktop;
+  if (nativeChooser?.postMessage) {
+    nativeChooser.postMessage(`open-images:${index}`);
+    return;
+  }
   let selection = { files: [] };
   showModal(`
     <h2>Open a media image</h2>
@@ -10266,12 +10271,42 @@ updateThemeButton();
 updateAddPaneButton();
 
 window.AcornDesktopHost = Object.freeze({
-  async acceptImage(image) {
+  showOpening(name, preferredIndex = null) {
+    const index = Number.isInteger(preferredIndex) && panes[preferredIndex]
+      ? preferredIndex
+      : panes.findIndex(pane => !pane.image);
+    if (index < 0) return;
+    setLoading(
+      index,
+      true,
+      `Cloning or sparse-copying ${name}, then validating its filesystem…`,
+    );
+  },
+  applyNativeAppearance(appearance = {}) {
+    document.documentElement.classList.add("native-desktop");
+    const family = String(appearance.font || "system-ui")
+      .replace(/\s+\d+(?:\.\d+)?$/, "")
+      .replace(/["']/g, "")
+      .trim();
+    if (family) {
+      document.documentElement.style.setProperty(
+        "--desktop-font-family",
+        `"${family}", system-ui, sans-serif`,
+      );
+    }
+    if (!localStorage.getItem("acorn-file-forge-theme")) {
+      document.documentElement.dataset.theme = appearance.dark ? "dark" : "light";
+      updateThemeButton();
+    }
+  },
+  async acceptImage(image, preferredIndex = null) {
     if (!workspacePersistence.isReady()) {
-      setTimeout(() => window.AcornDesktopHost.acceptImage(image), 50);
+      setTimeout(() => window.AcornDesktopHost.acceptImage(image, preferredIndex), 50);
       return;
     }
-    let index = panes.findIndex(pane => !pane.image);
+    let index = Number.isInteger(preferredIndex) && panes[preferredIndex]
+      ? preferredIndex
+      : panes.findIndex(pane => !pane.image);
     if (index < 0) index = addPane();
     try {
       await acceptImage(index, image);

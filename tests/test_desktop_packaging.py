@@ -37,6 +37,17 @@ class DesktopPackagingTests(unittest.TestCase):
         self.assertIn('self.webview.connect("decide-policy", self._navigation_policy)', desktop_host)
         self.assertIn("Gio.AppInfo.launch_default_for_uri", desktop_host)
 
+    def test_native_host_owns_file_chooser_bridge_and_gtk_chrome(self) -> None:
+        desktop_host = (ROOT / "desktop/__main__.py").read_text(encoding="utf-8")
+        frontend = (ROOT / "app/static/app.js").read_text(encoding="utf-8")
+
+        self.assertIn('register_script_message_handler("acornDesktop")', desktop_host)
+        self.assertIn("user_content_manager=self.content_manager", desktop_host)
+        self.assertIn('Gtk.Button.new_from_icon_name("document-open-symbolic")', desktop_host)
+        self.assertIn('icon_name="open-menu-symbolic"', desktop_host)
+        self.assertIn("applyNativeAppearance", frontend)
+        self.assertIn("open-images:${index}", frontend)
+
     def test_installer_rejects_snap_private_xdg_data_home(self) -> None:
         paths = (ROOT / "tools/linux-xdg-paths.sh").read_text(encoding="utf-8")
         installer = (ROOT / "tools/install-linux-desktop.sh").read_text(encoding="utf-8")

@@ -125,8 +125,6 @@ class SessionDiskMixin:
             elif session.kind == "adfs" and not session.adfs_capabilities:
                 self.refresh_adfs_capabilities(session)
             self._normalise_beebscsi_dat_size(session)
-            if session.descriptor_path and session.path.suffix.lower() == ".dat":
-                self._optimise_sparse_file(session.path)
         except (OSError, KeyError, ValueError, json.JSONDecodeError, UEFError) as exc:
             raise DiskError("That image session no longer exists.") from exc
         with self._lock:
