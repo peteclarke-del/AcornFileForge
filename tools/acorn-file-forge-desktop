@@ -1,7 +1,8 @@
 #!/bin/sh
 set -eu
 
-project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+launcher_path=$(readlink -f -- "$0")
+project_root=$(CDPATH= cd -- "$(dirname -- "$launcher_path")/.." && pwd)
 python="$project_root/.venv-desktop/bin/python"
 
 if [ ! -x "$python" ]; then
@@ -13,4 +14,25 @@ fi
 cd "$project_root"
 PATH="$(dirname -- "$python"):$PATH"
 export PATH
+
+# IDEs packaged as Snaps can leak their private GTK modules and XDG locations
+# into an integrated terminal. This application is not confined by that Snap,
+# so those paths can load incompatible libraries or hide its normal sessions.
+case ${SNAP:-} in
+    "") ;;
+    *)
+        unset \
+            GDK_PIXBUF_MODULEDIR GDK_PIXBUF_MODULE_FILE GIO_MODULE_DIR \
+            GSETTINGS_SCHEMA_DIR GTK_EXE_PREFIX GTK_IM_MODULE_FILE GTK_MODULES \
+            GTK_PATH LOCPATH
+        case ${XDG_DATA_HOME:-} in
+            "$HOME"/snap/*) unset XDG_DATA_HOME ;;
+        esac
+        if [ -n "${XDG_DATA_DIRS_VSCODE_SNAP_ORIG:-}" ]; then
+            XDG_DATA_DIRS=$XDG_DATA_DIRS_VSCODE_SNAP_ORIG
+            export XDG_DATA_DIRS
+        fi
+        ;;
+esac
+
 exec "$python" -m desktop "$@"
