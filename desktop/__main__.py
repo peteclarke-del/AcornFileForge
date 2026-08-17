@@ -68,8 +68,11 @@ def run(argv: list[str] | None = None) -> int:
             )
             self.window = None
             self.webview = None
+            self.content_manager = None
+            self.style_manager = None
             self.loaded = False
             self.pending_paths = []
+            self.chooser_targets = {}
 
         def do_startup(self) -> None:
             Adw.Application.do_startup(self)
@@ -77,6 +80,10 @@ def run(argv: list[str] | None = None) -> int:
             action.connect("activate", self._choose_images)
             self.add_action(action)
             self.set_accels_for_action("app.open", ["<Primary>o"])
+            quit_action = Gio.SimpleAction.new("quit", None)
+            quit_action.connect("activate", lambda *_args: self.quit())
+            self.add_action(quit_action)
+            self.set_accels_for_action("app.quit", ["<Primary>q"])
 
         def do_activate(self) -> None:
             if self.window is None:
@@ -84,14 +91,46 @@ def run(argv: list[str] | None = None) -> int:
                 self.window = Adw.ApplicationWindow(application=self)
                 self.window.set_title("Acorn File Forge")
                 self.window.set_default_size(1440, 900)
+                self.style_manager = Adw.StyleManager.get_default()
+                self.style_manager.connect(
+                    "notify::dark",
+                    self._native_appearance_changed,
+                )
+                settings = Gtk.Settings.get_default()
+                if settings is not None:
+                    settings.connect(
+                        "notify::gtk-font-name",
+                        self._native_appearance_changed,
+                    )
                 toolbar = Adw.ToolbarView()
                 header = Adw.HeaderBar()
+                header.set_title_widget(Adw.WindowTitle.new(
+                    "Acorn File Forge",
+                    "Acorn media image workbench",
+                ))
                 open_button = Gtk.Button.new_from_icon_name("document-open-symbolic")
                 open_button.set_tooltip_text("Open media image")
                 open_button.set_action_name("app.open")
                 header.pack_start(open_button)
+                menu = Gio.Menu()
+                menu.append("Open Image…", "app.open")
+                menu.append("Quit", "app.quit")
+                menu_button = Gtk.MenuButton(
+                    icon_name="open-menu-symbolic",
+                    menu_model=menu,
+                )
+                menu_button.set_tooltip_text("Application menu")
+                header.pack_end(menu_button)
                 toolbar.add_top_bar(header)
-                self.webview = WebKit.WebView()
+                self.content_manager = WebKit.UserContentManager()
+                self.content_manager.register_script_message_handler("acornDesktop")
+                self.content_manager.connect(
+                    "script-message-received::acornDesktop",
+                    self._desktop_message,
+                )
+                self.webview = WebKit.WebView(
+                    user_content_manager=self.content_manager,
+                )
                 self.webview.connect("load-changed", self._loaded)
                 self.webview.connect("decide-policy", self._navigation_policy)
                 toolbar.set_content(self.webview)
@@ -103,6 +142,17 @@ def run(argv: list[str] | None = None) -> int:
                 self.webview.load_request(request)
                 self.window.connect("close-request", self._closing)
             self.window.present()
+
+        def _desktop_message(self, _manager, result) -> None:
+            message = result.get_js_value().to_string()
+            if not message.startswith("open-images"):
+                return
+            _command, separator, pane_value = message.partition(":")
+            try:
+                preferred_pane = int(pane_value) if separator else None
+            except ValueError:
+                preferred_pane = None
+            self._choose_images(None, None, preferred_pane)
 
         def _navigation_policy(self, _view, decision, decision_type) -> bool:
             if decision_type not in (
@@ -120,7 +170,10 @@ def run(argv: list[str] | None = None) -> int:
 
         def do_open(self, files, _count, _hint) -> None:
             self.pending_paths.extend(
-                _paired_selection([Path(item.get_path()) for item in files if item.get_path()])
+                (path, None)
+                for path in _paired_selection(
+                    [Path(item.get_path()) for item in files if item.get_path()]
+                )
             )
             self.activate()
             self._drain_paths()
@@ -129,9 +182,29 @@ def run(argv: list[str] | None = None) -> int:
             if event != WebKit.LoadEvent.FINISHED:
                 return
             self.loaded = True
+            self._apply_native_appearance()
             self._drain_paths()
 
-        def _choose_images(self, _action, _parameter) -> None:
+        def _apply_native_appearance(self) -> None:
+            settings = Gtk.Settings.get_default()
+            font = settings.get_property("gtk-font-name") if settings else "system-ui 11"
+            dark = self.style_manager.get_dark() if self.style_manager else False
+            script = (
+                "window.AcornDesktopHost.applyNativeAppearance("
+                f"{json.dumps({'font': font, 'dark': dark})});"
+            )
+            self.webview.evaluate_javascript(script, -1, None, None, None)
+
+        def _native_appearance_changed(self, *_args) -> None:
+            if self.loaded:
+                self._apply_native_appearance()
+
+        def _choose_images(
+            self,
+            _action,
+            _parameter,
+            preferred_pane: int | None = None,
+        ) -> None:
             chooser = Gtk.FileChooserNative.new(
                 "Open Acorn media images",
                 self.window,
@@ -140,6 +213,7 @@ def run(argv: list[str] | None = None) -> int:
                 "_Cancel",
             )
             chooser.set_select_multiple(True)
+            self.chooser_targets[id(chooser)] = preferred_pane
             chooser.connect("response", self._files_chosen)
             chooser.show()
 
@@ -152,9 +226,14 @@ def run(argv: list[str] | None = None) -> int:
                         for index in range(files.get_n_items())
                         if files.get_item(index).get_path()
                     ]
-                    self.pending_paths.extend(_paired_selection(paths))
+                    preferred = self.chooser_targets.get(id(chooser))
+                    self.pending_paths.extend(
+                        (path, preferred if index == 0 else None)
+                        for index, path in enumerate(_paired_selection(paths))
+                    )
                     self._drain_paths()
             finally:
+                self.chooser_targets.pop(id(chooser), None)
                 chooser.destroy()
 
         def _drain_paths(self) -> None:
@@ -168,9 +247,10 @@ def run(argv: list[str] | None = None) -> int:
                 daemon=True,
             ).start()
 
-        def _open_paths(self, paths: list[Path]) -> None:
-            for path in paths:
+        def _open_paths(self, paths: list[tuple[Path, int | None]]) -> None:
+            for path, preferred_pane in paths:
                 try:
+                    GLib.idle_add(self._deliver_opening, path.name, preferred_pane)
                     request = urllib.request.Request(
                         f"http://127.0.0.1:{server.port}/api/desktop/open-path",
                         data=json.dumps({"path": str(path)}).encode("utf-8"),
@@ -182,7 +262,7 @@ def run(argv: list[str] | None = None) -> int:
                     )
                     with urllib.request.urlopen(request, timeout=3600) as response:
                         image = json.load(response)["image"]
-                    GLib.idle_add(self._deliver_image, image)
+                    GLib.idle_add(self._deliver_image, image, preferred_pane)
                 except urllib.error.HTTPError as exc:
                     try:
                         details = json.load(exc)
@@ -195,8 +275,19 @@ def run(argv: list[str] | None = None) -> int:
                 except (OSError, ValueError, urllib.error.URLError) as exc:
                     GLib.idle_add(self._deliver_error, path.name, str(exc))
 
-        def _deliver_image(self, image: dict) -> bool:
-            script = f"window.AcornDesktopHost.acceptImage({json.dumps(image)});"
+        def _deliver_opening(self, name: str, preferred_pane: int | None) -> bool:
+            script = (
+                "window.AcornDesktopHost.showOpening("
+                f"{json.dumps(name)}, {json.dumps(preferred_pane)});"
+            )
+            self.webview.evaluate_javascript(script, -1, None, None, None)
+            return GLib.SOURCE_REMOVE
+
+        def _deliver_image(self, image: dict, preferred_pane: int | None) -> bool:
+            script = (
+                "window.AcornDesktopHost.acceptImage("
+                f"{json.dumps(image)}, {json.dumps(preferred_pane)});"
+            )
             self.webview.evaluate_javascript(script, -1, None, None, None)
             return GLib.SOURCE_REMOVE
 

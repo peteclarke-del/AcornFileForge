@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from contextlib import ExitStack
+from pathlib import Path
+
+from werkzeug.datastructures import FileStorage
+
 from .archive_utils import open_disk_image_upload
 from .formats import (
     ADFS_EXTENSIONS,
@@ -57,4 +62,54 @@ def open_image_upload(
         return session
 
 
-__all__ = ["IMAGE_EXTENSIONS", "open_image_upload"]
+def open_image_path(
+    service,
+    image_path: Path,
+    descriptor_path: Path | None = None,
+    *,
+    target_hardware: str = "auto",
+    rom_options: dict | None = None,
+    force_kind: str | None = None,
+):
+    """Open a trusted desktop path without routing raw media through HTTP.
+
+    Archives still use the canonical archive-aware stream path. Ordinary
+    images use the service's reflink/sparse local copy while preserving the
+    same validation and private-session boundary as browser uploads.
+    """
+    image_path = Path(image_path)
+    descriptor_path = Path(descriptor_path) if descriptor_path else None
+    if image_path.suffix.casefold() != ".zip":
+        session = service.create_from_path(
+            image_path,
+            descriptor_path,
+            target_hardware,
+            rom_options,
+            force_kind,
+        )
+        service.set_distribution_name(
+            session,
+            best_distribution_filename([image_path.name]),
+        )
+        return session
+    with ExitStack() as stack:
+        image_stream = stack.enter_context(image_path.open("rb"))
+        image = FileStorage(stream=image_stream, filename=image_path.name)
+        descriptor = None
+        if descriptor_path is not None:
+            descriptor_stream = stack.enter_context(descriptor_path.open("rb"))
+            descriptor = FileStorage(
+                stream=descriptor_stream,
+                filename=descriptor_path.name,
+            )
+        return open_image_upload(
+            service,
+            image,
+            descriptor,
+            target_hardware=target_hardware,
+            rom_options=rom_options,
+            force_kind=force_kind,
+        )
+
+
+__all__ = ["IMAGE_EXTENSIONS", "open_image_path", "open_image_upload"]

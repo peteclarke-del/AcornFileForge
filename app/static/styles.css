@@ -4,9 +4,29 @@ html { min-width: 320px; }
 body {
   margin: 0;
   color: var(--ink);
-  font-family: "Avenir Next", Avenir, "Segoe UI", system-ui, sans-serif;
+  font-family: var(--desktop-font-family, "Avenir Next", Avenir, "Segoe UI", system-ui, sans-serif);
   min-height: 100vh;
 }
+
+html.native-desktop .topbar {
+  height: 52px;
+  justify-content: flex-end;
+  padding-inline: 14px;
+  background: var(--paper);
+}
+html.native-desktop .brand { display: none; }
+html.native-desktop :is(.button, .theme-toggle, .icon-button) {
+  border-radius: 6px;
+  box-shadow: none;
+}
+html.native-desktop .button:hover,
+html.native-desktop .button.ghost:hover {
+  box-shadow: none;
+  transform: none;
+}
+html.native-desktop main { padding: 10px; }
+html.native-desktop .workspace,
+html.native-desktop .panes { min-height: calc(100dvh - 72px); }
 button, input { font: inherit; }
 button { color: inherit; }
 .visually-hidden { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; margin: -1px !important; overflow: hidden !important; clip: rect(0, 0, 0, 0) !important; white-space: nowrap !important; border: 0 !important; }

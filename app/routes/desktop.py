@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from contextlib import ExitStack, contextmanager
+from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 import tempfile
 
 from flask import Blueprint, jsonify, request
-from werkzeug.datastructures import FileStorage
 
 from acorn_greaseweazle import (
     DRIVE_CHOICES,
@@ -19,7 +18,7 @@ from acorn_greaseweazle import (
 )
 
 from ..disk_service import DiskError, DiskService
-from ..image_opening import open_image_upload
+from ..image_opening import open_image_path
 from ..operations import OperationRegistry
 from .common import payload
 from .effects import request_effect
@@ -155,26 +154,16 @@ def create_desktop_blueprint(
     def open_local_path():
         data = payload()
         image_path, descriptor_path = _image_pair(data)
-        with ExitStack() as stack:
-            image_stream = stack.enter_context(image_path.open("rb"))
-            image = FileStorage(stream=image_stream, filename=image_path.name)
-            descriptor = None
-            if descriptor_path is not None:
-                descriptor_stream = stack.enter_context(descriptor_path.open("rb"))
-                descriptor = FileStorage(
-                    stream=descriptor_stream,
-                    filename=descriptor_path.name,
-                )
-            session = open_image_upload(
-                service,
-                image,
-                descriptor,
-                target_hardware=str(data.get("targetHardware") or "auto"),
-                rom_options=(
-                    data.get("rom") if isinstance(data.get("rom"), dict) else None
-                ),
-                force_kind=str(data.get("forceKind") or "") or None,
-            )
+        session = open_image_path(
+            service,
+            image_path,
+            descriptor_path,
+            target_hardware=str(data.get("targetHardware") or "auto"),
+            rom_options=(
+                data.get("rom") if isinstance(data.get("rom"), dict) else None
+            ),
+            force_kind=str(data.get("forceKind") or "") or None,
+        )
         return jsonify(image=service.summary(session))
 
     @blueprint.get("/api/desktop/images/<image_id>/physical-floppy")
