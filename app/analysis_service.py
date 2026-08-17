@@ -914,11 +914,16 @@ def preflight_report(service, session, payload: dict) -> dict:
     seen = set()
     target_kind = str(payload.get("targetKind") or session.kind)
     source_kind = str(payload.get("sourceKind") or session.kind)
-    limit = 7 if target_kind in {"dfs", "mmb"} else 10 if target_kind == "adfs" else 12
+    default_limit = 7 if target_kind in {"dfs", "mmb"} else 10 if target_kind == "adfs" else 255 if target_kind in {"host", "deployment"} else 12
     for offset, change in enumerate(changes):
         name = str(change.get("name") or change.get("destination") or "")
-        leaf = name.rsplit(".", 1)[-1]
-        normal = re.sub(r"[.:*#/\x00-\x1f]", "_", leaf)[:limit]
+        leaf = name if change.get("nameIsLeaf") else name.rsplit(".", 1)[-1]
+        item_type = str(change.get("type") or "file")
+        # An MMB row names a complete DFS disk, whose catalogue title is
+        # twelve characters. Files inside that disk still use DFS's seven.
+        limit = 12 if target_kind == "mmb" and item_type in {"disk", "disk image"} else default_limit
+        invalid = r"[/\x00-\x1f]" if target_kind in {"host", "deployment"} else r"[.:*#/\x00-\x1f]"
+        normal = re.sub(invalid, "_", leaf)[:limit]
         conversions = []
         losses = []
         if normal != leaf:
@@ -928,7 +933,6 @@ def preflight_report(service, session, payload: dict) -> dict:
         if key in seen:
             issues.append({"severity": "error", "item": offset, "message": f"{normal} clashes after target-name conversion"})
         seen.add(key)
-        item_type = str(change.get("type") or "file")
         if target_kind in {"dfs", "mmb"} and item_type in {"dir", "directory", "folder"}:
             losses.append("The target DFS catalogue cannot preserve a hierarchical directory.")
             issues.append({
