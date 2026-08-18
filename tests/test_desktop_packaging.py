@@ -47,6 +47,14 @@ class DesktopPackagingTests(unittest.TestCase):
         self.assertIn('icon_name="open-menu-symbolic"', desktop_host)
         self.assertIn("applyNativeAppearance", frontend)
         self.assertIn("open-images:${index}", frontend)
+        self.assertIn("self.chooser_targets[chooser]", desktop_host)
+        self.assertNotIn("self.chooser_targets[id(chooser)]", desktop_host)
+        self.assertIn("chooserOpened(preferredIndex", frontend)
+        self.assertIn("evaluate_javascript_finish", desktop_host)
+        self.assertIn("Gtk.DropTarget.new", desktop_host)
+        self.assertIn("Gdk.FileList", desktop_host)
+        self.assertIn("_native_files_dropped", desktop_host)
+        self.assertIn("paneAtPoint(x, y)", frontend)
 
     def test_installer_rejects_snap_private_xdg_data_home(self) -> None:
         paths = (ROOT / "tools/linux-xdg-paths.sh").read_text(encoding="utf-8")

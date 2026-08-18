@@ -66,6 +66,13 @@ off the browser upload path. The chooser uses automatic target detection; use
 the Workbench hardware profile to describe the intended machine before making
 target-specific changes.
 
+You can also drag image files from the Linux file manager onto a workbench
+pane. The first image targets the pane under the pointer and further images use
+successive empty panes. DAT and DSC partners are paired before opening, so a
+matching pair creates one BeebSCSI session. The GTK drop controller uses the
+same trusted local-path adapter as the native chooser and does not upload image
+bytes through WebKit.
+
 ## Desktop behaviour
 
 - The application starts a private random-port service on `127.0.0.1` and

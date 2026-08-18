@@ -91,6 +91,8 @@ class FrontendAccessibilityTests(unittest.TestCase):
         self.assertIn("prefers-reduced-motion: reduce", self.styles)
         self.assertIn('event.key !== "Tab"', self.core)
         self.assertIn("modalReturnFocus", self.core)
+        self.assertIn('<button class="image-title" type="button"', self.app)
+        self.assertNotIn('class="image-title" role="button"', self.app)
 
     def test_rom_decoder_initial_focus_does_not_select_a_command(self):
         self.assertIn(
@@ -110,6 +112,11 @@ class FrontendAccessibilityTests(unittest.TestCase):
         self.assertIn('"file-menu-folder-import"', self.app)
         self.assertIn('"online-library-install"', self.app)
         self.assertIn("requestCompatibilityReport", self.app)
+
+    def test_idle_job_history_does_not_poll_the_server_every_three_seconds(self):
+        self.assertNotIn("setInterval(refreshJobsBadge, 3000)", self.app)
+        self.assertIn("nextRefresh = active ? 3000 : 30000", self.app)
+        self.assertIn('document.addEventListener("visibilitychange"', self.app)
 
 
 if __name__ == "__main__":

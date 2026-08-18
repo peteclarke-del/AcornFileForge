@@ -12,7 +12,7 @@ from copy import copy
 
 from .acorn_metadata import parse_inf, spark_metadata
 from .content_kind import LISTING_SNIFF_LIMIT, analyse_content, is_uef_container, metadata_kind
-from .disk_service import DiskError
+from .errors import DiskError
 from .uef import UEFError, parse_uef, replace_uef_file, uef_editability
 
 
@@ -23,6 +23,8 @@ ARCHIVE_EXTENSIONS = (
 MAX_ARCHIVE_BYTES = 512 * 1024 * 1024
 MAX_MEMBER_BYTES = 128 * 1024 * 1024
 MAX_ENTRIES = 20_000
+MAX_EXPANDED_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024
+MAX_LISTING_SNIFF_BYTES = 16 * 1024 * 1024
 
 
 class ArchiveError(DiskError):
@@ -70,6 +72,21 @@ def _bounded_member_kind(name: str, size: int, reader) -> str | None:
     return analyse_content(data, name)[0] if len(data) == size else None
 
 
+def _listing_member_kind(
+    name: str,
+    size: int,
+    reader,
+    remaining: int,
+) -> tuple[str | None, int]:
+    """Classify one listing entry without exceeding the archive sniff budget."""
+    hint = metadata_kind(name, None)
+    if hint:
+        return hint, remaining
+    if size > remaining:
+        return None, remaining
+    return _bounded_member_kind(name, size, reader), remaining - max(0, size)
+
+
 def _archive_kind(data: bytes, filename: str) -> str:
     if len(data) > MAX_ARCHIVE_BYTES:
         raise ArchiveError("That archive is too large to browse safely in memory.")
@@ -94,7 +111,22 @@ def _archive_kind(data: bytes, filename: str) -> str:
     raise ArchiveError("That file is not a supported UEF, ZIP, TAR, GZIP, BZIP2 or XZ container.")
 
 
-def _members(data: bytes, filename: str) -> tuple[str, list[dict]]:
+def _validate_archive_inventory(items, size_of) -> None:
+    if len(items) > MAX_ENTRIES:
+        raise ArchiveError(
+            f"The archive contains more than {MAX_ENTRIES:,} entries."
+        )
+    expanded = sum(max(0, int(size_of(item) or 0)) for item in items)
+    if expanded > MAX_EXPANDED_ARCHIVE_BYTES:
+        raise ArchiveError("The archive expands beyond the safe 2 GiB browsing limit.")
+
+
+def _members(
+    data: bytes,
+    filename: str,
+    *,
+    sniff_content: bool = True,
+) -> tuple[str, list[dict]]:
     kind = _archive_kind(data, filename)
     rows: list[dict] = []
     if kind == "uef":
@@ -115,7 +147,12 @@ def _members(data: bytes, filename: str) -> tuple[str, list[dict]]:
             })
     elif kind == "zip":
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            for item in archive.infolist()[:MAX_ENTRIES]:
+            inventory = archive.infolist()
+            _validate_archive_inventory(inventory, lambda item: item.file_size)
+            if any(item.flag_bits & 0x1 for item in inventory if not item.is_dir()):
+                raise ArchiveError("Password-protected ZIP members cannot be browsed safely.")
+            sniff_remaining = MAX_LISTING_SNIFF_BYTES if sniff_content else 0
+            for item in inventory:
                 name = _safe_name(item.filename)
                 if name:
                     row = {"name": name, "size": item.file_size, "dir": item.is_dir(), "source": item.filename}
@@ -123,9 +160,11 @@ def _members(data: bytes, filename: str) -> tuple[str, list[dict]]:
                         metadata = spark_metadata(item.extra)
                         if metadata:
                             row.update(metadata)
-                        content_kind = _bounded_member_kind(
-                            name, item.file_size,
+                        content_kind, sniff_remaining = _listing_member_kind(
+                            name,
+                            item.file_size,
                             lambda item=item: archive.read(item),
+                            sniff_remaining,
                         )
                         if content_kind:
                             row["contentKind"] = content_kind
@@ -144,7 +183,10 @@ def _members(data: bytes, filename: str) -> tuple[str, list[dict]]:
                     )
     elif kind == "tar":
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:*") as archive:
-            for item in archive.getmembers()[:MAX_ENTRIES]:
+            inventory = archive.getmembers()
+            _validate_archive_inventory(inventory, lambda item: item.size if item.isfile() else 0)
+            sniff_remaining = MAX_LISTING_SNIFF_BYTES if sniff_content else 0
+            for item in inventory:
                 name = _safe_name(item.name)
                 if name and (item.isdir() or item.isfile()):
                     row = {"name": name, "size": item.size, "dir": item.isdir(), "source": item.name}
@@ -152,7 +194,9 @@ def _members(data: bytes, filename: str) -> tuple[str, list[dict]]:
                         def read_tar_member(item=item):
                             expanded = archive.extractfile(item)
                             return expanded.read() if expanded else b""
-                        content_kind = _bounded_member_kind(name, item.size, read_tar_member)
+                        content_kind, sniff_remaining = _listing_member_kind(
+                            name, item.size, read_tar_member, sniff_remaining,
+                        )
                         if content_kind:
                             row["contentKind"] = content_kind
                     rows.append(row)
@@ -172,8 +216,6 @@ def _members(data: bytes, filename: str) -> tuple[str, list[dict]]:
                     )
     else:
         rows.append({"name": _safe_name(_standalone_name(filename)), "size": None, "dir": False, "source": ""})
-    if len(rows) >= MAX_ENTRIES:
-        raise ArchiveError(f"The archive contains at least {MAX_ENTRIES:,} entries, which exceeds the safe browsing limit.")
     return kind, rows
 
 
@@ -220,7 +262,7 @@ def list_archive(data: bytes, filename: str, directory: str = "") -> dict:
 
 def read_archive_member_details(data: bytes, filename: str, member_name: str) -> tuple[bytes, dict]:
     wanted = _safe_name(member_name)
-    kind, members = _members(data, filename)
+    kind, members = _members(data, filename, sniff_content=False)
     match = next((row for row in members if row["name"] == wanted and not row["dir"]), None)
     if not match:
         raise ArchiveError("That archive member does not exist or is not a regular file.")
@@ -249,6 +291,9 @@ def read_archive_member_details(data: bytes, filename: str, member_name: str) ->
         content = decompressor.decompress(data, max_length=MAX_MEMBER_BYTES + 1)
     if len(content) > MAX_MEMBER_BYTES:
         raise ArchiveError("That expanded archive member exceeds the safe opening limit.")
+    content_kind = match.get("contentKind") or metadata_kind(wanted, None)
+    if not content_kind:
+        content_kind = analyse_content(content, wanted)[0]
     return content, {
         "length": len(content),
         "load": int(match.get("load") or 0),
@@ -256,7 +301,7 @@ def read_archive_member_details(data: bytes, filename: str, member_name: str) ->
         "attr": "R/",
         "access": int(match.get("access") or 0),
         "archiveKind": kind,
-        "contentKind": match.get("contentKind"),
+        "contentKind": content_kind,
         "metadataAvailable": match.get("load") is not None or match.get("execute") is not None,
     }
 
@@ -272,7 +317,7 @@ def archive_member_editable(data: bytes, filename: str, member_name: str | None 
         return kind in {"zip", "tar", "gzip", "bz2", "xz"}
     if not member_name:
         return False
-    _kind, members = _members(data, filename)
+    _kind, members = _members(data, filename, sniff_content=False)
     wanted = _safe_name(member_name)
     match = next((row for row in members if row["name"] == wanted and not row["dir"]), None)
     if not match:
@@ -288,7 +333,7 @@ def preview_archive_member_replacement(
 ) -> dict:
     """Return the exact structural proof that would guard a UEF rebuild."""
     wanted = _safe_name(member_name)
-    kind, members = _members(data, filename)
+    kind, members = _members(data, filename, sniff_content=False)
     if kind != "uef":
         return {
             "schema": "acorn-file-forge/archive-rebuild-preview/v1",
@@ -330,7 +375,7 @@ def replace_archive_member(data: bytes, filename: str, member_name: str, content
     same-length replacement can preserve all physical structure.
     """
     wanted = _safe_name(member_name)
-    kind, members = _members(data, filename)
+    kind, members = _members(data, filename, sniff_content=False)
     match = next((row for row in members if row["name"] == wanted and not row["dir"]), None)
     if not match:
         raise ArchiveError("That archive member no longer exists.")

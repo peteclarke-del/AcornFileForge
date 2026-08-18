@@ -340,7 +340,7 @@ dialog:has(.rom-workbench) { width: min(1160px, calc(100vw - 24px)); max-height:
   dialog:has(.rom-decoder-heading) .modal-actions { bottom: -22px; }
 }
 .image-name { min-width: 0; flex: 1; }
-.image-name strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.image-name .image-title { display: block; max-width: 100%; overflow: hidden; padding: 0; border: 0; background: transparent; color: inherit; text-overflow: ellipsis; white-space: nowrap; font: inherit; font-size: 14px; font-weight: 700; text-align: left; }
 .image-title { cursor: text; border-radius: 4px; outline: none; }
 .image-title:hover, .image-title:focus-visible { color: var(--teal); text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; }
 .image-title-input { width: 100%; min-width: 0; height: 28px; padding: 3px 7px; border: 1px solid var(--teal); border-radius: 5px; background: var(--paper); color: var(--ink); font: 700 14px Inter, sans-serif; outline: 2px solid color-mix(in srgb, var(--teal) 25%, transparent); }

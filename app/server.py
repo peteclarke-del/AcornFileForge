@@ -146,6 +146,25 @@ def create_app(
             except Exception:
                 application.logger.exception("Could not finalise the automatic image checkpoint")
         response.headers["X-Acorn-Session-Owner"] = g.session_owner_id
+        # These controls apply equally to the browser and the private desktop
+        # WebKit host. The noVNC viewer is the only intentional cross-origin
+        # frame: it uses the current host on its dedicated port 8668.
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault(
+            "Permissions-Policy",
+            "camera=(), geolocation=(), microphone=()",
+        )
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; base-uri 'self'; object-src 'none'; "
+            "frame-ancestors 'self'; form-action 'self'; script-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+            "font-src 'self' data:; connect-src 'self' ws: wss:; "
+            "frame-src 'self' http://*:8668 https://*:8668; "
+            "worker-src 'self' blob:",
+        )
         if getattr(g, "set_owner_cookie", False):
             response.set_cookie(
                 "acorn_file_forge_owner",
@@ -153,6 +172,7 @@ def create_app(
                 max_age=365 * 24 * 60 * 60,
                 httponly=True,
                 samesite="Strict",
+                secure=request.is_secure,
             )
         if getattr(g, "set_desktop_cookie", False):
             response.set_cookie(
@@ -160,6 +180,7 @@ def create_app(
                 runtime.desktop_token,
                 httponly=True,
                 samesite="Strict",
+                secure=request.is_secure,
             )
         if request.path == "/" or request.path.endswith((".js", ".css")):
             response.headers["Cache-Control"] = "no-store, max-age=0"
