@@ -50,9 +50,11 @@ appears on only one. It also verifies that both hosts serve the same static
 tree. These checks prevent accidental drift, but they do not replace a manual
 desktop smoke test for native file selection, downloading and emulator windows.
 
-Platform contract version 3 adds hardware deployment as a shared capability.
-The target planner, isolated snapshot, ZIP builder and browser interface are
-therefore identical in Docker and the Linux desktop host.
+Platform contract version 4 records native file-manager drag and drop as an
+explicit desktop adapter. Image parsing, DAT/DSC pairing, private working-copy
+creation and every operation after opening remain shared. Hardware deployment
+continues to use the same target planner, isolated snapshot, ZIP builder and
+workbench interface in both hosts.
 
 ## Storage and security
 
@@ -68,12 +70,21 @@ does not appear in the address or server access log. The direct path-opening rou
 does not exist in the web host, so a remote browser cannot ask the server to
 read arbitrary host paths.
 
-Source images are still copied into a working session. The native file chooser
-does not grant in-place mutation. Its desktop-only adapter uses a filesystem
-reflink where available and falls back to one sparse local copy, avoiding the
-browser multipart and upload-spooling path for large media. Downloads use
-WebKitGTK's normal Downloads directory handling, and saved packages retain the
-same timestamped image, metadata and README content as browser downloads.
+Source images are still copied into a working session. Neither the native file
+chooser nor a file-manager drop grants in-place mutation. The desktop-only
+adapter uses a filesystem reflink where available and falls back to one sparse
+local copy, avoiding the browser multipart and upload-spooling path for large
+media. Downloads use WebKitGTK's normal Downloads directory handling, and
+saved packages retain the same timestamped image, metadata and README content
+as browser downloads.
+
+Both hosts emit the same anti-sniffing, framing, referrer and browser-feature
+policy headers. Browser-owner and desktop launch cookies are HttpOnly,
+SameSite Strict and gain the Secure attribute when the service is reached over
+HTTPS. Archive browsing rejects unsafe parent paths, encrypted ZIP members,
+more than 20,000 entries and more than 2 GiB of declared expanded content.
+Content recognition while listing is capped at 16 MiB per archive so a large
+collection cannot force an unbounded sequence of decompressions.
 
 ## Native host scope
 

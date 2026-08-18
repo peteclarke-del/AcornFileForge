@@ -102,7 +102,8 @@ function showHelp() {
                 <li>Install Python 3, GTK 4, Libadwaita, WebKitGTK 6 and their Python GObject bindings using your Linux package manager.</li>
                 <li>From the project checkout, run <code>tools/install-linux-desktop.sh</code>.</li>
                 <li>Launch <strong>Acorn File Forge</strong> from the application menu or run <code>tools/acorn-file-forge-desktop</code>.</li>
-                <li>Use the native folder button, <strong>File → Open image</strong> in a pane or <kbd>Ctrl</kbd>+<kbd>O</kbd> to select one or several images with the GTK chooser. Opening a registered image in the file manager also sends it to the workbench.</li>
+                <li>Use the native folder button, <strong>File → Open image</strong> in a pane or <kbd>Ctrl</kbd>+<kbd>O</kbd> to select one or several images with the GTK chooser. You can also drag image files from the Linux file manager onto a pane. Native selection and drag and drop pass local paths to the private desktop service, so image bytes are not uploaded through the embedded browser.</li>
+                <li>Drop a DAT and its matching DSC together, or select either member when its companion is beside it. Multiple SSD, DSD, ADF, HFE, UEF, MMB, ROM and other recognised images open into successive available panes.</li>
                 <li>The native chooser uses automatic target detection. Configure the Workbench hardware profile before making target-specific ADFS changes.</li>
               </ol>
             </div>

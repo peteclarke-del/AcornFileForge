@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 from app.archive_browser import (
     ArchiveError,
+    MAX_ENTRIES,
     archive_member_editable,
     list_archive,
     preview_archive_member_replacement,
@@ -156,6 +157,14 @@ class ArchiveBrowserTests(unittest.TestCase):
             archive.writestr("../escape", b"bad")
         with self.assertRaises(ArchiveError):
             list_archive(stream.getvalue(), "unsafe.zip")
+
+    def test_oversized_archive_inventory_is_rejected_before_member_reads(self):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as archive:
+            for index in range(MAX_ENTRIES + 1):
+                archive.writestr(f"empty-{index}", b"")
+        with self.assertRaisesRegex(ArchiveError, "more than"):
+            list_archive(stream.getvalue(), "too-many.zip")
 
     def test_raw_and_compressed_uef_are_browsable_tape_containers(self):
         raw = minimal_uef()

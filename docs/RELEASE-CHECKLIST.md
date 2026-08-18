@@ -33,6 +33,11 @@ Use the real release value. Do not copy the example unchanged.
       scratch data are absent from the commit and `git archive` output.
 - [ ] Dependency and firmware changes include provenance, version, licence and
       checksum review.
+- [ ] `LICENSE`, `NOTICE`, `THIRD_PARTY_NOTICES.md`, `SECURITY.md` and the
+      dependency inventory agree with the release contents.
+- [ ] Firmware redistribution rights have been established for every binary
+      retained in the source archive or published image. Unresolved material is
+      omitted rather than assumed to be covered by the project licence.
 - [ ] Any format restriction or repair behaviour changed by the release is
       called out in the release notes.
 
