@@ -1,4 +1,4 @@
-FROM python:3.12-slim-trixie AS python-deps
+FROM python:3.14-slim-trixie AS python-deps
 
 # PyPI does not publish Capstone binaries for every Linux architecture. In
 # particular, 32-bit Raspberry Pi builds fall back to the source distribution,
@@ -72,7 +72,7 @@ RUN mkdir -p /src/bem-runtime \
     && cp /src/b-em/*.bin /src/bem-runtime/ \
     && cp -a /src/b-em/roms /src/b-em/fonts /src/b-em/ddnoise /src/bem-runtime/
 
-FROM python:3.12-slim-trixie
+FROM python:3.14-slim-trixie
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
