@@ -959,7 +959,7 @@ function renderPane(index, preserveScroll = false) {
     <header class="pane-head">
       ${paneDragHandle(index)}
       <span class="format-icon ${kind}">${paneFormat(pane.image)}</span>
-      <div class="image-name"><strong class="image-title" role="button" tabindex="0" title="Click to rename ${esc(pane.image.name)}">${esc(pane.image.name)}</strong><small>${esc(location)} · ${humanSize(pane.image.size)}</small></div>
+      <div class="image-name"><button class="image-title" type="button" title="Rename ${esc(pane.image.name)}">${esc(pane.image.name)}</button><small>${esc(location)} · ${humanSize(pane.image.size)}</small></div>
       <span class="dirty-dot" role="img" aria-label="Changes made" title="Changes made · save before closing"></span>
       <div class="pane-head-actions" aria-label="Image actions">
         <button class="icon-button new-image" title="New Blank Image" aria-label="New Blank Image">${PANE_ICONS.newImage}</button>
@@ -994,12 +994,6 @@ function renderPane(index, preserveScroll = false) {
   host.querySelector(".new-image").onclick = () => guardedPaneAction(index, () => showCreateImageModal(index));
   const imageTitle = host.querySelector(".image-title");
   imageTitle.onclick = () => beginImageRename(index);
-  imageTitle.onkeydown = event => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      beginImageRename(index);
-    }
-  };
   if (physicalMediaApplicable) {
     imageTitle.oncontextmenu = event => showPhysicalFloppyContextMenu(index, event, physicalHostAvailable);
     host.querySelector(".format-icon").oncontextmenu = event => showPhysicalFloppyContextMenu(index, event, physicalHostAvailable);
@@ -10721,17 +10715,35 @@ document.addEventListener("keydown", event => {
   }
 });
 window.addEventListener("beforeunload", captureActiveEditorDocument);
+let jobsBadgeRefreshTimer = null;
+let jobsBadgeRefreshInFlight = false;
+function scheduleJobsBadgeRefresh(delay) {
+  clearTimeout(jobsBadgeRefreshTimer);
+  jobsBadgeRefreshTimer = setTimeout(refreshJobsBadge, delay);
+}
 async function refreshJobsBadge() {
+  if (document.hidden) {
+    scheduleJobsBadgeRefresh(30000);
+    return;
+  }
+  if (jobsBadgeRefreshInFlight) return;
+  jobsBadgeRefreshInFlight = true;
+  let nextRefresh = 30000;
   try {
     const data = await api("/api/operations");
     const active = data.operations.filter(item => ["running", "cancelling", "paused", "failed", "interrupted"].includes(item.state)).length;
     const badge = document.querySelector("#jobsBadge");
     badge.hidden = active === 0;
     badge.textContent = String(active);
+    nextRefresh = active ? 3000 : 30000;
   } catch (_error) { /* The app remains usable if job history is unavailable. */ }
+  jobsBadgeRefreshInFlight = false;
+  scheduleJobsBadgeRefresh(nextRefresh);
 }
 refreshJobsBadge();
-setInterval(refreshJobsBadge, 3000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshJobsBadge();
+});
 function updateThemeButton() {
   const dark = document.documentElement.dataset.theme === "dark";
   themeToggle.querySelector("b").textContent = dark ? "Light" : "Dark";
@@ -10748,6 +10760,15 @@ updateThemeButton();
 updateAddPaneButton();
 
 window.AcornDesktopHost = Object.freeze({
+  paneAtPoint(x, y) {
+    const host = document.elementFromPoint(Number(x), Number(y))?.closest?.(".pane");
+    const index = Number(host?.dataset?.pane);
+    return Number.isInteger(index) ? index : -1;
+  },
+  chooserOpened(preferredIndex = null) {
+    const paneNumber = Number.isInteger(preferredIndex) ? preferredIndex + 1 : null;
+    toast(`Native file chooser opened${paneNumber ? ` for pane ${paneNumber}` : ""}`);
+  },
   showOpening(name, preferredIndex = null) {
     const index = Number.isInteger(preferredIndex) && panes[preferredIndex]
       ? preferredIndex
@@ -10756,7 +10777,7 @@ window.AcornDesktopHost = Object.freeze({
     setLoading(
       index,
       true,
-      `Cloning or sparse-copying ${name}, then validating its filesystem…`,
+      `Creating a private local working copy of ${name}, then validating its filesystem…`,
     );
   },
   applyNativeAppearance(appearance = {}) {

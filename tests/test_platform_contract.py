@@ -12,15 +12,17 @@ from unittest.mock import patch
 from app.platform_contract import (
     HOST_EXCLUSIVE_ENDPOINTS,
     PLATFORM_CONTRACT_FORMAT,
+    PLATFORM_CONTRACT_VERSION,
     PlatformRuntime,
 )
 
 try:
     from app.server import create_app
     from app.routes.desktop import _image_pair
+    from desktop.__main__ import _paired_selection
     from desktop.runtime import DesktopServer, desktop_paths
 except ModuleNotFoundError:  # Flask and Werkzeug are container dependencies.
-    create_app = DesktopServer = desktop_paths = _image_pair = None
+    create_app = DesktopServer = desktop_paths = _image_pair = _paired_selection = None
 
 
 class PlatformContractTests(unittest.TestCase):
@@ -69,7 +71,23 @@ class PlatformContractTests(unittest.TestCase):
         self.assertEqual(allowed.status_code, 200)
         contract = allowed.get_json()["platform"]
         self.assertEqual(contract["format"], PLATFORM_CONTRACT_FORMAT)
+        self.assertEqual(contract["version"], PLATFORM_CONTRACT_VERSION)
         self.assertEqual(contract["host"], "desktop")
+        self.assertIn("native-file-drop", contract["hostCapabilities"])
+
+    @unittest.skipIf(create_app is None, "Flask is available in the application container")
+    def test_web_and_desktop_responses_share_security_headers(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            web = create_app(work_dir=Path(temporary) / "web")
+            response = web.test_client().get("/api/health")
+
+        self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+        self.assertEqual(response.headers["X-Frame-Options"], "SAMEORIGIN")
+        self.assertEqual(response.headers["Referrer-Policy"], "no-referrer")
+        self.assertIn("camera=()", response.headers["Permissions-Policy"])
+        self.assertIn("object-src 'none'", response.headers["Content-Security-Policy"])
+        self.assertIn("frame-ancestors 'self'", response.headers["Content-Security-Policy"])
+        self.assertIn("http://*:8668", response.headers["Content-Security-Policy"])
 
     @unittest.skipIf(DesktopServer is None, "Flask is available in the application container")
     def test_desktop_server_binds_random_loopback_port(self) -> None:
@@ -138,6 +156,22 @@ class PlatformContractTests(unittest.TestCase):
 
         self.assertEqual(from_dat, (dat, dsc))
         self.assertEqual(from_dsc, (dat, dsc))
+
+    @unittest.skipIf(_paired_selection is None, "Desktop dependencies unavailable")
+    def test_native_multi_file_selection_collapses_matching_dat_dsc_pair(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dat = root / "SCSI0.DAT"
+            dsc = root / "scsi0.dsc"
+            ssd = root / "game.ssd"
+            for path in (dat, dsc, ssd):
+                path.touch()
+
+            paired = _paired_selection([dsc, ssd, dat])
+            descriptor_only = _paired_selection([dsc])
+
+        self.assertEqual(paired, [ssd.resolve(), dat.resolve()])
+        self.assertEqual(descriptor_only, [dsc.resolve()])
 
 
 if __name__ == "__main__":

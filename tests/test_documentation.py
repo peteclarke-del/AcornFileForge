@@ -10,7 +10,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def published_text_files() -> list[Path]:
-    files = [ROOT / "README.md", ROOT / "firmware" / "README.md"]
+    files = [
+        ROOT / "README.md",
+        ROOT / "CONTRIBUTING.md",
+        ROOT / "GOVERNANCE.md",
+        ROOT / "SECURITY.md",
+        ROOT / "CODE_OF_CONDUCT.md",
+        ROOT / "SUPPORT.md",
+        ROOT / "THIRD_PARTY_NOTICES.md",
+        ROOT / "firmware" / "README.md",
+    ]
     files.extend(sorted((ROOT / "docs").rglob("*.md")))
     files.extend(
         [
@@ -60,6 +69,30 @@ class DocumentationTests(unittest.TestCase):
         )
         self.assertNotIn("one to three panes", combined)
         self.assertNotIn("maximum of three panes", combined)
+
+    def test_repository_governance_files_define_the_licensing_boundary(self) -> None:
+        for relative in (
+            "LICENSE",
+            "NOTICE",
+            "CONTRIBUTING.md",
+            "GOVERNANCE.md",
+            "SECURITY.md",
+            "CODE_OF_CONDUCT.md",
+            "SUPPORT.md",
+            "THIRD_PARTY_NOTICES.md",
+            ".github/ISSUE_TEMPLATE/bug_report.yml",
+            ".github/ISSUE_TEMPLATE/feature_request.yml",
+            ".github/pull_request_template.md",
+            ".github/dependabot.yml",
+        ):
+            self.assertTrue((ROOT / relative).is_file(), relative)
+
+        licence = (ROOT / "LICENSE").read_text(encoding="utf-8")
+        notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+        security = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+        self.assertIn("MIT License", licence)
+        self.assertIn("not covered by the Acorn File Forge MIT licence", notices)
+        self.assertIn("Do not open a public issue", security)
 
 
 if __name__ == "__main__":
