@@ -10,7 +10,12 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from app.image_opening import IMAGE_EXTENSIONS
+
 from .runtime import DesktopServer
+
+
+NATIVE_OPEN_EXTENSIONS = IMAGE_EXTENSIONS | {".dsc", ".zip"}
 
 
 def _arguments(argv: list[str]) -> argparse.Namespace:
@@ -25,16 +30,17 @@ def _desktop_libraries():
         import gi
 
         gi.require_version("Adw", "1")
+        gi.require_version("Gdk", "4.0")
         gi.require_version("Gtk", "4.0")
         gi.require_version("WebKit", "6.0")
-        from gi.repository import Adw, Gio, GLib, Gtk, WebKit
+        from gi.repository import Adw, Gdk, Gio, GLib, Gtk, WebKit
     except (ImportError, ValueError) as exc:
         raise RuntimeError(
             "The Linux desktop host needs GTK 4, Libadwaita, WebKitGTK 6 and "
             "their Python GObject bindings. The Docker/browser edition remains "
             "available without these desktop packages."
         ) from exc
-    return Adw, Gio, GLib, Gtk, WebKit
+    return Adw, Gdk, Gio, GLib, Gtk, WebKit
 
 
 def _paired_selection(paths: list[Path]) -> list[Path]:
@@ -53,7 +59,7 @@ def _paired_selection(paths: list[Path]) -> list[Path]:
 def run(argv: list[str] | None = None) -> int:
     args = _arguments(list(argv if argv is not None else sys.argv[1:]))
     try:
-        Adw, Gio, GLib, Gtk, WebKit = _desktop_libraries()
+        Adw, Gdk, Gio, GLib, Gtk, WebKit = _desktop_libraries()
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -72,7 +78,11 @@ def run(argv: list[str] | None = None) -> int:
             self.style_manager = None
             self.loaded = False
             self.pending_paths = []
+            # Retain each native dialog until its response. Keeping only its
+            # numeric id lets the PyGObject wrapper be finalised while GTK or
+            # the desktop portal still owns the visible chooser.
             self.chooser_targets = {}
+            self.native_drop_target = None
 
         def do_startup(self) -> None:
             Adw.Application.do_startup(self)
@@ -133,6 +143,15 @@ def run(argv: list[str] | None = None) -> int:
                 )
                 self.webview.connect("load-changed", self._loaded)
                 self.webview.connect("decide-policy", self._navigation_policy)
+                self.native_drop_target = Gtk.DropTarget.new(
+                    Gdk.FileList,
+                    Gdk.DragAction.COPY,
+                )
+                self.native_drop_target.set_propagation_phase(
+                    Gtk.PropagationPhase.CAPTURE
+                )
+                self.native_drop_target.connect("drop", self._native_files_dropped)
+                self.webview.add_controller(self.native_drop_target)
                 toolbar.set_content(self.webview)
                 self.window.set_content(toolbar)
                 request = WebKit.URIRequest.new(server.url)
@@ -213,28 +232,124 @@ def run(argv: list[str] | None = None) -> int:
                 "_Cancel",
             )
             chooser.set_select_multiple(True)
-            self.chooser_targets[id(chooser)] = preferred_pane
+            self.chooser_targets[chooser] = preferred_pane
             chooser.connect("response", self._files_chosen)
             chooser.show()
+            self._evaluate_frontend(
+                "window.AcornDesktopHost.chooserOpened("
+                f"{json.dumps(preferred_pane)});"
+            )
 
         def _files_chosen(self, chooser, response) -> None:
             try:
-                if response == Gtk.ResponseType.ACCEPT:
-                    files = chooser.get_files()
-                    paths = [
-                        Path(files.get_item(index).get_path())
-                        for index in range(files.get_n_items())
-                        if files.get_item(index).get_path()
-                    ]
-                    preferred = self.chooser_targets.get(id(chooser))
-                    self.pending_paths.extend(
-                        (path, preferred if index == 0 else None)
-                        for index, path in enumerate(_paired_selection(paths))
+                if response not in {
+                    Gtk.ResponseType.ACCEPT,
+                    Gtk.ResponseType.OK,
+                    Gtk.ResponseType.YES,
+                    Gtk.ResponseType.APPLY,
+                }:
+                    return
+                files = chooser.get_files()
+                paths = []
+                for index in range(files.get_n_items()):
+                    selected = files.get_item(index)
+                    selected_path = selected.get_path() if selected is not None else None
+                    if selected_path:
+                        paths.append(Path(selected_path))
+                if not paths:
+                    raise RuntimeError(
+                        "The native file chooser returned no local file path. "
+                        "Choose a file stored on a mounted local or network filesystem."
                     )
-                    self._drain_paths()
+                preferred = self.chooser_targets.get(chooser)
+                self.pending_paths.extend(
+                    (path, preferred if index == 0 else None)
+                    for index, path in enumerate(_paired_selection(paths))
+                )
+                self._drain_paths()
+            except Exception as exc:
+                GLib.idle_add(
+                    self._deliver_error,
+                    "the selected image",
+                    str(exc) or type(exc).__name__,
+                )
             finally:
-                self.chooser_targets.pop(id(chooser), None)
+                self.chooser_targets.pop(chooser, None)
                 chooser.destroy()
+
+        def _native_files_dropped(self, _target, file_list, x, y) -> bool:
+            """Open host files through the local-path adapter, never an upload."""
+            try:
+                paths = []
+                for selected in file_list.get_files():
+                    selected_path = selected.get_path()
+                    if not selected_path:
+                        return False
+                    path = Path(selected_path)
+                    if not path.is_file() or path.suffix.casefold() not in NATIVE_OPEN_EXTENSIONS:
+                        # Preserve the shared workbench's existing file and
+                        # folder import behaviour for non-image drops.
+                        return False
+                    paths.append(path)
+                paths = _paired_selection(paths)
+                if not paths:
+                    return False
+            except Exception as exc:
+                GLib.idle_add(
+                    self._deliver_error,
+                    "the dropped image",
+                    str(exc) or type(exc).__name__,
+                )
+                return True
+
+            self.webview.evaluate_javascript(
+                "window.AcornDesktopHost.paneAtPoint("
+                f"{float(x)}, {float(y)});",
+                -1,
+                None,
+                None,
+                None,
+                self._native_drop_pane_resolved,
+                paths,
+            )
+            return True
+
+        def _native_drop_pane_resolved(self, webview, result, paths) -> None:
+            preferred_pane = None
+            try:
+                value = webview.evaluate_javascript_finish(result)
+                candidate = int(value.to_int32())
+                if candidate >= 0:
+                    preferred_pane = candidate
+            except Exception as exc:
+                print(
+                    f"Could not resolve the pane under a native file drop: {exc}",
+                    file=sys.stderr,
+                )
+            self.pending_paths.extend(
+                (path, preferred_pane if index == 0 else None)
+                for index, path in enumerate(paths)
+            )
+            self._drain_paths()
+
+        def _evaluate_frontend(self, script: str) -> None:
+            """Run a bounded host notification and report JavaScript errors."""
+            expression = f"(() => {{ {script} return true; }})()"
+            self.webview.evaluate_javascript(
+                expression,
+                -1,
+                None,
+                None,
+                None,
+                self._frontend_evaluated,
+                None,
+            )
+
+        def _frontend_evaluated(self, webview, result, _data=None) -> None:
+            try:
+                webview.evaluate_javascript_finish(result)
+            except Exception as exc:
+                print(f"Desktop frontend bridge failed: {exc}", file=sys.stderr)
 
         def _drain_paths(self) -> None:
             if not self.loaded or not self.pending_paths:
@@ -280,7 +395,7 @@ def run(argv: list[str] | None = None) -> int:
                 "window.AcornDesktopHost.showOpening("
                 f"{json.dumps(name)}, {json.dumps(preferred_pane)});"
             )
-            self.webview.evaluate_javascript(script, -1, None, None, None)
+            self._evaluate_frontend(script)
             return GLib.SOURCE_REMOVE
 
         def _deliver_image(self, image: dict, preferred_pane: int | None) -> bool:
@@ -288,7 +403,7 @@ def run(argv: list[str] | None = None) -> int:
                 "window.AcornDesktopHost.acceptImage("
                 f"{json.dumps(image)}, {json.dumps(preferred_pane)});"
             )
-            self.webview.evaluate_javascript(script, -1, None, None, None)
+            self._evaluate_frontend(script)
             return GLib.SOURCE_REMOVE
 
         def _deliver_error(self, name: str, message: str) -> bool:
@@ -296,7 +411,7 @@ def run(argv: list[str] | None = None) -> int:
                 "window.AcornDesktopHost.showError("
                 f"{json.dumps(f'Could not open {name}: {message}')});"
             )
-            self.webview.evaluate_javascript(script, -1, None, None, None)
+            self._evaluate_frontend(script)
             return GLib.SOURCE_REMOVE
 
         def _closing(self, _window) -> bool:

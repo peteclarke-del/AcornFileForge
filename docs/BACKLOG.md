@@ -211,8 +211,10 @@ project documentation. An unchecked item remains in scope.
       Greaseweazle, with drive validation, destructive confirmation, stable
       source snapshots, tracked progress, cancellation and format-appropriate
       verification.
-- [ ] Produce signed distribution packages after the project licence and
-      release-signing policy are finalised.
+- [x] Publish the project MIT licence, contribution and security policies,
+      third-party boundary, issue forms and pull-request quality gate.
+- [ ] Produce signed distribution packages after the release-signing policy is
+      finalised.
 
 ## Delivery order
 

@@ -21,6 +21,11 @@ that match the running frontend.
 | Inspect, preserve or edit load and execution addresses | [Acorn file catalogue metadata](FILE-METADATA-GUIDE.md) |
 | Inspect, compare, build, patch or program ROM and ROMFS images | [ROM image handbook](ROM-GUIDE.md) |
 | Build and validate a release | [Release checklist](RELEASE-CHECKLIST.md) |
+| Contribute code or documentation | [Contribution guide](../CONTRIBUTING.md) |
+| Understand maintainership and project decisions | [Project governance](../GOVERNANCE.md) |
+| Report a vulnerability | [Security policy](../SECURITY.md) |
+| Check dependency, emulator and firmware licence boundaries | [Third-party notices](../THIRD_PARTY_NOTICES.md) |
+| Ask for support or report conduct concerns | [Support](../SUPPORT.md) and [code of conduct](../CODE_OF_CONDUCT.md) |
 | Review retained validation evidence | [Current AMD64 RC2 evidence](release-evidence/2026-08-17-amd64-rc2.md) |
 | Review completed and outstanding product improvements | [Product backlog](BACKLOG.md) |
 | Audit the emulator firmware shipped in the image | [Firmware notes](../firmware/README.md) |

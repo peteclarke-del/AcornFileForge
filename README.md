@@ -66,6 +66,11 @@ tools/install-linux-desktop.sh
 tools/acorn-file-forge-desktop
 ```
 
+The native chooser accepts several images at once. Supported images can also
+be dragged from the Linux file manager onto a pane. Matching DAT and DSC files
+are paired before opening, and both paths use the fast private local-file
+adapter rather than uploading bytes through WebKit.
+
 Read the [Linux desktop guide](docs/LINUX-DESKTOP.md) for prerequisite packages,
 XDG storage, emulator paths and removal. The
 [platform contract](docs/PLATFORM-CONTRACT.md) requires shared changes to be
@@ -128,7 +133,10 @@ putting them onto real hardware. The application reports uncertainty rather
 than claiming that an unproved conversion or launch path is safe.
 
 Bug reports and proposed improvements can be raised in the
-[GitHub repository](https://github.com/peteclarke-del/AcornFileForge).
+[GitHub repository](https://github.com/peteclarke-del/AcornFileForge). Read the
+[contribution guide](CONTRIBUTING.md) before submitting a change and report
+suspected vulnerabilities through the private process in
+[SECURITY.md](SECURITY.md), not a public issue.
 The [product backlog](docs/BACKLOG.md) records the agreed larger improvements,
 splits completed foundations from unfinished work and keeps them separate from
 the reusable release checklist.
@@ -154,6 +162,14 @@ the reusable release checklist.
 - The [private collection guide](docs/COLLECTION-GUIDE.md) covers browser-owned indexing, stale revisions, reports, backups and privacy boundaries.
 - The [cheat-candidate analysis guide](docs/CHEAT-ANALYSIS-GUIDE.md) covers BASIC and machine-code evidence, confidence, online references and safe emulator verification.
 - The [release checklist](docs/RELEASE-CHECKLIST.md) defines the generated-media, fault-injection, benchmark, browser and real-hardware gates.
+- [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md),
+  [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) and [SUPPORT.md](SUPPORT.md) define
+  how repository work and reports are handled.
+- [GOVERNANCE.md](GOVERNANCE.md) defines maintainership, decision priorities,
+  evidence requirements and release authority.
+- [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) records the boundary between
+  MIT-licensed project source, source-built tools, system packages, firmware
+  and user media.
 - **Help** in the application contains illustrated, task-based instructions and
   stays with the running version of the frontend.
 - Every saved image ZIP contains its own generated `README.md` describing that
@@ -2611,7 +2627,9 @@ Backend routes are split by responsibility:
 - `app/content_kind.py` owns bounded content classification and BASIC, script,
   text, binary and UEF recognition.
 - `app/archive_browser.py` owns safe UEF and compressed archive traversal,
-  path validation, proof-gated member replacement and expansion limits.
+  path validation, proof-gated member replacement and expansion limits. It
+  rejects encrypted or oversized inventories and bounds content sniffing while
+  retaining file-type recognition for ordinary collections.
 - `app/fat_media.py` builds deterministic, unprivileged FAT16 cards for the
   complete-MMB Pi1MHz/MMFS emulator adapter.
 - `app/emulator_evidence.py` owns bounded private-display capture, input
@@ -2735,6 +2753,11 @@ A healthy response looks like:
 ```
 
 ## Main dependencies
+
+Acorn File Forge source is licensed under the [MIT License](LICENSE). Runtime
+components, firmware and user media retain separate terms. Review
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before redistributing a source
+archive, container image or native package.
 
 - Python 3.12
 - Flask 3.1
