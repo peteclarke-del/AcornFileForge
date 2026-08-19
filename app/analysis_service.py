@@ -967,14 +967,15 @@ def preflight_report(service, session, payload: dict) -> dict:
         # twelve characters. Files inside that disk still use DFS's seven.
         limit = 12 if target_kind == "mmb" and item_type in {"disk", "disk image"} else default_limit
         invalid = r"[/\x00-\x1f]" if target_kind in {"host", "deployment"} else r"[.:*#/\x00-\x1f]"
-        normal = re.sub(invalid, "_", leaf)[:limit]
+        validate_name = not change.get("existingDestination")
+        normal = re.sub(invalid, "_", leaf)[:limit] if validate_name else leaf
         conversions = []
         losses = []
-        if normal != leaf:
+        if validate_name and normal != leaf:
             issues.append({"severity": "warning", "item": offset, "message": f"{leaf} becomes {normal or 'FILE'}"})
             conversions.append(f"Filename {leaf} becomes {normal or 'FILE'}")
         key = normal.casefold()
-        if key in seen:
+        if validate_name and key in seen and not change.get("allowDuplicateName"):
             issues.append({"severity": "error", "item": offset, "message": f"{normal} clashes after target-name conversion"})
         seen.add(key)
         if target_kind in {"dfs", "mmb"} and item_type in {"dir", "directory", "folder"}:
@@ -987,7 +988,7 @@ def preflight_report(service, session, payload: dict) -> dict:
             losses.append("RISC OS filetype metadata is not represented directly by DFS.")
         items.append({
             "index": offset,
-            "sourceName": leaf,
+            "sourceName": str(change.get("sourceName") or leaf),
             "targetName": normal or "FILE",
             "source": str(change.get("source") or ""),
             "type": item_type,

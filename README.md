@@ -248,6 +248,16 @@ their project page and shown only when a supported Acorn disk or tape upload is
 actually present. Its short-lived download address is generated only when you
 install the item.
 
+Large provider indexes are checked in bounded pages. This matters for Every
+Game Going, whose Electron index contains several thousand release and media
+records. The initial result set contains only entries whose detail page has
+already confirmed a supported download. Choose **Find more downloadable
+results** to validate the next provider page; repeat until the status says that
+all matching catalogue entries have been checked. Shared `BBC/Electron`
+releases are classified for both machine families and are included by an
+Electron search. **Not already present** reports how many verified results were
+hidden; choose **All results** when auditing catalogue coverage.
+
 Choose **Sources…** in the Online Library to enable or disable a catalogue,
 change its URL, or add another compatible provider. Configuration is stored in
 the persistent work volume as `catalog-sources.json`. Each provider record
@@ -277,10 +287,13 @@ volume contains local changes made through **Sources…**.
    disk titles, remembered online distribution names and installed menu
    records. Punctuation and the publisher suffix saved during installation do
    not prevent a match. Choose **All results** to include them.
-5. Select several downloadable results. Selected empty slots are preferred.
+5. If the status says more catalogue entries remain, choose **Find more
+   downloadable results**. The next bounded group is checked and merged into
+   the current sortable selection without claiming unchecked links as files.
+6. Select several downloadable results. Selected empty slots are preferred.
    Otherwise the app scans from the requested starting slot, wraps safely and
    finds the next suitable run. DSD images still need two adjacent slots.
-6. Leave the menu option selected to pass each inserted disk through the usual
+7. Leave the menu option selected to pass each inserted disk through the usual
    launcher, action and PAGE review. Clear it to keep the disks off-menu.
 
 Dragging or importing an SSD that is already open in another pane carries its
@@ -1179,6 +1192,12 @@ Library. It is built before the first destination write. Blocking name clashes
 or directory losses stop the operation, while reviewable conversions remain
 attached to the individual item. Online Library displays the report inside its
 existing results dialog and requires a second Install action after review.
+When ADFS imports create child directories, their final ten-character names
+are allocated against the complete selected batch and the destination's
+existing entries before review. Truncation collisions receive stable numeric
+suffixes, and the server rechecks each name as it writes. A genuinely blocking
+report offers **Change selection or import options**; it never presents a
+disabled control labelled as though it could resolve the problem itself.
 
 ### Hardware deployment packages
 

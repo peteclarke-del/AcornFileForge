@@ -134,6 +134,50 @@ class AnalysisServiceTests(unittest.TestCase):
             self.assertEqual(report["items"][0]["targetName"], "ARCADIANS123")
             self.assertTrue(report["canProceed"])
 
+    def test_preflight_can_describe_distinct_slots_or_shared_destinations(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "collection.mmb"
+            path.write_bytes(b"image")
+            session = ImageSession("f" * 32, path.name, "mmb", path)
+            report = preflight_report(
+                DiskService(folder), session,
+                {
+                    "operation": "online-library-install",
+                    "changes": [
+                        {"name": "SAME", "sourceName": "Game One", "allowDuplicateName": True},
+                        {"name": "SAME", "sourceName": "Game Two", "allowDuplicateName": True},
+                    ],
+                },
+            )
+            self.assertTrue(report["canProceed"])
+            self.assertEqual(report["items"][1]["sourceName"], "Game Two")
+
+    def test_preflight_does_not_revalidate_an_existing_destination_path(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "drive.dat"
+            path.write_bytes(b"image")
+            session = ImageSession("1" * 32, path.name, "adfs", path)
+            report = preflight_report(
+                DiskService(folder), session,
+                {
+                    "operation": "online-library-install",
+                    "targetKind": "adfs",
+                    "changes": [
+                        {
+                            "name": "$.Games",
+                            "sourceName": "Arcadians",
+                            "nameIsLeaf": True,
+                            "existingDestination": True,
+                            "allowDuplicateName": True,
+                            "type": "contents into directory",
+                        },
+                    ],
+                },
+            )
+            self.assertTrue(report["canProceed"])
+            self.assertEqual(report["items"][0]["targetName"], "$.Games")
+            self.assertEqual(report["issues"], [])
+
     def test_accepted_preflight_is_retained_with_canonical_markdown(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "disk.ssd"
