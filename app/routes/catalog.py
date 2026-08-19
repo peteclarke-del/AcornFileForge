@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import re
 import tempfile
 import zipfile
@@ -37,6 +38,27 @@ def _catalogue_identities(value: object) -> set[str]:
         for candidate in {text, without_attribution}
         if (identity := re.sub(r"[^a-z0-9]+", " ", candidate.casefold()).strip())
     }
+
+
+def _available_adfs_directory_name(
+    service: DiskService,
+    target,
+    parent: str,
+    preferred: str,
+) -> str:
+    """Allocate a legal, unused ADFS child name for an online import."""
+    cleaned = re.sub(r"[^A-Za-z0-9!_-]", "_", str(preferred)).strip("_")[:10] or "ONLINE"
+    used = {
+        str(entry.get("name") or "").casefold()
+        for entry in service.list_directory(target, parent, None)["entries"]
+    }
+    candidate = cleaned
+    suffix = 1
+    while candidate.casefold() in used:
+        ending = str(suffix)
+        candidate = f"{cleaned[:max(1, 10 - len(ending))]}{ending}"
+        suffix += 1
+    return candidate
 
 
 def _first_empty_runs(service: DiskService, session, start: int, needed: int) -> int | None:
@@ -145,7 +167,20 @@ def create_catalog_blueprint(service: DiskService, work_dir: Path) -> Blueprint:
         session = service.get(image_id)
         machine = str(request.args.get("machine") or "all")
         selected_sources = {item for item in request.args.get("sources", "").split(",") if item} or None
-        rows, failures = catalogue.search(str(request.args.get("q") or ""), machine, selected_sources)
+        cursor_value = request.args.get("cursor")
+        cursors = None
+        if cursor_value:
+            try:
+                decoded = json.loads(cursor_value)
+                cursors = {
+                    str(source_id): max(0, int(offset))
+                    for source_id, offset in decoded.items()
+                } if isinstance(decoded, dict) else None
+            except (TypeError, ValueError, json.JSONDecodeError):
+                raise DiskError("The Online Library continuation cursor is invalid.")
+        rows, failures, continuation = catalogue.search_page(
+            str(request.args.get("q") or ""), machine, selected_sources, cursors
+        )
         installed = set()
         if session.kind == "mmb":
             for slot in service.list_slots(session):
@@ -178,9 +213,16 @@ def create_catalog_blueprint(service: DiskService, work_dir: Path) -> Blueprint:
             candidates = _catalogue_identities(row["title"])
             candidates.update(_catalogue_identities(Path(str(row.get("pageUrl") or "")).stem))
             row["installed"] = bool(candidates & installed)
+        available = len(rows)
         if request.args.get("scope") == "missing":
             rows = [row for row in rows if not row["installed"]]
-        return jsonify(items=rows, failures=failures)
+        return jsonify(
+            items=rows,
+            failures=failures,
+            continuation=continuation,
+            available=available,
+            hiddenInstalled=available - len(rows),
+        )
 
     @blueprint.post("/api/images/<image_id>/catalog/install")
     @image_mutation("installing software from the Online Library")
@@ -235,7 +277,13 @@ def create_catalog_blueprint(service: DiskService, work_dir: Path) -> Blueprint:
                         cursor = slots[-1] + 1
                     elif target.kind == "adfs":
                         create_dir = bool(data.get("createDirectory", False))
-                        directory = re.sub(r"[^A-Za-z0-9!_-]", "_", item["title"])[:10] or "ONLINE"
+                        directory = str(data.get("directoryName") or "").strip()
+                        if not directory:
+                            directory = re.sub(r"[^A-Za-z0-9!_-]", "_", item["title"])[:10] or "ONLINE"
+                        if create_dir:
+                            directory = _available_adfs_directory_name(
+                                service, target, target_path, directory
+                            )
                         destination = service.extract_image_to_adfs_directory(source, target, target_path, directory, create_directory=create_dir)
                         metadata = analyse_adfs_directory(service, target, destination) if add_to_menu else None
                         if metadata:

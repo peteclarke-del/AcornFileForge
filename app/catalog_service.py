@@ -139,13 +139,26 @@ class CatalogueService:
         return body
 
     def search(self, query: str, machine: str, source_ids: set[str] | None = None) -> tuple[list[dict], list[dict]]:
+        results, failures, _continuation = self.search_page(query, machine, source_ids)
+        return results, failures
+
+    def search_page(
+        self,
+        query: str,
+        machine: str,
+        source_ids: set[str] | None = None,
+        cursors: dict[str, int] | None = None,
+    ) -> tuple[list[dict], list[dict], dict[str, int]]:
         query = query.strip().casefold()
         results, failures = [], []
+        continuing = cursors is not None
+        cursors = cursors or {}
         sources = [
             source for source in self.sources()
             if source["enabled"]
             and (not source_ids or source["id"] in source_ids)
             and (not machine or machine == "all" or machine in source["machines"] or "all" in source["machines"])
+            and (not continuing or source["id"] in cursors)
         ]
 
         def load(source):
@@ -156,6 +169,7 @@ class CatalogueService:
 
         with ThreadPoolExecutor(max_workers=min(6, len(sources) or 1)) as pool:
             loaded = list(pool.map(load, sources))
+        continuation = {}
         for source, rows, error in loaded:
             if error:
                 failures.append({"source": source["name"], "error": error})
@@ -170,8 +184,15 @@ class CatalogueService:
                 candidates.append(row)
             if any(row.get("resolver") for row in candidates):
                 # Some indexes contain thousands of records but do not promise
-                # downloadable media. Resolve only a bounded result window.
-                candidates = candidates[:max(1, int(source["options"].get("resultValidationLimit", 120)))]
+                # downloadable media. Resolve one bounded window and return a
+                # source-specific cursor so the browser can safely request the
+                # rest without treating unchecked rows as downloadable.
+                limit = max(1, int(source["options"].get("resultValidationLimit", 120)))
+                start = max(0, int(cursors.get(source["id"], 0)))
+                end = min(len(candidates), start + limit)
+                if end < len(candidates):
+                    continuation[source["id"]] = end
+                candidates = candidates[start:end]
                 threads = max(1, min(16, int(source["options"].get("detailThreads", 8))))
                 with ThreadPoolExecutor(max_workers=min(threads, len(candidates) or 1)) as pool:
                     candidates = [
@@ -188,7 +209,7 @@ class CatalogueService:
                 row.pop("downloadUrl", None)
                 results.append(row)
         results.sort(key=lambda item: (str(item.get("title", "")).casefold(), str(item.get("publisher", "")).casefold()))
-        return results[:1000], failures
+        return results[:1000], failures, continuation
 
     def _load_catalogue(self, source: dict, query: str, machine: str) -> list[dict]:
         options = source.get("options", {})
@@ -364,6 +385,7 @@ class CatalogueService:
             date_match = re.search(r'Release Date:\s*<br\s*/?>\s*([^<]+)', block, re.I)
             year_match = re.search(r'\b(19\d{2}|20\d{2})\b', date_match.group(1) if date_match else "")
             compatibility = re.search(r'Stated Compatibility:\s*<br\s*/?>\s*(.*?)\s*<br', block, re.I | re.S)
+            compatibility_text = _plain_text(compatibility.group(1)) if compatibility else ""
             media = [
                 urllib.parse.urljoin(url, href)
                 for href in re.findall(r'href\s*=\s*["\']([^"\']+)', block, re.I)
@@ -371,12 +393,14 @@ class CatalogueService:
             ]
             download = media[0] if media else None
             description = category
-            if compatibility:
-                description += f". {_plain_text(compatibility.group(1))}"
+            if compatibility_text:
+                description += f". {compatibility_text}"
             rows.append(_item(
                 title, publisher, year_match.group(1) if year_match else "", download,
                 f"{url}#{urllib.parse.quote(section_id)}", "disk-image" if download else "external",
-                description=description, machines=source.get("machines", []), downloadable=bool(download),
+                description=description,
+                machines=_machines_from_compatibility(compatibility_text, source.get("machines", [])),
+                downloadable=bool(download),
             ))
         if rows:
             return rows
@@ -450,11 +474,12 @@ class CatalogueService:
             groups = re.findall(r'\(([^()]*)\)', details)
             publisher = groups[1] if len(groups) > 1 else ""
             year = next(iter(re.findall(r'\b(?:19|20)\d{2}\b', details)), "")
+            compatibility = groups[-1].split(",", 1)[0].strip() if groups else ""
             page_url = urllib.parse.urljoin(source["url"], href)
             rows.append(_item(
                 title, publisher, year, None, page_url, "remote-item",
                 description=f"{profile.get('label', 'Acorn software')}. Download availability is checked when installed.",
-                machines=profile.get("machines", []), downloadable=True,
+                machines=_machines_from_compatibility(compatibility, profile.get("machines", [])), downloadable=True,
                 resolver=str(source.get("options", {}).get("resolver") or "media-links"),
             ))
             rows[-1]["resolverOptions"] = {"downloadPathContains": source["options"].get("downloadPathContains", "/download/")}
@@ -639,6 +664,16 @@ class CatalogueService:
         return CatalogueService._http_url(
             generated, "The catalogue did not return a usable download URL."
         )
+
+
+def _machines_from_compatibility(value: str, fallback: list[str]) -> list[str]:
+    """Translate catalogue compatibility prose into stable machine filters."""
+    compact = re.sub(r"\s+", "", str(value)).casefold()
+    if "bbc/electron" in compact or "electron/bbc" in compact:
+        return ["bbc-b", "electron"]
+    if "electron" in compact:
+        return ["electron"]
+    return list(fallback)
 
 
 def _item(title, publisher, year, download, page, artifact, *, description="", machines=None, downloadable=True, version="", resolver=None):

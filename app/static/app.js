@@ -3738,7 +3738,17 @@ async function addSelectedHostFiles(index, files) {
   if (pane.image?.kind === "rom") return addRomHostFiles(index, files);
   const preparedFiles = await prepareHostFileMetadata(files);
   if (!preparedFiles.length) return toast("The selection contained metadata sidecars but no data files.", true);
-  if (!await reviewHostImport(index, preparedFiles, "file-menu-file-import")) return false;
+  // An importable disk or tape image has its own ADFS installation planner.
+  // It must inspect the container before it can describe the real operation:
+  // extract its contents, choose a destination and optional child directory,
+  // or retain the source image as an ordinary file.  Running the generic file
+  // preflight first treats the container name as an ADFS leaf name and hides
+  // that decision behind an irrelevant filename warning.
+  const ordinaryFiles = pane.image?.kind === "adfs"
+    ? preparedFiles.filter(item => !formats.isImportableImage(item.file.name))
+    : preparedFiles;
+  if (ordinaryFiles.length
+    && !await reviewHostImport(index, ordinaryFiles, "file-menu-file-import")) return false;
   const batch = { current: 0, total: preparedFiles.length, acceptAll: false, currentMetadata: null };
   pane.actionPending = true;
   renderPane(index);
@@ -5539,6 +5549,30 @@ async function showOnlineSources(index) {
   return closed;
 }
 
+function nextAvailableOnlineDirectoryName(pane, title, usedNames) {
+  const rule = targetNameRule(pane, title || "ONLINE");
+  const base = rule.suggested || "ONLINE";
+  let candidate = base;
+  for (let suffix = 1; usedNames.has(candidate.toLowerCase()); suffix += 1) {
+    const ending = String(suffix);
+    candidate = `${base.slice(0, Math.max(1, rule.limit - ending.length))}${ending}`;
+  }
+  usedNames.add(candidate.toLowerCase());
+  return candidate;
+}
+
+async function planOnlineDirectories(index, items, targetPath) {
+  const pane = panes[index];
+  const listing = targetPath === pane.path
+    ? { entries: pane.entries }
+    : await api(`/api/images/${pane.image.id}/tree?${new URLSearchParams({ path: targetPath })}`);
+  const usedNames = new Set((listing.entries || []).map(entry => String(entry.name || "").toLowerCase()));
+  return new Map(items.map(item => [
+    item.id,
+    nextAvailableOnlineDirectoryName(pane, item.title, usedNames),
+  ]));
+}
+
 async function showOnlineLibrary(index) {
   const pane = panes[index];
   const isMmbRoot = pane.image.kind === "mmb" && pane.slot === null;
@@ -5550,6 +5584,7 @@ async function showOnlineLibrary(index) {
   const adfsMenus = pane.image.kind === "adfs" ? await adfsInstalledMenuChoices(index) : [];
   const machineOptions = ONLINE_MACHINES.map(([value, label]) => `<option value="${value}" ${value === machine ? "selected" : ""}>${label}</option>`).join("");
   let acceptedOnlineSignature = "";
+  let acceptedOnlineDirectoryNames = new Map();
   showModal(`<div class="modal-heading online-library-heading"><span class="modal-kicker">ONLINE LIBRARY</span><h2>${isMmbRoot ? "Find disk images" : "Find software to install"}</h2><p>Search trusted Acorn archives, select several results, then install them through the same checked workflow as local files.</p></div>
     <div class="online-search-bar"><label>Machine<select name="machine">${machineOptions}</select></label><label class="online-query">Title, publisher or keyword<input name="query" type="search" placeholder="Leave blank to browse"></label><label>Show<select name="scope"><option value="missing">Not already present</option><option value="all">All results</option></select></label><button class="button online-search" type="button">Search</button><button class="button ghost online-sources" type="button">Sources…</button></div>
     <div class="online-status">Choose a machine and search the configured catalogues.</div>
@@ -5570,24 +5605,48 @@ async function showOnlineLibrary(index) {
       });
       if (acceptedOnlineSignature !== signature) {
         const selectedItems = itemIds.map(id => resultItems.find(item => item.id === id)).filter(Boolean);
+        const menuChoice = String(form.get("onlineMenuChoice") || "off");
+        const targetPath = pane.image.kind === "adfs" && menuChoice !== "off"
+          ? adfsMenuRoot(menuChoice, pane.path)
+          : pane.path;
+        const createDirectories = pane.image.kind === "adfs"
+          && (menuChoice !== "off" || form.has("createDirectory"));
+        const directoryNames = createDirectories
+          ? await planOnlineDirectories(index, selectedItems, targetPath)
+          : new Map();
         const report = await requestCompatibilityReport(
           index,
           "online-library-install",
           "online-catalogue",
           selectedItems.map(item => ({
-            name: item.title || item.filename || "Software",
+            name: createDirectories
+              ? directoryNames.get(item.id)
+              : pane.image.kind === "adfs" ? targetPath : item.title || item.filename || "Software",
+            sourceName: item.title || item.filename || "Software",
             nameIsLeaf: true,
+            existingDestination: pane.image.kind === "adfs" && !createDirectories,
             source: item.sourceName || item.pageUrl || "Online Library",
-            type: isMmbRoot ? "disk image" : (form.has("createDirectory") ? "directory" : "file"),
+            type: isMmbRoot ? "disk image" : (createDirectories ? "directory" : "contents into directory"),
+            allowDuplicateName: isMmbRoot || !createDirectories,
           })),
         );
         const reviewHost = modalContent.querySelector(".online-compatibility-review");
         reviewHost.innerHTML = `<details open><summary>Compatibility preflight · ${esc(report.summary)}</summary>
           <div class="preflight-list">${report.items.map(item => `<article><b>${item.index + 1}</b><span><strong>${esc(item.sourceName)}${item.targetName !== item.sourceName ? ` → ${esc(item.targetName)}` : ""}</strong>${[...item.conversions, ...item.losses].map(note => `<em>${esc(note)}</em>`).join("")}</span></article>`).join("")}</div>
-          <div class="finding-list">${report.issues.map(item => `<p class="finding ${esc(item.severity)}"><b>${esc(item.severity)}</b>${esc(item.message)}</p>`).join("") || '<p class="finding pass"><b>ready</b>No conversion loss or blocking clash was detected.</p>'}</div></details>`;
+          <div class="finding-list">${report.issues.map(item => `<p class="finding ${esc(item.severity)}"><b>${esc(item.severity)}</b>${esc(item.message)}</p>`).join("") || '<p class="finding pass"><b>ready</b>No conversion loss or blocking clash was detected.</p>'}</div>
+          ${report.canProceed ? "" : '<button class="button online-revise" type="button">Change selection or import options</button>'}</details>`;
         acceptedOnlineSignature = report.canProceed ? signature : "";
+        acceptedOnlineDirectoryNames = report.canProceed ? directoryNames : new Map();
         const install = modalContent.querySelector(".online-install");
-        install.textContent = report.canProceed ? `Install ${itemIds.length} reviewed item${itemIds.length === 1 ? "" : "s"}` : "Resolve compatibility findings";
+        install.textContent = report.canProceed ? `Install ${itemIds.length} reviewed item${itemIds.length === 1 ? "" : "s"}` : "Blocked by compatibility findings";
+        reviewHost.querySelector(".online-revise")?.addEventListener("click", () => {
+          acceptedOnlineSignature = "";
+          acceptedOnlineDirectoryNames = new Map();
+          reviewHost.innerHTML = "";
+          install.textContent = isMmbRoot ? "Insert selected disks" : "Install selected";
+          install.disabled = !resultHost.querySelector('[name="catalogItem"]:checked');
+          modalContent.querySelector('[name="createDirectory"], [name="onlineMenuChoice"], [name="catalogItem"]:checked')?.focus();
+        });
         setTimeout(() => { install.disabled = !report.canProceed; }, 0);
         return false;
       }
@@ -5605,7 +5664,7 @@ async function showOnlineLibrary(index) {
         try {
           const result = await api(`/api/images/${pane.image.id}/catalog/install`, {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ itemIds: [itemId], slots: selectedEmpty.slice(offset), startSlot: selectedEmpty[offset] ?? (Number(form.get("startSlot") || firstEmpty) + offset), path: pane.image.kind === "adfs" && menuChoice !== "off" ? menuRoot : pane.path, slot: pane.slot, side: pane.side, addToMenu: isMmbRoot ? form.has("addToMenu") : menuChoice !== "off" && menuItems.has(itemId), createDirectory: pane.image.kind === "adfs" && menuChoice !== "off" ? true : form.has("createDirectory") })
+            body: JSON.stringify({ itemIds: [itemId], slots: selectedEmpty.slice(offset), startSlot: selectedEmpty[offset] ?? (Number(form.get("startSlot") || firstEmpty) + offset), path: pane.image.kind === "adfs" && menuChoice !== "off" ? menuRoot : pane.path, slot: pane.slot, side: pane.side, addToMenu: isMmbRoot ? form.has("addToMenu") : menuChoice !== "off" && menuItems.has(itemId), createDirectory: pane.image.kind === "adfs" && menuChoice !== "off" ? true : form.has("createDirectory"), directoryName: acceptedOnlineDirectoryNames.get(itemId) || "" })
           });
           pane.image = result.image;
           results.push(...result.items);
@@ -5632,6 +5691,8 @@ async function showOnlineLibrary(index) {
   const status = modalContent.querySelector(".online-status");
   let resultItems = [];
   let resultFailures = [];
+  let resultContinuation = {};
+  let resultHiddenInstalled = 0;
   let resultSort = { key: "title", direction: "asc" };
   const renderOnlineResults = () => {
     const selected = new Set([...resultHost.querySelectorAll('[name="catalogItem"]:checked')].map(input => input.value));
@@ -5647,6 +5708,10 @@ async function showOnlineLibrary(index) {
       return `<th aria-sort="${ariaSort}"><button class="online-sort" type="button" data-sort="${key}">${label}<span aria-hidden="true">${arrow}</span></button></th>`;
     };
     resultHost.innerHTML = items.length ? `<table class="online-result-table" aria-label="Downloadable Acorn software"><thead><tr><th></th>${heading("Title", "title")}${heading("Publisher", "publisher")}${heading("Year", "year")}${heading("Source", "sourceName")}${pane.image.kind === "adfs" ? "<th>Menu</th>" : ""}<th></th></tr></thead><tbody>${items.map(item => `<tr class="${item.installed ? "already-installed" : ""}"><td><input type="checkbox" name="catalogItem" value="${esc(item.id)}" aria-label="Select ${esc(item.title)}" ${selected.has(item.id) ? "checked" : ""}></td><td><strong>${esc(item.title)}</strong>${item.version ? `<small>Version ${esc(item.version)}</small>` : ""}${item.description ? `<small>${esc(item.description)}</small>` : ""}</td><td>${esc(item.publisher || "Unknown")}</td><td>${esc(item.year || "-")}</td><td><span class="pill">${esc(item.sourceName)}</span>${item.installed ? '<small class="installed-label">Already present</small>' : ""}</td>${pane.image.kind === "adfs" ? `<td><input type="checkbox" name="catalogMenu" value="${esc(item.id)}" checked aria-label="Add ${esc(item.title)} to the selected menu"></td>` : ""}<td><a class="button tiny" href="${esc(item.pageUrl)}" target="_blank" rel="noopener">Details</a></td></tr>`).join("")}</tbody></table>` : '<div class="empty-list">No matching downloadable items were found. Try All results, another machine, or a broader search.</div>';
+    if (Object.keys(resultContinuation).length) {
+      resultHost.insertAdjacentHTML("beforeend", '<div class="online-load-more"><button class="button" type="button" data-online-more>Find more downloadable results</button><small>Only entries with verified downloadable Acorn media are added.</small></div>');
+      resultHost.querySelector("[data-online-more]").onclick = event => runSearch(null, true, event.currentTarget);
+    }
     if (resultFailures.length) resultHost.insertAdjacentHTML("beforeend", `<details class="online-failures"><summary>Unavailable sources</summary>${resultFailures.map(item => `<p><b>${esc(item.source)}</b>: ${esc(item.error)}</p>`).join("")}</details>`);
     resultHost.querySelectorAll("[data-sort]").forEach(button => button.onclick = () => {
       const key = button.dataset.sort;
@@ -5661,13 +5726,18 @@ async function showOnlineLibrary(index) {
     });
     installButton.disabled = !resultHost.querySelector('[name="catalogItem"]:checked');
   };
-  const runSearch = async (requestedMachine = null) => {
+  const runSearch = async (requestedMachine = null, append = false, moreButton = null) => {
     searchButton.disabled = true; installButton.disabled = true;
-    status.textContent = "Contacting enabled catalogues…";
-    resultHost.innerHTML = '<div class="online-loading">Searching the Online Library…</div>';
+    if (moreButton) {
+      moreButton.disabled = true;
+      moreButton.textContent = "Checking the next catalogue page…";
+    }
+    status.textContent = append ? "Checking more catalogue entries for downloadable media…" : "Contacting enabled catalogues…";
+    if (!append) resultHost.innerHTML = '<div class="online-loading">Searching the Online Library…</div>';
     try {
       const parameters = new URLSearchParams({ q: modalContent.querySelector('[name="query"]').value, machine: requestedMachine || modalContent.querySelector('[name="machine"]').value, scope: modalContent.querySelector('[name="scope"]').value, path: pane.path });
       if (pane.slot !== null) parameters.set("slot", pane.slot);
+      if (append) parameters.set("cursor", JSON.stringify(resultContinuation));
       const data = await api(`/api/images/${pane.image.id}/catalog/search?${parameters}`);
       const collectionTitles = new Set();
       if (collectionCatalogue.available) {
@@ -5675,13 +5745,18 @@ async function showOnlineLibrary(index) {
           (await collectionCatalogue.list()).forEach(image => (image.titles || []).forEach(title => collectionTitles.add(title.key)));
         } catch (_error) { /* Online search remains usable if IndexedDB is unavailable. */ }
       }
-      resultItems = data.items.filter(item => item.downloadable).map(item => ({
+      const incoming = data.items.filter(item => item.downloadable).map(item => ({
         ...item,
         installed: item.installed || collectionTitles.has(window.AcornCollectionCatalogue.titleKey(item.title)),
       }));
-      resultFailures = data.failures;
+      resultItems = append
+        ? [...new Map([...resultItems, ...incoming].map(item => [item.id, item])).values()]
+        : incoming;
+      resultFailures = append ? [...resultFailures, ...data.failures] : data.failures;
+      resultContinuation = data.continuation || {};
+      resultHiddenInstalled = (append ? resultHiddenInstalled : 0) + Number(data.hiddenInstalled || 0);
       resultSort = { key: "title", direction: "asc" };
-      status.textContent = `${resultItems.length} result${resultItems.length === 1 ? "" : "s"}${data.failures.length ? ` · ${data.failures.length} source${data.failures.length === 1 ? "" : "s"} unavailable` : ""}`;
+      status.textContent = `${resultItems.length} verified downloadable result${resultItems.length === 1 ? "" : "s"}${resultHiddenInstalled ? ` · ${resultHiddenInstalled} installed result${resultHiddenInstalled === 1 ? "" : "s"} hidden` : ""}${Object.keys(resultContinuation).length ? " · more catalogue entries are available to check" : " · all matching catalogue entries checked"}${resultFailures.length ? ` · ${resultFailures.length} source${resultFailures.length === 1 ? "" : "s"} unavailable` : ""}`;
       renderOnlineResults();
     } catch (error) {
       status.textContent = "Search failed"; resultHost.innerHTML = `<div class="help-warning">${esc(error.message)}</div>`;
