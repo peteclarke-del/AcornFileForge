@@ -113,6 +113,27 @@ class FrontendAccessibilityTests(unittest.TestCase):
         self.assertIn('"online-library-install"', self.app)
         self.assertIn("requestCompatibilityReport", self.app)
 
+    def test_adfs_image_import_uses_its_specialised_planner_before_file_preflight(self):
+        start = self.app.index("async function addSelectedHostFiles")
+        end = self.app.index("async function addRomHostFiles", start)
+        implementation = self.app[start:end]
+        self.assertIn(
+            'preparedFiles.filter(item => !formats.isImportableImage(item.file.name))',
+            implementation,
+        )
+        self.assertIn(
+            'reviewHostImport(index, ordinaryFiles, "file-menu-file-import")',
+            implementation,
+        )
+
+    def test_online_library_supports_complete_paging_and_actionable_preflight(self):
+        self.assertIn("Find more downloadable results", self.app)
+        self.assertIn("planOnlineDirectories", self.app)
+        self.assertIn('existingDestination: pane.image.kind === "adfs" && !createDirectories', self.app)
+        self.assertIn("acceptedOnlineDirectoryNames.get(itemId)", self.app)
+        self.assertIn("Change selection or import options", self.app)
+        self.assertNotIn('"Resolve compatibility findings"', self.app)
+
     def test_idle_job_history_does_not_poll_the_server_every_three_seconds(self):
         self.assertNotIn("setInterval(refreshJobsBadge, 3000)", self.app)
         self.assertIn("nextRefresh = active ? 3000 : 30000", self.app)
