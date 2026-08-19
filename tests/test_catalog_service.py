@@ -11,6 +11,7 @@ from app.acorn_metadata import spark_metadata
 from app.catalog_service import CatalogueService, DEFAULT_SOURCES, archive_members
 from app.disk_service import DiskError
 from app.routes.catalog import (
+    _available_adfs_directory_name,
     _catalogue_identities,
     _preferred_disk_members,
     create_catalog_blueprint,
@@ -42,7 +43,7 @@ class CatalogueServiceTests(unittest.TestCase):
             & _catalogue_identities("REPTON-2 (Superior Software).ssd")
         )
 
-    @patch("app.routes.catalog.CatalogueService.search")
+    @patch("app.routes.catalog.CatalogueService.search_page")
     @patch("app.routes.catalog.parse_mmb_menu_data")
     @patch("app.routes.catalog.installed_mmb_menus")
     def test_missing_filter_reads_installed_mmb_menu_titles(self, menus, parse_menu, search):
@@ -52,7 +53,7 @@ class CatalogueServiceTests(unittest.TestCase):
         service.read_file.return_value = b"menu data"
         menus.return_value = [{"slot": 0, "type": "universal"}]
         parse_menu.return_value = [{"title": "Jetpac", "diskTitle": "JETPAC"}]
-        search.return_value = ([{"title": "Jetpac", "pageUrl": "https://example.test/jetpac", "downloadable": True}], [])
+        search.return_value = ([{"title": "Jetpac", "pageUrl": "https://example.test/jetpac", "downloadable": True}], [], {})
         app = Flask(__name__)
         app.register_blueprint(create_catalog_blueprint(service, self.temporary.name))
 
@@ -106,6 +107,50 @@ class CatalogueServiceTests(unittest.TestCase):
         self.assertEqual(rows[0]["title"], "Frak!")
         self.assertEqual(rows[0]["publisher"], "Aardvark")
         self.assertEqual(rows[0]["machines"], ["electron"])
+
+    def test_everygamegoing_marks_shared_bbc_electron_releases_for_both_families(self):
+        body = '''<td><a href="/litem/Qbix/456/">Qbix</a> (1st May 2010) (Retro Software)
+          (BBC/Electron, 5.25" Disc, English)</td>'''
+        rows = self.service._parse_item_rows(
+            source("everygamegoing"), body,
+            {"profile": {"label": "Acorn Electron", "machines": ["electron"]}},
+        )
+        self.assertEqual(rows[0]["machines"], ["bbc-b", "electron"])
+
+    def test_resolver_catalogues_return_continuation_without_claiming_unchecked_media(self):
+        configured = copy.deepcopy(source("everygamegoing"))
+        configured["options"]["resultValidationLimit"] = 2
+        candidates = [
+            {
+                "title": f"Game {number}", "publisher": "Publisher", "description": "",
+                "year": "", "downloadable": True, "resolver": "media-links",
+                "pageUrl": f"https://example.test/game/{number}", "downloadUrl": None,
+                "artifactType": "remote-item", "machines": ["electron"],
+            }
+            for number in range(5)
+        ]
+        self.service.sources = lambda: [configured]
+        self.service._load_catalogue = lambda *_args: [dict(row) for row in candidates]
+        self.service._resolve_row = lambda row: {**row, "downloadUrl": f"{row['pageUrl']}.ssd"}
+
+        first, failures, continuation = self.service.search_page("", "electron")
+        second, _, next_continuation = self.service.search_page("", "electron", cursors=continuation)
+
+        self.assertEqual([row["title"] for row in first], ["Game 0", "Game 1"])
+        self.assertEqual([row["title"] for row in second], ["Game 2", "Game 3"])
+        self.assertEqual(failures, [])
+        self.assertEqual(continuation, {"everygamegoing": 2})
+        self.assertEqual(next_continuation, {"everygamegoing": 4})
+
+    def test_online_adfs_directory_allocator_avoids_existing_truncated_names(self):
+        service = Mock()
+        service.list_directory.return_value = {
+            "entries": [{"name": "LONGTITLE"}, {"name": "LONGTITLE1"}],
+        }
+        name = _available_adfs_directory_name(
+            service, Mock(), "$.Games", "LONGTITLE",
+        )
+        self.assertEqual(name, "LONGTITLE2")
 
     def test_everygamegoing_urls_and_machine_ids_come_from_source_settings(self):
         configured = copy.deepcopy(source("everygamegoing"))
