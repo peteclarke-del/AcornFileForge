@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /build
 COPY requirements.txt .
 RUN python -m pip install --no-cache-dir --root=/python-install -r requirements.txt \
-    && PYTHONPATH=/python-install/usr/local/lib/python3.12/site-packages \
+    && PYTHONPATH="$(python -c 'import sysconfig; print("/python-install" + sysconfig.get_path("purelib"))')" \
        python -c "from capstone import CS_ARCH_ARM, CS_ARCH_M68K, CS_ARCH_MOS65XX, Cs; from oaknut.adfs import ADFS_D, ADFS_E, ADFS_E_PLUS, ADFS_F, ADFS_F_PLUS, ADFS_G, ADFS_G_PLUS; assert [item.label for item in (ADFS_D, ADFS_E, ADFS_E_PLUS, ADFS_F, ADFS_F_PLUS, ADFS_G, ADFS_G_PLUS)] == ['D', 'E', 'E+', 'F', 'F+', 'G', 'G+']; Cs(CS_ARCH_MOS65XX, 0); print('Staged Capstone ARM, M68K and MOS65XX support is available; released writable FileCore D/E/E+/F/F+/G/G+ support is available')"
 
 FROM debian:bookworm-slim AS hxc-builder
