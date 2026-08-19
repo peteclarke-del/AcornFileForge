@@ -6,13 +6,20 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ContainerDefinitionTests(unittest.TestCase):
+    @staticmethod
+    def _python_stages(dockerfile: str) -> tuple[int, int]:
+        builder = dockerfile.index(" AS python-deps")
+        builder = dockerfile.rfind("FROM python:", 0, builder)
+        runtime = dockerfile.rindex("FROM python:")
+        return builder, runtime
+
     def test_python_native_dependencies_are_built_outside_runtime_image(self):
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-        builder = dockerfile.index("FROM python:3.12-slim-trixie AS python-deps")
-        runtime = dockerfile.rindex("FROM python:3.12-slim-trixie")
+        builder, runtime = self._python_stages(dockerfile)
         self.assertLess(builder, runtime)
         self.assertIn("build-essential", dockerfile[builder:runtime])
         self.assertIn("--root=/python-install", dockerfile[builder:runtime])
+        self.assertIn('sysconfig.get_path("purelib")', dockerfile[builder:runtime])
         self.assertIn("Staged Capstone ARM, M68K and MOS65XX support is available", dockerfile[builder:runtime])
         self.assertIn("released writable FileCore D/E/E+/F/F+/G/G+ support is available", dockerfile[builder:runtime])
         runtime_definition = dockerfile[runtime:]
@@ -22,7 +29,7 @@ class ContainerDefinitionTests(unittest.TestCase):
 
     def test_runtime_dependencies_use_trixie_package_names(self):
         dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-        runtime = dockerfile.rindex("FROM python:3.12-slim-trixie")
+        _builder, runtime = self._python_stages(dockerfile)
         runtime_definition = dockerfile[runtime:]
         self.assertIn("liballegro4.4t64", runtime_definition)
         self.assertNotIn("liballegro4.4 ", runtime_definition)
