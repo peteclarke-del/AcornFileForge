@@ -2778,9 +2778,9 @@ components, firmware and user media retain separate terms. Review
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) before redistributing a source
 archive, container image or native package.
 
-- Python 3.12
+- Python 3.14 in the container, or a compatible Python 3 release for the native application
 - Flask 3.1
-- Gunicorn 23
+- Gunicorn 26
 - Oaknut Disc, ADFS and ROMFS 12.15.1, including writable FileCore
   S/M/L/D/E/E+/F/F+/G/G+ and hard-disk support
 - HxC Floppy Emulator command-line engine 2.16.15.2, compiled from a pinned

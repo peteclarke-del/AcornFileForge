@@ -8,8 +8,9 @@ packages stay in step.
 
 ## Requirements
 
-Use a current Debian or Ubuntu desktop with Python 3.12 or a compatible Python
-3 release. Install the native libraries first:
+Use a current Debian or Ubuntu desktop with a supported Python 3 release. The
+container currently uses Python 3.14, while the native installer uses the
+distribution-provided Python. Install the native libraries first:
 
 ```bash
 sudo apt update
