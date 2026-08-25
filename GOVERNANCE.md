@@ -86,7 +86,8 @@ not derive those settings from this document.
 
 ## Upstream and third-party material
 
-Oaknut, HxC, Elkulator, B-em, 1MHzWifi, MAME, noVNC, websockify, Greaseweazle
+Oaknut, HxCFloppyEmulator (HxCFE), Elkulator, B-em, 1MHzWifi, MAME, noVNC,
+websockify, Greaseweazle
 and system packages retain their upstream ownership and terms. Changes intended
 for an upstream project should remain reviewable and suitable for submission
 there. Third-party ROMs, disk images, tapes, credentials and private hardware

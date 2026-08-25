@@ -80,14 +80,27 @@ class DesktopPackagingTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn('cp -a "$project_root/app" "$project_root/desktop"', builder)
+        for shared_source in (
+            '"$project_root/acorn_greaseweazle"',
+            '"$project_root/app"',
+            '"$project_root/desktop"',
+        ):
+            self.assertIn(shared_source, builder)
         self.assertIn("linux-desktop-environment.sh", launcher)
         self.assertIn('PYTHONPATH="$project_root/vendor:$project_root', launcher)
+        self.assertIn('PATH="$project_root/native/bin:', launcher)
+        self.assertIn('LD_LIBRARY_PATH="$project_root/native/lib', launcher)
+        self.assertIn("tools/build-hxc-runtime.sh", builder)
         self.assertIn("dpkg-deb --build --root-owner-group", builder)
         self.assertNotIn("firmware", builder)
+        self.assertIn("ACORN_PACKAGE_REVISION", builder)
+        self.assertIn("ACORN_PACKAGE_TARGET", builder)
+        self.assertIn("X-Acorn-Target", builder)
 
     def test_debian_package_registers_desktop_mime_appstream_and_manual(self) -> None:
         builder = (ROOT / "tools/build-linux-package.sh").read_text(encoding="utf-8")
+        postinst = (ROOT / "packaging/linux/postinst").read_text(encoding="utf-8")
+        postrm = (ROOT / "packaging/linux/postrm").read_text(encoding="utf-8")
         metainfo = (
             ROOT / "packaging/linux/uk.co.acornfileforge.AcornFileForge.metainfo.xml"
         ).read_text(encoding="utf-8")
@@ -100,6 +113,9 @@ class DesktopPackagingTests(unittest.TestCase):
         ):
             self.assertIn(required, builder)
         self.assertIn("<id>uk.co.acornfileforge.AcornFileForge</id>", metainfo)
+        for maintainer_script in (postinst, postrm):
+            self.assertIn("gtk4-update-icon-cache", maintainer_script)
+            self.assertIn("gtk-update-icon-cache", maintainer_script)
 
     def test_debian_dependency_lock_contains_every_application_requirement(self) -> None:
         application = {
@@ -116,6 +132,25 @@ class DesktopPackagingTests(unittest.TestCase):
         }
 
         self.assertTrue(application.issubset(package_lock))
+
+    def test_stable_release_builds_debian_and_ubuntu_for_supported_architectures(self) -> None:
+        workflow = (ROOT / ".github/workflows/release.yml").read_text(
+            encoding="utf-8"
+        )
+        self.assertEqual("1.0.0", (ROOT / "VERSION").read_text(encoding="utf-8").strip())
+        for required in (
+            "debian:trixie-slim",
+            "ubuntu:24.04",
+            "linux/amd64",
+            "linux/arm64",
+            "linux/arm/v7",
+            "--verify-tag",
+            "SHA256SUMS",
+        ):
+            self.assertIn(required, workflow)
+        self.assertIn("tools/build-source-archive.sh", workflow)
+        self.assertIn('cd "$stage/opt/acorn-file-forge"', workflow)
+        self.assertTrue((ROOT / "docs/releases/1.0.0.md").is_file())
 
 
 if __name__ == "__main__":

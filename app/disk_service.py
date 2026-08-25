@@ -135,9 +135,42 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
             return "rom"
         return "unknown"
 
-    def identify_kind(self, path: Path) -> str:
-        result = self._run_json(["identify", "--as", "json", str(path)])
-        rows = result.get("reports", {}).get("candidates", {}).get("rows", [])
+    def identify_kind(self, path: Path, expected_kind: str | None = None) -> str:
+        """Identify media, constraining probes when its format is already known.
+
+        Oaknut's generic identifier deliberately asks every installed filing
+        system to inspect the entire image. That is appropriate for extensionless
+        media, but needlessly expensive for known ADFS, DFS and ROMFS images.
+        In particular, a ROMFS search may examine many possible offsets in a
+        hard-disc-sized file. Restricting that case still validates the bytes and
+        leaves the generic cascade available for ambiguous filenames.
+        """
+        expected_filesystems = {
+            "adfs": ("adfs", "afs"),
+            "dfs": ("acorn-dfs", "watford-dfs"),
+            "romfs": ("acorn-romfs",),
+        }.get(expected_kind or "")
+        if expected_filesystems:
+            try:
+                from oaknut.filesystem import create_filesystem, identify
+
+                filesystems = {
+                    name: create_filesystem(name) for name in expected_filesystems
+                }
+                candidates = identify(
+                    path,
+                    suffix_hint=path.suffix.lower(),
+                    filesystems=filesystems,
+                )
+                rows = [
+                    {"filesystem": candidate.filesystem}
+                    for candidate in candidates
+                ]
+            except Exception as exc:
+                raise DiskError(friendly_engine_error(str(exc))) from exc
+        else:
+            result = self._run_json(["identify", "--as", "json", str(path)])
+            rows = result.get("reports", {}).get("candidates", {}).get("rows", [])
         if not rows:
             raise DiskError(
                 "No supported Acorn filesystem was found in the uploaded bytes. "
@@ -333,7 +366,7 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
                     kind = "rom"
         if kind == "rom":
             try:
-                if self.identify_kind(path) == "romfs":
+                if self.identify_kind(path, "romfs") == "romfs":
                     kind = "romfs"
             except DiskError:
                 pass
@@ -388,7 +421,7 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
             if details["readOnly"]:
                 session.warnings.extend(details["warnings"])
         elif not identified:
-            detected_kind = self.identify_kind(path)
+            detected_kind = self.identify_kind(path, kind)
             if detected_kind != kind:
                 session.kind = detected_kind
         self._normalise_beebscsi_dat_size(session)
@@ -419,7 +452,19 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
         ])
         if not raw.is_file() or not raw.stat().st_size:
             raise DiskError("The HFE image did not contain a usable sector filesystem.")
-        kind = self.identify_kind(raw)
+        try:
+            kind = self.identify_kind(raw)
+        except DiskError as exc:
+            raise DiskError(
+                "HxCFE decoded the HFE track data, but the resulting sectors do not "
+                "contain a supported DFS or ADFS filesystem. The HFE container is "
+                "valid, but its contents cannot be browsed as an Acorn disk image."
+            ) from exc
+        if kind not in {"dfs", "adfs"}:
+            raise DiskError(
+                f"HxCFE decoded the HFE track data as {kind.upper()}, but only "
+                "DFS- and ADFS-formatted HFE floppy images are browseable."
+            )
         hfe_layout = (
             {163840: "ACORN_ADFS_160K", 327680: "ACORN_ADFM_320K", 655360: "ACORN_ADFL_640K"}.get(raw.stat().st_size)
             if kind == "adfs"

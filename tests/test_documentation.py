@@ -78,6 +78,22 @@ class DocumentationTests(unittest.TestCase):
             self.assertIn(required, guide)
         self.assertIn("Linux desktop edition", help_text)
 
+    def test_hxcfe_runtime_and_hfe_workflow_are_documented(self) -> None:
+        guide = (ROOT / "docs" / "HFE-HXC-GUIDE.md").read_text(encoding="utf-8")
+        help_text = (ROOT / "app" / "static" / "help.js").read_text(encoding="utf-8")
+        release = (ROOT / "docs" / "releases" / "1.0.0.md").read_text(
+            encoding="utf-8"
+        )
+        for required in (
+            "HxCFloppyEmulator",
+            "libhxcfe.so",
+            "libusbhxcfe.so",
+            "byte mismatch blocks the download",
+        ):
+            self.assertIn(required, guide)
+        self.assertIn("HxCFloppyEmulator command-line converter", help_text)
+        self.assertIn("bundled HxCFloppyEmulator", release)
+
     def test_published_dependency_versions_match_manifests(self) -> None:
         requirements = {}
         for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines():
