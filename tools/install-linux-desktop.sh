@@ -8,7 +8,8 @@ inherited_data_home=${XDG_DATA_HOME:-}
 data_home=$(acorn_host_data_home)
 host_data_dirs=${XDG_DATA_DIRS_VSCODE_SNAP_ORIG:-${XDG_DATA_DIRS:-/usr/local/share:/usr/share}}
 applications="$data_home/applications"
-icons="$data_home/icons/hicolor/scalable/apps"
+icon_theme="$data_home/icons/hicolor"
+icons="$icon_theme/scalable/apps"
 mime_packages="$data_home/mime/packages"
 desktop_file="$applications/uk.co.acornfileforge.AcornFileForge.desktop"
 launcher="$project_root/tools/acorn-file-forge-desktop"
@@ -44,8 +45,12 @@ if [ -e "$registered_launcher" ] && [ ! -L "$registered_launcher" ]; then
     exit 2
 fi
 ln -sfn "$launcher" "$registered_launcher"
+rm -f "$icons/uk.co.acornfileforge.AcornFileForge.svg"
 cp "$project_root/app/static/favicon.svg" \
-    "$icons/uk.co.acornfileforge.AcornFileForge.svg"
+    "$icons/acorn-file-forge.svg"
+cp -a "$project_root/packaging/linux/icons/." "$icon_theme/"
+find "$icon_theme" -path "*/apps/acorn-file-forge.png" \
+    -exec chmod 644 {} +
 cp "$project_root/packaging/linux/uk.co.acornfileforge.AcornFileForge.xml" \
     "$mime_packages/uk.co.acornfileforge.AcornFileForge.xml"
 sed \
@@ -55,7 +60,7 @@ sed \
     > "$desktop_file"
 chmod 755 "$launcher"
 chmod 644 "$desktop_file" \
-    "$icons/uk.co.acornfileforge.AcornFileForge.svg" \
+    "$icons/acorn-file-forge.svg" \
     "$mime_packages/uk.co.acornfileforge.AcornFileForge.xml"
 
 if command -v desktop-file-validate >/dev/null 2>&1; then
@@ -66,10 +71,12 @@ if command -v update-desktop-database >/dev/null 2>&1; then
     XDG_DATA_HOME="$data_home" XDG_DATA_DIRS="$host_data_dirs" \
         update-desktop-database "$applications"
 fi
-if command -v gtk4-update-icon-cache >/dev/null 2>&1; then
-    XDG_DATA_HOME="$data_home" XDG_DATA_DIRS="$host_data_dirs" \
-        gtk4-update-icon-cache -f -t "$data_home/icons/hicolor" >/dev/null 2>&1 || true
-fi
+for icon_cache_tool in gtk4-update-icon-cache gtk-update-icon-cache; do
+    if command -v "$icon_cache_tool" >/dev/null 2>&1; then
+        XDG_DATA_HOME="$data_home" XDG_DATA_DIRS="$host_data_dirs" \
+            "$icon_cache_tool" -f -t "$icon_theme" >/dev/null 2>&1 || true
+    fi
+done
 if command -v update-mime-database >/dev/null 2>&1; then
     XDG_DATA_HOME="$data_home" XDG_DATA_DIRS="$host_data_dirs" \
         update-mime-database "$data_home/mime"
@@ -81,6 +88,7 @@ case "$inherited_data_home" in
             rm -f \
                 "$inherited_data_home/applications/uk.co.acornfileforge.AcornFileForge.desktop" \
                 "$inherited_data_home/icons/hicolor/scalable/apps/uk.co.acornfileforge.AcornFileForge.svg" \
+                "$inherited_data_home/icons/hicolor/scalable/apps/acorn-file-forge.svg" \
                 "$inherited_data_home/mime/packages/uk.co.acornfileforge.AcornFileForge.xml"
         fi
         ;;

@@ -64,12 +64,15 @@ A release `.deb` installs the same desktop host without retaining a Git
 checkout or creating a per-checkout virtual environment:
 
 ```bash
-sudo apt install ./acorn-file-forge_1.0.1-1~deb13_amd64.deb
+sudo apt install ./acorn-file-forge_1.0.2-1~deb13_amd64.deb
 ```
 
 The package places the shared application in `/opt/acorn-file-forge` and the
 launcher at `/usr/bin/acorn-file-forge`. It registers the application menu,
-file associations, icon, AppStream metadata and `acorn-file-forge(1)` manual.
+file associations, scalable and fixed-size application icons, AppStream
+metadata and the `acorn-file-forge(1)` manual. The native window also publishes
+the same icon name to GTK, so GNOME, Ubuntu Dock and X11 window managers can
+associate a running window with its application-menu entry.
 Pinned Python dependencies are included in an architecture-specific vendor
 directory. The package also carries an architecture-native
 HxCFloppyEmulator command-line converter (`hxcfe`) and its private libraries,
@@ -242,3 +245,9 @@ The application entry is
 `desktop-file-validate` should report no errors for it. A checkout may live in
 a path containing spaces because the desktop entry calls the stable launcher
 under `~/.local/bin`, not the checkout path directly.
+
+If the menu entry appears without its Acorn File Forge icon after upgrading an
+older checkout installation, remove that checkout entry with
+`tools/uninstall-linux-desktop.sh` before reinstalling the release package.
+Release packages install 48, 64, 128 and 256 pixel PNG fallbacks as well as the
+scalable SVG, then rebuild both GTK icon caches during package configuration.

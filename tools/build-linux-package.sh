@@ -49,7 +49,8 @@ mkdir -p \
     "$stage/usr/share/icons/hicolor/scalable/apps" \
     "$stage/usr/share/man/man1" \
     "$stage/usr/share/metainfo" \
-    "$stage/usr/share/mime/packages"
+    "$stage/usr/share/mime/packages" \
+    "$stage/usr/share/pixmaps"
 
 cp -a \
     "$project_root/acorn_greaseweazle" \
@@ -89,7 +90,11 @@ sed \
     "$project_root/packaging/linux/uk.co.acornfileforge.AcornFileForge.desktop.in" \
     > "$stage/usr/share/applications/uk.co.acornfileforge.AcornFileForge.desktop"
 cp "$project_root/app/static/favicon.svg" \
-    "$stage/usr/share/icons/hicolor/scalable/apps/uk.co.acornfileforge.AcornFileForge.svg"
+    "$stage/usr/share/icons/hicolor/scalable/apps/acorn-file-forge.svg"
+cp -a "$project_root/packaging/linux/icons/." \
+    "$stage/usr/share/icons/hicolor/"
+cp "$project_root/packaging/linux/icons/256x256/apps/acorn-file-forge.png" \
+    "$stage/usr/share/pixmaps/acorn-file-forge.png"
 cp "$project_root/packaging/linux/uk.co.acornfileforge.AcornFileForge.xml" \
     "$stage/usr/share/mime/packages/"
 cp "$project_root/packaging/linux/uk.co.acornfileforge.AcornFileForge.metainfo.xml" \

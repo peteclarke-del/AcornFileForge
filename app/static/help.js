@@ -99,7 +99,7 @@ function showHelp() {
             <div class="help-task">
               <h4>Install and launch</h4>
               <ol>
-                <li>Stable releases provide separate Debian 13 and Ubuntu 24.04 packages for AMD64, ARM64 and ARMv7. Install the matching <code>.deb</code> with APT, for example <code>sudo apt install ./acorn-file-forge_1.0.1-1~deb13_amd64.deb</code>. APT installs the required Python 3, GTK 4, Libadwaita, WebKitGTK 6 and GObject packages.</li>
+                <li>Stable releases provide separate Debian 13 and Ubuntu 24.04 packages for AMD64, ARM64 and ARMv7. Install the matching <code>.deb</code> with APT, for example <code>sudo apt install ./acorn-file-forge_1.0.2-1~deb13_amd64.deb</code>. APT installs the required Python 3, GTK 4, Libadwaita, WebKitGTK 6 and GObject packages.</li>
                 <li>For development from a project checkout, install those system packages and run <code>tools/install-linux-desktop.sh</code> instead.</li>
                 <li>Launch <strong>Acorn File Forge</strong> from the application menu. The package command is <code>acorn-file-forge</code>; a checkout uses <code>tools/acorn-file-forge-desktop</code>.</li>
                 <li>Use the native folder button, <strong>File → Open image</strong> in a pane or <kbd>Ctrl</kbd>+<kbd>O</kbd> to select one or several images with the GTK chooser. You can also drag image files from the Linux file manager onto a pane. Native selection and drag and drop pass local paths to the private desktop service, so image bytes are not uploaded through the embedded browser.</li>
@@ -1061,7 +1061,7 @@ function showHelp() {
               <dt>Not enough space</dt><dd>Delete unwanted data, compact the filesystem, or create a larger destination. DFS also has a 31-file catalogue limit.</dd>
               <dt>DSD will not insert</dt><dd>Choose a starting position with two adjacent empty MMB slots.</dd>
               <dt>HFE is read-only</dt><dd>The image uses HFE v2/v3, reports bad sectors, or contains track features the sector editor cannot reproduce safely. Export its files or copy its readable sectors to another image.</dd>
-              <dt>HxCFE is reported missing</dt><dd>Official Docker images and native 1.0.1 packages include HxCFE and its supporting libraries. Reinstall the package matching the host distribution and architecture if <code>/opt/acorn-file-forge/native/bin/hxcfe</code> is absent. A source checkout receives HxCFE when its Docker image or native package is built.</dd>
+              <dt>HxCFE is reported missing</dt><dd>Official Docker images and native 1.0.2 packages include HxCFE and its supporting libraries. Reinstall the package matching the host distribution and architecture if <code>/opt/acorn-file-forge/native/bin/hxcfe</code> is absent. A source checkout receives HxCFE when its Docker image or native package is built.</dd>
               <dt>A FileCore image cannot be opened</dt><dd>Confirm it is a raw ADFS/FileCore image or a supported HDF/HD4 layout rather than a compressed archive or track dump. The Docker build pins Oaknut 12.15.1 and needs no local patch. The detailed error distinguishes an unrecognised filesystem from a corrupt map or directory.</dd>
               <dt>Name collision found</dt><dd>Use the default DISC-0000 naming strategy, or review every highlighted name. The check is case-insensitive and scoped to each destination parent.</dd>
               <dt>Empty disk found</dt><dd>Choose Skip and continue or Abort. Blank disks can be stored in MMB, but do not become empty ADFS directories.</dd>

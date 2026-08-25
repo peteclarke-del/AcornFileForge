@@ -158,8 +158,10 @@ def run(argv: list[str] | None = None) -> int:
         def do_activate(self) -> None:
             if self.window is None:
                 server.start()
+                Gtk.Window.set_default_icon_name("acorn-file-forge")
                 self.window = Adw.ApplicationWindow(application=self)
                 self.window.set_title("Acorn File Forge")
+                self.window.set_icon_name("acorn-file-forge")
                 self.window.set_default_size(1440, 900)
                 self.style_manager = Adw.StyleManager.get_default()
                 self.style_manager.connect(
