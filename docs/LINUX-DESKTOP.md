@@ -64,7 +64,7 @@ A release `.deb` installs the same desktop host without retaining a Git
 checkout or creating a per-checkout virtual environment:
 
 ```bash
-sudo apt install ./acorn-file-forge_1.0.0-1~deb13_amd64.deb
+sudo apt install ./acorn-file-forge_1.0.1-1~deb13_amd64.deb
 ```
 
 The package places the shared application in `/opt/acorn-file-forge` and the

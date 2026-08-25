@@ -71,7 +71,7 @@ Release builds also provide a native-architecture Debian package. Install it
 on the Debian or Ubuntu release for which it was built:
 
 ```bash
-sudo apt install ./acorn-file-forge_1.0.0-1~deb13_amd64.deb
+sudo apt install ./acorn-file-forge_1.0.1-1~deb13_amd64.deb
 acorn-file-forge
 ```
 
@@ -131,7 +131,7 @@ they will not be committed or packaged.
 
 ## Current status
 
-The current stable release is `1.0.0`. It provides the editing and
+The current stable release is `1.0.1`. It provides the editing and
 transfer workflows described in this guide, including movable, resizable and
 stackable panes, undo and named checkpoints, owner-isolated recovery,
 background job tracking, MMB and ADFS menu maintenance, HFE handling, an Online
@@ -2840,7 +2840,7 @@ curl http://localhost:8666/api/health
 A healthy response looks like:
 
 ```json
-{"engine":"oaknut","status":"ok","version":"1.0.0"}
+{"engine":"oaknut","status":"ok","version":"1.0.1"}
 ```
 
 ## Main dependencies
