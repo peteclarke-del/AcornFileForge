@@ -87,6 +87,21 @@ Batch imports apply that decision separately to every file. **Apply to all
 remaining** accepts each file's own detected values and does not reuse the
 first file's addresses across the batch.
 
+## Target filenames
+
+The import planner and the write API use one filename policy. DFS leaf names
+allow seven Latin-1 characters. MMB disk titles allow twelve. ROMFS leaves
+allow ten. ADFS uses the limit reported by the actual destination directory,
+normally ten characters or up to 255 for a FileCore Big directory.
+
+Names cannot begin or end with whitespace and cannot contain control or path
+syntax characters. DFS, MMB, ADFS and ROMFS targets must be representable in
+Latin-1. Before a cross-format write, the compatibility review shows every
+NFKC normalisation, unsupported-character replacement and truncation. It then
+checks case-insensitive collisions within each destination parent. The same
+leaf in two different directories is valid. MMB slot titles may also repeat
+because the slot number, rather than the title, identifies the disk.
+
 ## `.inf` sidecars and downloads
 
 The download arrow beside a file creates a ZIP containing the byte stream and

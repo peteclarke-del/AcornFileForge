@@ -10,15 +10,21 @@ copyright holder.
 
 | Component | Version in this repository | Licence | Project |
 | --- | --- | --- | --- |
-| Flask | 3.1.1 | BSD-3-Clause | <https://github.com/pallets/flask> |
-| Gunicorn | 23.0.0 | MIT | <https://github.com/benoitc/gunicorn> |
+| Flask | 3.1.3 | BSD-3-Clause | <https://github.com/pallets/flask> |
+| Gunicorn | 26.0.0 | MIT | <https://github.com/benoitc/gunicorn> |
 | Oaknut Disc, ADFS and ROMFS | 12.15.1 | MIT | <https://github.com/john-tornblom/oaknut> |
 | Capstone | 5.0.9 | BSD-3-Clause | <https://github.com/capstone-engine/capstone> |
-| Playwright | 1.58.2, development and browser tests | Apache-2.0 | <https://github.com/microsoft/playwright> |
+| Playwright | 1.62.1, development and browser tests | Apache-2.0 | <https://github.com/microsoft/playwright> |
 
 Transitive Python and Node packages retain their own terms. The authoritative
 installed inventory is produced by `python -m pip list` and `npm ls`; package
 metadata and licence files should be retained by a binary distributor.
+
+The native Debian package vendors the pinned Python dependency set under
+`/opt/acorn-file-forge/vendor`. GTK, Libadwaita, WebKitGTK, PyGObject and
+desktop integration tools remain distribution packages and keep their system
+copyright records. The package builder excludes the repository firmware tree,
+samples, working images and Git metadata.
 
 ## Source-built and runtime tools
 

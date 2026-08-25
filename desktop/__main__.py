@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import queue
 import sys
 import threading
 import urllib.error
@@ -11,11 +12,13 @@ import urllib.request
 from pathlib import Path
 
 from app.image_opening import IMAGE_EXTENSIONS
+from app.rom_components import MAX_ROM_COMPONENTS
 
 from .runtime import DesktopServer
 
 
 NATIVE_OPEN_EXTENSIONS = IMAGE_EXTENSIONS | {".dsc", ".zip"}
+MAX_NATIVE_OPEN_PLANS = 256
 
 
 def _arguments(argv: list[str]) -> argparse.Namespace:
@@ -56,6 +59,41 @@ def _paired_selection(paths: list[Path]) -> list[Path]:
     ]
 
 
+def _review_open_plans(message: str) -> list[dict]:
+    """Validate one frontend message before any native work is queued."""
+    data = json.loads(message)
+    plans = data.get("plans")
+    if data.get("command") != "open-plans" or not isinstance(plans, list):
+        return []
+    if not plans or len(plans) > MAX_NATIVE_OPEN_PLANS:
+        raise ValueError(
+            f"Choose between 1 and {MAX_NATIVE_OPEN_PLANS} images at a time."
+        )
+    reviewed = []
+    for plan in plans:
+        if not isinstance(plan, dict) or not isinstance(plan.get("paths"), list):
+            raise ValueError("The native open plan is incomplete.")
+        if len(plan["paths"]) > MAX_ROM_COMPONENTS:
+            raise ValueError(
+                f"A ROM set cannot contain more than {MAX_ROM_COMPONENTS} components."
+            )
+        if any(not isinstance(value, str) or not value for value in plan["paths"]):
+            raise ValueError("The native open plan contains an invalid path.")
+        try:
+            paths = [
+                Path(value).expanduser().resolve(strict=True)
+                for value in plan["paths"]
+            ]
+        except OSError as exc:
+            raise ValueError(
+                "A selected native image is no longer available."
+            ) from exc
+        if not paths or any(not path.is_file() for path in paths):
+            raise ValueError("A selected native image is no longer available.")
+        reviewed.append({**plan, "paths": paths})
+    return reviewed
+
+
 def run(argv: list[str] | None = None) -> int:
     args = _arguments(list(argv if argv is not None else sys.argv[1:]))
     try:
@@ -78,6 +116,9 @@ def run(argv: list[str] | None = None) -> int:
             self.style_manager = None
             self.loaded = False
             self.pending_paths = []
+            self.open_queue: queue.Queue[dict | None] = queue.Queue()
+            self.open_worker: threading.Thread | None = None
+            self.stopping = False
             # Retain each native dialog until its response. Keeping only its
             # numeric id lets the PyGObject wrapper be finalised while GTK or
             # the desktop portal still owns the visible chooser.
@@ -164,14 +205,22 @@ def run(argv: list[str] | None = None) -> int:
 
         def _desktop_message(self, _manager, result) -> None:
             message = result.get_js_value().to_string()
-            if not message.startswith("open-images"):
+            if message == "open-images" or message.startswith("open-images:"):
+                _command, separator, pane_value = message.partition(":")
+                try:
+                    preferred_pane = int(pane_value) if separator else None
+                except ValueError:
+                    preferred_pane = None
+                self._choose_images(None, None, preferred_pane)
                 return
-            _command, separator, pane_value = message.partition(":")
             try:
-                preferred_pane = int(pane_value) if separator else None
-            except ValueError:
-                preferred_pane = None
-            self._choose_images(None, None, preferred_pane)
+                reviewed = _review_open_plans(message)
+                for plan in reviewed:
+                    self.open_queue.put(plan)
+                if reviewed:
+                    self._start_open_worker()
+            except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                GLib.idle_add(self._deliver_error, "the selected image", str(exc))
 
         def _navigation_policy(self, _view, decision, decision_type) -> bool:
             if decision_type not in (
@@ -188,12 +237,11 @@ def run(argv: list[str] | None = None) -> int:
             return True
 
         def do_open(self, files, _count, _hint) -> None:
-            self.pending_paths.extend(
-                (path, None)
-                for path in _paired_selection(
-                    [Path(item.get_path()) for item in files if item.get_path()]
-                )
+            paths = _paired_selection(
+                [Path(item.get_path()) for item in files if item.get_path()]
             )
+            if paths:
+                self.pending_paths.append((paths, None))
             self.activate()
             self._drain_paths()
 
@@ -262,10 +310,7 @@ def run(argv: list[str] | None = None) -> int:
                         "Choose a file stored on a mounted local or network filesystem."
                     )
                 preferred = self.chooser_targets.get(chooser)
-                self.pending_paths.extend(
-                    (path, preferred if index == 0 else None)
-                    for index, path in enumerate(_paired_selection(paths))
-                )
+                self.pending_paths.append((_paired_selection(paths), preferred))
                 self._drain_paths()
             except Exception as exc:
                 GLib.idle_add(
@@ -326,10 +371,7 @@ def run(argv: list[str] | None = None) -> int:
                     f"Could not resolve the pane under a native file drop: {exc}",
                     file=sys.stderr,
                 )
-            self.pending_paths.extend(
-                (path, preferred_pane if index == 0 else None)
-                for index, path in enumerate(paths)
-            )
+            self.pending_paths.append((paths, preferred_pane))
             self._drain_paths()
 
         def _evaluate_frontend(self, script: str) -> None:
@@ -354,21 +396,42 @@ def run(argv: list[str] | None = None) -> int:
         def _drain_paths(self) -> None:
             if not self.loaded or not self.pending_paths:
                 return
-            paths, self.pending_paths = self.pending_paths, []
-            threading.Thread(
-                target=self._open_paths,
-                args=(paths,),
+            selections, self.pending_paths = self.pending_paths, []
+            for paths, preferred_pane in selections:
+                GLib.idle_add(self._deliver_selection, paths, preferred_pane)
+
+        def _start_open_worker(self) -> None:
+            if self.stopping or (self.open_worker and self.open_worker.is_alive()):
+                return
+            self.open_worker = threading.Thread(
+                target=self._open_plans,
                 name="acorn-file-forge-desktop-open",
                 daemon=True,
-            ).start()
+            )
+            self.open_worker.start()
 
-        def _open_paths(self, paths: list[tuple[Path, int | None]]) -> None:
-            for path, preferred_pane in paths:
+        def _open_plans(self) -> None:
+            while not self.stopping:
+                plan = self.open_queue.get()
+                if plan is None:
+                    self.open_queue.task_done()
+                    return
+                display_name = "the selected image"
                 try:
-                    GLib.idle_add(self._deliver_opening, path.name, preferred_pane)
+                    paths = plan["paths"]
+                    display_name = paths[0].name
+                    preferred_pane = plan.get("preferredPane")
+                    GLib.idle_add(self._deliver_opening, display_name, preferred_pane)
+                    body = {
+                        "path": str(paths[0]),
+                        "componentPaths": [str(path) for path in paths],
+                        "targetHardware": plan.get("targetHardware") or "auto",
+                        "forceKind": plan.get("forceKind") or "",
+                        "rom": plan.get("rom") if isinstance(plan.get("rom"), dict) else {},
+                    }
                     request = urllib.request.Request(
                         f"http://127.0.0.1:{server.port}/api/desktop/open-path",
-                        data=json.dumps({"path": str(path)}).encode("utf-8"),
+                        data=json.dumps(body).encode("utf-8"),
                         headers={
                             "Content-Type": "application/json",
                             "X-Acorn-Desktop-Token": server.token,
@@ -386,9 +449,25 @@ def run(argv: list[str] | None = None) -> int:
                         message = str(exc.reason or exc)
                     finally:
                         exc.close()
-                    GLib.idle_add(self._deliver_error, path.name, message)
-                except (OSError, ValueError, urllib.error.URLError) as exc:
-                    GLib.idle_add(self._deliver_error, path.name, str(exc))
+                    GLib.idle_add(self._deliver_error, display_name, message)
+                except (KeyError, OSError, TypeError, ValueError, urllib.error.URLError) as exc:
+                    GLib.idle_add(self._deliver_error, display_name, str(exc))
+                finally:
+                    self.open_queue.task_done()
+
+        def _deliver_selection(self, paths: list[Path], preferred_pane: int | None) -> bool:
+            try:
+                rows = [
+                    {"path": str(path), "name": path.name, "size": path.stat().st_size}
+                    for path in paths
+                ]
+            except OSError as exc:
+                return self._deliver_error("the selected image", str(exc))
+            self._evaluate_frontend(
+                "window.AcornDesktopHost.reviewSelection("
+                f"{json.dumps(rows)}, {json.dumps(preferred_pane)});"
+            )
+            return GLib.SOURCE_REMOVE
 
         def _deliver_opening(self, name: str, preferred_pane: int | None) -> bool:
             script = (
@@ -414,11 +493,21 @@ def run(argv: list[str] | None = None) -> int:
             self._evaluate_frontend(script)
             return GLib.SOURCE_REMOVE
 
+        def _stop_workers(self) -> None:
+            if self.stopping:
+                return
+            self.stopping = True
+            self.open_queue.put(None)
+            if self.open_worker and self.open_worker is not threading.current_thread():
+                self.open_worker.join(timeout=5)
+
         def _closing(self, _window) -> bool:
+            self._stop_workers()
             server.stop()
             return False
 
         def do_shutdown(self) -> None:
+            self._stop_workers()
             server.stop()
             Adw.Application.do_shutdown(self)
 

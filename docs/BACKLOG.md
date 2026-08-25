@@ -154,14 +154,15 @@ project documentation. An unchecked item remains in scope.
       likely title variants and duplicate games across differently named disks.
 - [x] Filter Online Library results against remembered distributions, disk
       titles and installed menu entries.
-- [x] Maintain a browser-private catalogue of owned images, titles, publishers,
+- [x] Maintain a host-private catalogue of owned images, titles, publishers,
       target machines, hashes, menu entries and user-supplied locations.
 - [x] Refresh the catalogue incrementally after edits and invalidate stale
       records using the exact image revision fingerprint.
 - [x] Produce collection, duplicate, variant and missing-title reports across
       images that are not currently open.
 - [x] Add explicit export, import, backup and clear controls for the private
-      catalogue without exposing one browser owner's records to another.
+      catalogue without exposing one web profile's or Linux user's records to
+      another.
 
 ## 10. Hardware deployment assistant
 
@@ -201,6 +202,10 @@ project documentation. An unchecked item remains in scope.
       port with XDG working storage.
 - [x] Open registered Acorn image types through a native multi-file chooser
       and a desktop-only, authenticated local-path adapter.
+- [x] Review native selections through the shared frontend, including target
+      hardware and multi-chip ROM layout, then execute open plans serially.
+- [x] Separate the per-launch authentication token from a stable private owner
+      and retain workspace settings and collection data in XDG configuration.
 - [x] Keep browser and desktop behaviour under an explicit route, capability,
       documentation and test contract.
 - [x] Launch managed emulators on the native display while retaining noVNC for

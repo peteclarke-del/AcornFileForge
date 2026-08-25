@@ -1,13 +1,56 @@
 # Installing and operating Acorn File Forge
 
-Acorn File Forge is distributed as a Docker application. The repository builds
-the web service, filesystem tools, conversion tools and managed emulators into
-one image. The supported build targets are `linux/amd64`, `linux/arm64` and
-32-bit `linux/arm/v7`.
+Acorn File Forge is distributed as a Docker application and as a native Debian
+package. The repository builds the web service, filesystem tools, conversion
+tools and managed emulators into one container image. The supported container
+targets are `linux/amd64`, `linux/arm64` and 32-bit `linux/arm/v7`.
 
 A native GTK 4 host is also available for Linux. It shares the complete Flask
 application and frontend rather than maintaining a separate editor. See the
 [Linux desktop guide](LINUX-DESKTOP.md) for its system packages and installer.
+
+## Install a Debian package
+
+The release page can provide one `.deb` for each built architecture. A package
+must be built on the Debian or Ubuntu release it targets because Capstone and
+other native Python extensions use that distribution's Python ABI. Current
+Debian 13 and Ubuntu 24.04 or later provide the required GTK 4, Libadwaita and
+WebKit 6 packages.
+
+Install a downloaded package with APT so its system dependencies are resolved:
+
+```bash
+sudo apt install ./acorn-file-forge_VERSION_ARCH.deb
+```
+
+Launch **Acorn File Forge** from the application menu, open an associated image
+from the file manager, or run `acorn-file-forge`. Upgrade by installing the new
+package over the old one. Remove the program with:
+
+```bash
+sudo apt remove acorn-file-forge
+```
+
+Removal leaves working images and preferences in the user's XDG data and
+configuration directories. Delete those only after saving all required work.
+The package contains the shared application, pinned Python dependencies,
+desktop entry, MIME definitions, icon, AppStream metadata, manual page and
+handbook. Acorn firmware, commercial software and optional emulators are not
+bundled.
+
+To build the native package on the current machine:
+
+```bash
+sudo apt install -y python3 python3-pip dpkg-dev desktop-file-utils appstream
+tools/build-linux-package.sh
+```
+
+The result is written to `dist/`. The build downloads the complete dependency
+set pinned in `packaging/linux/requirements-debian.txt`, so release builders
+should use a controlled network or an approved Python package mirror.
+`tools/build-release.sh` requires a clean Git tree and writes the source
+archive, architecture-specific `.deb` and `SHA256SUMS`. Run it separately on
+every supported package architecture and distribution release.
 
 Return to the [documentation index](README.md) for media, editor, ROM, firmware
 and release references.
@@ -62,6 +105,9 @@ approved equivalent setup.
 Systems which still use the old standalone Compose program can substitute
 `docker-compose` for `docker compose`. The repository file is named
 `docker-compose.yml` and both commands read it from the project directory.
+Compose v2 is preferred. Legacy Compose 1.29 can fail while recreating a
+stopped container with `KeyError: 'ContainerConfig'`; the image and named work
+volume are not the cause.
 
 ## Install on Raspberry Pi
 
@@ -292,6 +338,21 @@ Older builds moved an architecture-tagged wheel between incompatible Python
 stages. The current Dockerfile copies a verified staged native installation.
 Pull the current branch and rebuild. If the message remains, include the
 `python-deps` stage above it in the report.
+
+### `KeyError: 'ContainerConfig'` from legacy Compose
+
+This is a known legacy Compose recreation failure. Confirm the named work
+volume before touching the stale container:
+
+```bash
+docker volume inspect acorn-file-forge-work
+docker ps -a --filter name=acorn-file-forge
+```
+
+Remove only the stopped `acorn-file-forge` service container, install the
+Compose v2 plugin, then run `docker compose up -d` again. Do not use
+`docker compose down -v`: `-v` deletes the volume containing recoverable
+working sessions.
 
 ### Build appears to stop for a long time
 

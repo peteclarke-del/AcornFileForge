@@ -122,7 +122,11 @@ class FrontendAccessibilityTests(unittest.TestCase):
             implementation,
         )
         self.assertIn(
-            'reviewHostImport(index, ordinaryFiles, "file-menu-file-import")',
+            '"file-menu-file-import",',
+            implementation,
+        )
+        self.assertIn(
+            'pane.image?.kind === "mmb" && pane.slot === null ? "disk image" : "file"',
             implementation,
         )
 

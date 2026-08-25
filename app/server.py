@@ -8,6 +8,7 @@ from pathlib import Path
 from flask import Flask, g, jsonify, request
 
 from .disk_service import SESSION_OWNER, DiskError, DiskService
+from .desktop_state import DesktopClientState
 from .operations import OperationRegistry
 from .routes.files import create_files_blueprint
 from .routes.hex_editor import create_hex_editor_blueprint
@@ -32,31 +33,21 @@ def create_app(
     work_dir: Path | str | None = None,
     platform: str = "web",
     desktop_token: str | None = None,
+    desktop_owner: str | None = None,
+    desktop_state_path: Path | str | None = None,
 ) -> Flask:
     application = Flask(__name__, static_folder="static", static_url_path="")
     runtime = platform_runtime(platform, desktop_token)
+    if runtime.kind == "desktop" and not re.fullmatch(
+        r"[A-Za-z0-9_-]{32,64}", desktop_owner or ""
+    ):
+        raise ValueError("The desktop host requires a stable private owner identity.")
     active_work_dir = Path(work_dir) if work_dir is not None else WORK_DIR
     max_upload_gib = max(1, int(os.environ.get("ACORN_MAX_UPLOAD_GIB", "8")))
     application.config["MAX_CONTENT_LENGTH"] = max_upload_gib * 1024 * 1024 * 1024
     application.config["ACORN_PLATFORM"] = runtime.public_contract()
     service = DiskService(active_work_dir)
     operations = OperationRegistry(active_work_dir / "operations.json")
-
-    @application.before_request
-    def establish_browser_owner():
-        cookie_owner = request.cookies.get("acorn_file_forge_owner", "")
-        browser_owner = request.headers.get("X-Acorn-Session-Owner", "")
-        if runtime.kind == "desktop":
-            owner_id = runtime.desktop_token or ""
-        elif re.fullmatch(r"[A-Za-z0-9_-]{32,64}", browser_owner):
-            owner_id = browser_owner
-        else:
-            owner_id = cookie_owner
-        if not re.fullmatch(r"[A-Za-z0-9_-]{32,64}", owner_id):
-            owner_id = secrets.token_urlsafe(32)
-        g.set_owner_cookie = cookie_owner != owner_id
-        g.session_owner_token = SESSION_OWNER.set(owner_id)
-        g.session_owner_id = owner_id
 
     @application.before_request
     def authenticate_desktop_host():
@@ -73,6 +64,22 @@ def create_app(
             runtime.desktop_token or "",
         )
         return None
+
+    @application.before_request
+    def establish_browser_owner():
+        cookie_owner = request.cookies.get("acorn_file_forge_owner", "")
+        browser_owner = request.headers.get("X-Acorn-Session-Owner", "")
+        if runtime.kind == "desktop":
+            owner_id = desktop_owner or ""
+        elif re.fullmatch(r"[A-Za-z0-9_-]{32,64}", browser_owner):
+            owner_id = browser_owner
+        else:
+            owner_id = cookie_owner
+        if not re.fullmatch(r"[A-Za-z0-9_-]{32,64}", owner_id):
+            owner_id = secrets.token_urlsafe(32)
+        g.set_owner_cookie = cookie_owner != owner_id
+        g.session_owner_token = SESSION_OWNER.set(owner_id)
+        g.session_owner_id = owner_id
 
     @application.before_request
     def checkpoint_image_mutation():
@@ -123,7 +130,10 @@ def create_app(
         create_menus_blueprint(service, MENU_TEMPLATE_DIR)
     )
     if runtime.kind == "desktop":
-        application.register_blueprint(create_desktop_blueprint(service, operations))
+        state_path = Path(desktop_state_path) if desktop_state_path else active_work_dir / "client-state.json"
+        application.register_blueprint(
+            create_desktop_blueprint(service, operations, DesktopClientState(state_path))
+        )
 
     @application.errorhandler(DiskError)
     def disk_error(error):
@@ -145,7 +155,9 @@ def create_app(
                     service.finish_automatic_checkpoint(checkpoint_session, checkpoint_token)
             except Exception:
                 application.logger.exception("Could not finalise the automatic image checkpoint")
-        response.headers["X-Acorn-Session-Owner"] = g.session_owner_id
+        owner_id = getattr(g, "session_owner_id", "")
+        if owner_id:
+            response.headers["X-Acorn-Session-Owner"] = owner_id
         # These controls apply equally to the browser and the private desktop
         # WebKit host. The noVNC viewer is the only intentional cross-origin
         # frame: it uses the current host on its dedicated port 8668.
@@ -165,10 +177,10 @@ def create_app(
             "frame-src 'self' http://*:8668 https://*:8668; "
             "worker-src 'self' blob:",
         )
-        if getattr(g, "set_owner_cookie", False):
+        if owner_id and getattr(g, "set_owner_cookie", False):
             response.set_cookie(
                 "acorn_file_forge_owner",
-                g.session_owner_id,
+                owner_id,
                 max_age=365 * 24 * 60 * 60,
                 httponly=True,
                 samesite="Strict",
@@ -191,8 +203,5 @@ def create_app(
     return application
 
 
-app = create_app()
-
-
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8666, threaded=True)
+    create_app().run(host="0.0.0.0", port=8666, threaded=True)

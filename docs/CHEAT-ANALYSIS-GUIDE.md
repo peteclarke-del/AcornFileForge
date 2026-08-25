@@ -116,8 +116,10 @@ named but different release. It does not prove that the tester's observations
 were correctly interpreted, which is why target-hardware retesting remains
 part of the workflow.
 
-Validated records are also retained in a browser-private library. The library
-contains metadata and replacement bytes, not disk images. It is capped at 500
+Validated records are also retained in a host-private library. The web edition
+uses origin-scoped browser storage; the Linux desktop edition uses its private
+XDG client-state file. The library contains metadata and replacement bytes,
+not disk images. It is capped at 500
 entries, can export individual records and can be cleared independently. An
 entry can only apply when the current file has the exact recorded hash and
 guarded bytes. Titles are descriptive only and never participate in matching.

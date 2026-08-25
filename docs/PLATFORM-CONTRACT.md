@@ -12,8 +12,9 @@ logic.
 
 ## Required boundaries
 
-1. `app/server.py:create_app` is the only application composition root. Both
-   hosts create the application through that factory.
+1. `app/server.py:create_app` is the only application factory. `app/wsgi.py`
+   is the deliberately small WSGI composition root for Gunicorn, and the
+   desktop runtime invokes the same factory with its native adapters.
 2. `app/static/` is the only product frontend. The desktop package embeds it
    with WebKitGTK and must not carry a copied HTML, CSS or JavaScript tree.
 3. Image opening, editing, validation, conversion, menus, metadata, recipes,
@@ -50,11 +51,16 @@ appears on only one. It also verifies that both hosts serve the same static
 tree. These checks prevent accidental drift, but they do not replace a manual
 desktop smoke test for native file selection, downloading and emulator windows.
 
-Platform contract version 4 records native file-manager drag and drop as an
-explicit desktop adapter. Image parsing, DAT/DSC pairing, private working-copy
-creation and every operation after opening remain shared. Hardware deployment
-continues to use the same target planner, isolated snapshot, ZIP builder and
-workbench interface in both hosts.
+Platform contract version 5 records native file-manager drag and drop, reviewed
+local-path opening and durable WebView state as explicit desktop adapters.
+Selections from the GTK chooser, file associations and file-manager drops are
+presented to the shared frontend before opening. The user can review ADFS target
+hardware, distinguish independent ROMs from a physical component set and choose
+linear or byte-interleaved ROM layout where valid. The native host then executes
+those reviewed plans serially. Image parsing, DAT/DSC pairing, filename policy,
+private working-copy creation and every operation after opening remain shared.
+Hardware deployment continues to use the same target planner, isolated
+snapshot, ZIP builder and workbench interface in both hosts.
 
 ## Storage and security
 
@@ -64,11 +70,22 @@ identity. The desktop host stores working images under
 `~/.local/share/acorn-file-forge/work` when `XDG_DATA_HOME` is unset.
 
 The desktop Flask service listens only on a random `127.0.0.1` port. Each
-launch creates a high-entropy token. The initial WebKit request supplies it in
-a private header, then the view receives its strict, HttpOnly cookie. The token
-does not appear in the address or server access log. The direct path-opening route
-does not exist in the web host, so a remote browser cannot ask the server to
-read arbitrary host paths.
+launch creates a high-entropy authentication token. The initial WebKit request
+supplies it in a private header, then the view receives its strict, HttpOnly
+cookie. The token does not appear in the address or server access log. A
+separate stable owner identifier is stored with mode `0600` under
+`$XDG_CONFIG_HOME/acorn-file-forge/owner-id`, or the corresponding directory
+under `~/.config`. Keeping authentication and ownership separate lets a new
+random-port launch recover only that Linux user's working sessions.
+
+Web storage is tied to an origin, and the desktop origin changes when its
+private port changes. The desktop adapter therefore mirrors workspace settings,
+hardware profiles and the private collection catalogue into
+`client-state.json` in the same XDG configuration directory. Updates are
+size-limited, written atomically and protected with mode `0600`. The web host
+continues to use browser storage and IndexedDB. The desktop state endpoints and
+the direct path-opening route do not exist in the web host, so a remote browser
+cannot ask the server to read arbitrary host paths or access native state.
 
 Source images are still copied into a working session. Neither the native file
 chooser nor a file-manager drop grants in-place mutation. The desktop-only
