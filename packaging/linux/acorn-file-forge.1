@@ -1,0 +1,32 @@
+.TH ACORN-FILE-FORGE 1 "August 2026" "Acorn File Forge" "User Commands"
+.SH NAME
+acorn-file-forge \- open and maintain Acorn media images
+.SH SYNOPSIS
+.B acorn-file-forge
+.RI [ image ...]
+.SH DESCRIPTION
+Acorn File Forge is a GTK desktop application for browsing, editing,
+validating and converting Acorn BBC, Electron, Archimedes and RISC OS disk,
+tape, ROM and hard-drive images.
+.PP
+Files named on the command line are opened through the same private-copy and
+format-validation path as the GTK file chooser. A matching BeebSCSI DAT and DSC
+pair is treated as one image.
+.SH ENVIRONMENT
+.TP
+.B ACORN_FILE_FORGE_DISABLE_WEBKIT_SANDBOX
+Set to auto, 0 or 1. The default auto mode enables the compatibility fallback
+only when Ubuntu reports its restricted unprivileged-user-namespace policy.
+.TP
+.B ACORN_ELKULATOR_ROOT, ACORN_BEM_ROOT, ACORN_MAME_EXECUTABLE, ACORN_MAME_ROM_PATH
+Override optional native emulator and firmware locations.
+.SH FILES
+.TP
+.I ~/.local/share/acorn-file-forge/work
+Private working images when XDG_DATA_HOME is unset.
+.TP
+.I ~/.config/acorn-file-forge
+Owner identity and atomic client state when XDG_CONFIG_HOME is unset.
+.SH SEE ALSO
+The installed handbook is under
+.IR /usr/share/doc/acorn-file-forge/ .

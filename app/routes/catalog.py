@@ -14,6 +14,7 @@ from ..archive_utils import validated_zip_members
 from ..catalog_service import CatalogueService, archive_members
 from ..disk_service import DiskError, DiskService
 from ..formats import DFS_EXTENSIONS, HFE_EXTENSIONS, TAPE_EXTENSIONS
+from ..filename_policy import session_name_policy
 from ..menu.analysis import analyse_adfs_directory, analyse_disk, enrich_if_ambiguous
 from ..menu.mmb import (
     find_menu_slot,
@@ -47,18 +48,12 @@ def _available_adfs_directory_name(
     preferred: str,
 ) -> str:
     """Allocate a legal, unused ADFS child name for an online import."""
-    cleaned = re.sub(r"[^A-Za-z0-9!_-]", "_", str(preferred)).strip("_")[:10] or "ONLINE"
+    policy = session_name_policy(target)
     used = {
         str(entry.get("name") or "").casefold()
         for entry in service.list_directory(target, parent, None)["entries"]
     }
-    candidate = cleaned
-    suffix = 1
-    while candidate.casefold() in used:
-        ending = str(suffix)
-        candidate = f"{cleaned[:max(1, 10 - len(ending))]}{ending}"
-        suffix += 1
-    return candidate
+    return policy.allocate(preferred, used)
 
 
 def _first_empty_runs(service: DiskService, session, start: int, needed: int) -> int | None:
@@ -279,7 +274,9 @@ def create_catalog_blueprint(service: DiskService, work_dir: Path) -> Blueprint:
                         create_dir = bool(data.get("createDirectory", False))
                         directory = str(data.get("directoryName") or "").strip()
                         if not directory:
-                            directory = re.sub(r"[^A-Za-z0-9!_-]", "_", item["title"])[:10] or "ONLINE"
+                            directory = session_name_policy(target).normalise(
+                                item["title"], "ONLINE"
+                            )
                         if create_dir:
                             directory = _available_adfs_directory_name(
                                 service, target, target_path, directory

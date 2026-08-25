@@ -73,6 +73,12 @@ test("import planning applies filesystem limits without UI state", () => {
   }, "A descriptive FileCore filename");
   assert.equal(bigRule.suggested, "A descriptive FileCore filename");
   assert.equal(bigRule.limit, 255);
+  const acornRule = imports.targetNameRule({
+    image: { kind: "adfs", filenamePolicies: { file: { limit: 10, forbidden: ".:*#/", latin1: true } } },
+  }, "Elite🙂");
+  assert.equal(acornRule.valid, false);
+  assert.equal(acornRule.suggested, "Elite_");
+  assert.equal(imports.targetNameRule({ image: { kind: "adfs" } }, " Café ").valid, false);
   const disks = imports.allocateFilesToDfsDisks([
     { name: "ONE", length: 100 },
     { name: "TWO", length: 798 * 256 },

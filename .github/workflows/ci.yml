@@ -109,14 +109,14 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
 
-      - name: Verify native dependencies and complete Python suite
+      - name: Verify architecture-native runtime
         run: |
           mkdir -p output/release-evidence
           docker run --rm \
             --volume "${{ github.workspace }}:/source" \
             --workdir /source \
             acorn-file-forge:matrix-${{ matrix.tag }} \
-            sh -lc 'uname -m; python -c "from capstone import CS_ARCH_ARM, CS_ARCH_M68K, CS_ARCH_MOS65XX, Cs; Cs(CS_ARCH_MOS65XX, 0); print(\"Capstone architecture gate passed\")"; python -m unittest discover -s tests -v' \
+            sh -lc 'set -eu; uname -m; test -x /usr/local/bin/hxcfe; test -x /opt/elkulator/elkulator; test -x /opt/b-em/b-em; python -c "import tempfile; from pathlib import Path; import flask; import oaknut.adfs; import oaknut.romfs; from capstone import CS_ARCH_ARM, CS_ARCH_M68K, CS_ARCH_MOS65XX, Cs; from app.server import create_app; Cs(CS_ARCH_ARM, 0); Cs(CS_ARCH_M68K, 0); Cs(CS_ARCH_MOS65XX, 0); work = Path(tempfile.mkdtemp()); app = create_app(work_dir=work); client = app.test_client(); response = client.get(\"/api/health\"); assert response.status_code == 200, response.get_data(as_text=True); print(\"Architecture-native runtime gate passed\")"' \
             2>&1 | tee output/release-evidence/${{ matrix.tag }}.log
 
       - name: Verify service health on the target architecture

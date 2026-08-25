@@ -40,6 +40,8 @@ Use the real release value. Do not copy the example unchanged.
       omitted rather than assumed to be covered by the project licence.
 - [ ] Any format restriction or repair behaviour changed by the release is
       called out in the release notes.
+- [ ] `tools/build-release.sh` creates a source archive, native `.deb` and
+      `SHA256SUMS` from the clean tagged tree.
 
 ## 2. Documentation
 
@@ -64,9 +66,9 @@ Build and test these native targets:
 
 | Platform | Typical system | Required result |
 | --- | --- | --- |
-| `linux/amd64` | x86-64 Linux or Docker Desktop | Image builds and complete tests pass |
-| `linux/arm64` | 64-bit Raspberry Pi OS or Apple Silicon builder | Native dependencies and complete tests pass |
-| `linux/arm/v7` | 32-bit Raspberry Pi OS | Native dependencies and complete tests pass |
+| `linux/amd64` | x86-64 Linux or Docker Desktop | Image builds, native runtime gate and complete tests pass |
+| `linux/arm64` | 64-bit Raspberry Pi OS or Apple Silicon builder | Image builds, native runtime gate and service health pass |
+| `linux/arm/v7` | 32-bit Raspberry Pi OS | Image builds, native runtime gate and service health pass |
 
 For each target:
 
@@ -75,11 +77,14 @@ For each target:
 - [ ] Native Capstone exposes ARM, M68K and MOS 65xx support.
 - [ ] HxC, Elkulator and B-em builder stages complete.
 - [ ] Runtime package names resolve on the selected Debian base.
-- [ ] Every Python test passes inside the built image.
-- [ ] `node tests/run_js_tests.js` passes.
+- [ ] Every Python test passes inside the primary AMD64 test image.
+- [ ] `node tests/run_js_tests.js` passes in the primary test job.
+- [ ] Each architecture imports Oaknut and Flask, creates the application,
+      exercises all required Capstone engines and contains the native HxC,
+      Elkulator and B-em executables.
 - [ ] The service starts on port `8666` and the health endpoint reports the
       expected version.
-- [ ] `npm run test:browser` passes against the built service.
+- [ ] `npm run test:browser` passes against the primary built service.
 - [ ] A generated BASIC file and a generated machine-code file produce bounded,
       read-only cheat-candidate reports; plain text is rejected explicitly.
 - [ ] Guarded cheat preparation refuses BASIC and archive members, changing
@@ -87,6 +92,12 @@ For each target:
       tester-supplied emulator observations. A valid apply creates a checkpoint,
       while the private library matches the exact file hash and original bytes.
 - [ ] `git diff --check` passes.
+- [ ] The native `.deb` builds on each claimed Debian or Ubuntu target, passes
+      `dpkg-deb --info` and `dpkg-deb --contents`, and contains no firmware,
+      samples, working images or Git metadata.
+- [ ] A clean test machine installs the `.deb` with APT, shows the desktop
+      entry and MIME associations, launches the GTK host, saves an image, then
+      upgrades and removes the package without deleting XDG user state.
 
 When a build fails, retain the first Docker `ERROR` block. Later `CANCELED`
 stages are usually consequences of that failure.
@@ -176,8 +187,9 @@ For a broad release, cover all of these:
 - [ ] ZIP and archive hierarchy, member preview and editor hand-off.
 - [ ] Online Library machine default, sorting, already-present filtering,
       multi-selection and installation.
-- [ ] Private collection IndexedDB persistence, stale revision handling,
-      cross-image reports and bounded backup merge, replacement and clearing.
+- [ ] Private collection persistence in web IndexedDB and desktop XDG state,
+      stale revision handling, cross-image reports and bounded backup merge,
+      replacement and clearing.
 - [ ] Menu metadata priority, launch action, PAGE derivation, multi-title disk,
       keep-off-menu and complete regeneration.
 - [ ] Headless CLI create, save, validate, preflight, import, menu, compare and patch

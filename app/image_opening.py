@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import ExitStack
+import tempfile
 from pathlib import Path
 
 from werkzeug.datastructures import FileStorage
@@ -17,6 +18,7 @@ from .formats import (
     TAPE_EXTENSIONS,
 )
 from .menu.analysis import best_distribution_filename
+from .rom_components import write_combined_rom
 
 
 IMAGE_EXTENSIONS = (
@@ -112,4 +114,37 @@ def open_image_path(
         )
 
 
-__all__ = ["IMAGE_EXTENSIONS", "open_image_path", "open_image_upload"]
+def open_rom_component_paths(
+    service,
+    component_paths: list[Path],
+    *,
+    layout: str = "linear",
+    platform: str = "bbc-master-electron",
+):
+    """Build one logical ROM from trusted native component paths."""
+    components = [Path(path) for path in component_paths]
+    if not components:
+        raise ValueError("Choose at least one ROM component.")
+    stem = components[0].stem or "rom"
+    with tempfile.TemporaryDirectory(dir=service.work_dir, prefix="native-rom-set-") as folder:
+        combined = Path(folder) / f"{stem}-set.rom"
+        write_combined_rom(components, combined, layout)
+        return open_image_path(
+            service,
+            combined,
+            target_hardware="auto",
+            rom_options={
+                "layout": layout,
+                "platform": platform,
+                "componentNames": [path.name for path in components],
+            },
+            force_kind="rom",
+        )
+
+
+__all__ = [
+    "IMAGE_EXTENSIONS",
+    "open_image_path",
+    "open_image_upload",
+    "open_rom_component_paths",
+]

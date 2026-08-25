@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import unittest
 from pathlib import Path
@@ -69,6 +70,32 @@ class DocumentationTests(unittest.TestCase):
         )
         self.assertNotIn("one to three panes", combined)
         self.assertNotIn("maximum of three panes", combined)
+
+    def test_collection_documentation_covers_both_hosts(self) -> None:
+        guide = (ROOT / "docs" / "COLLECTION-GUIDE.md").read_text(encoding="utf-8")
+        help_text = (ROOT / "app" / "static" / "help.js").read_text(encoding="utf-8")
+        for required in ("IndexedDB", "client-state.json", "mode `0600`"):
+            self.assertIn(required, guide)
+        self.assertIn("Linux desktop edition", help_text)
+
+    def test_published_dependency_versions_match_manifests(self) -> None:
+        requirements = {}
+        for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines():
+            if "==" in line:
+                name, version = line.split("==", 1)
+                requirements[name.split("[", 1)[0].lower()] = version
+        package_lock = json.loads((ROOT / "package-lock.json").read_text(encoding="utf-8"))
+        notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+        self.assertIn(f"| Flask | {requirements['flask']} |", notices)
+        self.assertIn(f"| Gunicorn | {requirements['gunicorn']} |", notices)
+        self.assertIn(f"| Capstone | {requirements['capstone']} |", notices)
+        playwright = package_lock["packages"]["node_modules/playwright"]["version"]
+        self.assertIn(f"| Playwright | {playwright},", notices)
+
+    def test_compose_example_publishes_application_and_emulator_ports(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn('      - "8666:8666"', readme)
+        self.assertIn('      - "8668:8668"', readme)
 
     def test_repository_governance_files_define_the_licensing_boundary(self) -> None:
         for relative in (

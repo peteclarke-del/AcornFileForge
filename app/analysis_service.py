@@ -11,6 +11,7 @@ from pathlib import Path
 from .checksum import sha256_bytes, sha256_path
 from .dfs_compat import dfs_catalogue_files, infer_dfs_launch_page
 from .disk_service import MMB_HEADER_SIZE, MMB_SLOT_SIZE, DiskError
+from .filename_policy import target_name_policy
 from .menu_interpreter import decode_basic
 from .menu.adfs import installed_adfs_menus, test_installed_adfs_menu_entries
 from .menu.mmb import parse_mmb_menu_data
@@ -956,25 +957,30 @@ def preflight_report(service, session, payload: dict) -> dict:
     issues = []
     items = []
     seen = set()
-    target_kind = str(payload.get("targetKind") or session.kind)
-    source_kind = str(payload.get("sourceKind") or session.kind)
-    default_limit = 7 if target_kind in {"dfs", "mmb"} else 10 if target_kind == "adfs" else 255 if target_kind in {"host", "deployment"} else 12
+    target_kind = str(payload.get("targetKind") or session.kind).strip().lower()
+    source_kind = str(payload.get("sourceKind") or session.kind).strip().lower()
     for offset, change in enumerate(changes):
         name = str(change.get("name") or change.get("destination") or "")
         leaf = name if change.get("nameIsLeaf") else name.rsplit(".", 1)[-1]
-        item_type = str(change.get("type") or "file")
-        # An MMB row names a complete DFS disk, whose catalogue title is
-        # twelve characters. Files inside that disk still use DFS's seven.
-        limit = 12 if target_kind == "mmb" and item_type in {"disk", "disk image"} else default_limit
-        invalid = r"[/\x00-\x1f]" if target_kind in {"host", "deployment"} else r"[.:*#/\x00-\x1f]"
+        item_type = str(change.get("type") or "file").strip().lower()
+        capabilities = getattr(session, "adfs_capabilities", {}) or {}
+        policy = target_name_policy(
+            target_kind,
+            item_type=item_type,
+            name_limit=capabilities.get("nameLimit"),
+        )
         validate_name = not change.get("existingDestination")
-        normal = re.sub(invalid, "_", leaf)[:limit] if validate_name else leaf
+        normal = policy.normalise(leaf) if validate_name else leaf
         conversions = []
         losses = []
         if validate_name and normal != leaf:
             issues.append({"severity": "warning", "item": offset, "message": f"{leaf} becomes {normal or 'FILE'}"})
             conversions.append(f"Filename {leaf} becomes {normal or 'FILE'}")
-        key = normal.casefold()
+        if change.get("nameIsLeaf"):
+            parent = str(change.get("parent") or change.get("targetParent") or "")
+        else:
+            parent = name.rsplit(".", 1)[0] if "." in name else ""
+        key = (parent.casefold(), normal.casefold())
         if validate_name and key in seen and not change.get("allowDuplicateName"):
             issues.append({"severity": "error", "item": offset, "message": f"{normal} clashes after target-name conversion"})
         seen.add(key)

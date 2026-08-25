@@ -45,10 +45,19 @@ const {
 const { archiveCrumbs, capacityMarkup, crumbs, paneFormat } = window.AcornPaneView.create({ esc, humanSize });
 const { folderTargetPlans } = window.AcornTransferPlanning.create({ targetNameRule });
 const { confirmPageOverride } = window.AcornSafetyDialogs.create({ esc, normalisePage, trapFocus });
-const collectionCatalogue = window.AcornCollectionCatalogue.create({ uuid: newUuid });
+let collectionCatalogue = window.AcornCollectionCatalogue.create({ uuid: newUuid });
 const collectionRevisionsSeen = new Map();
 const showHelp = window.AcornHelp.create({ showModal, modalContent });
 const formats = window.AcornFormats;
+let persistentStorageChanged = () => {};
+const persistentStorage = {
+  get length() { return localStorage.length; },
+  key: index => localStorage.key(index),
+  getItem: key => localStorage.getItem(key),
+  setItem(key, value) { localStorage.setItem(key, value); persistentStorageChanged(); },
+  removeItem(key) { localStorage.removeItem(key); persistentStorageChanged(); },
+  clear() { localStorage.clear(); persistentStorageChanged(); },
+};
 const OPEN_PANES_STORAGE_KEY = "acorn-file-forge-dynamic-panes";
 const EDITOR_DOCUMENTS_STORAGE_KEY = "acorn-file-forge-editor-documents-v1";
 const MAX_RETAINED_EDITOR_DOCUMENTS = 24;
@@ -67,7 +76,7 @@ editorWorkspace.restore();
 
 const workspacePersistence = window.AcornWorkspacePersistence.create({
   panes,
-  storage: localStorage,
+  storage: persistentStorage,
   storageKey: OPEN_PANES_STORAGE_KEY,
   newPaneState,
   restoredDfsPath,
@@ -2797,12 +2806,20 @@ async function openFiles(index, files, targetHardware = null) {
       <p>${romFiles.length} ROM components were selected. Keep the order shown below; physical chip numbering matters.</p>
       <div class="folder-import-preview">${romFiles.map((file, order) => `<code>${order + 1}. ${esc(file.name)} · ${humanSize(file.size)}</code>`).join("")}</div>
       <div class="field"><label>How are these files arranged?</label><select name="romSetMode">
-        <option value="concatenate">Consecutive banks / concatenate in this order</option>
+        <option value="separate">Separate ROM images</option>
+        <option value="concatenate">One component set · consecutive banks</option>
         ${canInterleave ? `<option value="interleave">${romFiles.length} byte-wide chips / interleave into logical byte order</option>` : ""}
         <option value="first">Open only the first selected file</option>
       </select><small>${canInterleave ? "Archimedes ROM sets commonly use four byte-wide chip files." : "Byte interleaving requires two or four components of exactly equal size."}</small></div>
-      <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="open">Build working ROM</button></div>`,
+      <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="open">Open selected ROMs</button></div>`,
     async form => {
+      if (form.get("romSetMode") === "separate") {
+        for (const [offset, file] of romFiles.entries()) {
+          const target = offset === 0 ? index : addPane();
+          await openFiles(target, [file], targetHardware);
+        }
+        return;
+      }
       if (form.get("romSetMode") === "first") {
         setTimeout(() => openFiles(index, [romFiles[0]], targetHardware), 0);
         return;
@@ -3630,8 +3647,10 @@ async function reviewHostImport(index, records, operation, itemType = "file") {
           ? formats.stem(item.file?.name || item.relativePath || "DISK")
           : item.metadata?.targetName || item.file?.name || item.relativePath || "FILE",
         nameIsLeaf: true,
+        parent: String(item.relativePath || "").replace(/\\/g, "/").split("/").slice(0, -1).join("/"),
         source: item.relativePath || item.file?.name || "Local file",
         type: itemType,
+        allowDuplicateName: panes[index].image.kind === "mmb" && panes[index].slot === null,
         load: item.metadata?.load || "",
         execute: item.metadata?.execute || "",
         filetype: item.metadata?.filetype || "",
@@ -3748,7 +3767,12 @@ async function addSelectedHostFiles(index, files) {
     ? preparedFiles.filter(item => !formats.isImportableImage(item.file.name))
     : preparedFiles;
   if (ordinaryFiles.length
-    && !await reviewHostImport(index, ordinaryFiles, "file-menu-file-import")) return false;
+    && !await reviewHostImport(
+      index,
+      ordinaryFiles,
+      "file-menu-file-import",
+      pane.image?.kind === "mmb" && pane.slot === null ? "disk image" : "file",
+    )) return false;
   const batch = { current: 0, total: preparedFiles.length, acceptAll: false, currentMetadata: null };
   pane.actionPending = true;
   renderPane(index);
@@ -5458,7 +5482,7 @@ const ACTIVE_PROFILE_STORAGE_KEY = "acorn-file-forge-active-hardware-profile";
 
 function storedOnlineMachine() {
   try {
-    const value = localStorage.getItem(ONLINE_MACHINE_STORAGE_KEY) || "";
+    const value = persistentStorage.getItem(ONLINE_MACHINE_STORAGE_KEY) || "";
     return ONLINE_MACHINES.some(([machine]) => machine === value) ? value : "";
   } catch (_error) {
     return "";
@@ -5467,7 +5491,7 @@ function storedOnlineMachine() {
 
 function rememberOnlineMachine(value) {
   if (ONLINE_MACHINES.some(([machine]) => machine === value)) {
-    localStorage.setItem(ONLINE_MACHINE_STORAGE_KEY, value);
+    persistentStorage.setItem(ONLINE_MACHINE_STORAGE_KEY, value);
   }
 }
 
@@ -5485,7 +5509,7 @@ function onlineMachineFromProfile(profile = {}) {
 }
 
 function activeWorkbenchProfile(profiles = storedHardwareProfiles()) {
-  const requested = Number.parseInt(localStorage.getItem(ACTIVE_PROFILE_STORAGE_KEY) || "0", 10);
+  const requested = Number.parseInt(persistentStorage.getItem(ACTIVE_PROFILE_STORAGE_KEY) || "0", 10);
   const index = Number.isInteger(requested) && requested >= 0 && requested < profiles.length
     ? requested
     : 0;
@@ -5493,7 +5517,7 @@ function activeWorkbenchProfile(profiles = storedHardwareProfiles()) {
 }
 
 function setActiveWorkbenchProfile(index, profile) {
-  localStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, String(index));
+  persistentStorage.setItem(ACTIVE_PROFILE_STORAGE_KEY, String(index));
   rememberOnlineMachine(onlineMachineFromProfile(profile) || "all");
 }
 
@@ -7492,19 +7516,19 @@ function editorTargetProfile(pane) {
 
 function storedCollection(key, fallback = []) {
   try {
-    const value = JSON.parse(localStorage.getItem(key) || "null");
+    const value = JSON.parse(persistentStorage.getItem(key) || "null");
     return Array.isArray(value) ? value : fallback;
   } catch (_error) { return fallback; }
 }
 
 function saveCollection(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
+  persistentStorage.setItem(key, JSON.stringify(value));
 }
 
 function storedHardwareProfiles() {
   const saved = storedCollection(PROFILE_STORAGE_KEY, []);
   const schemaKey = `${PROFILE_STORAGE_KEY}-schema`;
-  if (localStorage.getItem(schemaKey) === "5" && saved.length) return saved;
+  if (persistentStorage.getItem(schemaKey) === "5" && saved.length) return saved;
   const superseded = new Set(["Electron Plus 3", "Electron (tape)", "My Electron: Plus 3 + AP5 + BeebSCSI", "BBC Micro with MMFS", "BBC/Master BeebSCSI", "BBC B+ 64K", "BBC B+ 128K", "Archimedes / RISC OS"]);
   const builtInNames = new Set(BUILTIN_PROFILES.map(profile => profile.name));
   const migrated = [
@@ -7512,7 +7536,7 @@ function storedHardwareProfiles() {
     ...saved.filter(profile => !builtInNames.has(profile.name) && !superseded.has(profile.name)),
   ];
   saveCollection(PROFILE_STORAGE_KEY, migrated);
-  localStorage.setItem(schemaKey, "5");
+  persistentStorage.setItem(schemaKey, "5");
   return migrated;
 }
 
@@ -9606,7 +9630,7 @@ const CHEAT_LIBRARY_KEY = "acorn-file-forge-cheat-library-v1";
 
 function readCheatLibrary() {
   try {
-    const rows = JSON.parse(localStorage.getItem(CHEAT_LIBRARY_KEY) || "[]");
+    const rows = JSON.parse(persistentStorage.getItem(CHEAT_LIBRARY_KEY) || "[]");
     return Array.isArray(rows) ? rows.filter(row => row?.format === "acorn-file-forge-cheat-patch" && row?.version === 1).slice(-500) : [];
   } catch (_error) { return []; }
 }
@@ -9614,7 +9638,7 @@ function readCheatLibrary() {
 function retainCheatPatch(patch) {
   const rows = readCheatLibrary().filter(row => row.id !== patch.id);
   rows.push(patch);
-  localStorage.setItem(CHEAT_LIBRARY_KEY, JSON.stringify(rows.slice(-500)));
+  persistentStorage.setItem(CHEAT_LIBRARY_KEY, JSON.stringify(rows.slice(-500)));
 }
 
 async function showGuardedCheatPatch(root, pane, path, report, finding, target = null) {
@@ -9721,7 +9745,7 @@ function showCheatLibrary(root, pane, path, target = null) {
   }));
   shade.querySelector("[data-cheat-clear]")?.addEventListener("click", () => {
     if (!window.confirm("Clear this browser profile's guarded cheat library? Image files and checkpoints are not affected.")) return;
-    localStorage.removeItem(CHEAT_LIBRARY_KEY);
+    persistentStorage.removeItem(CHEAT_LIBRARY_KEY);
     close();
     toast("Private cheat library cleared");
   });
@@ -10515,7 +10539,7 @@ async function importProjectFile(file) {
   saveCollection(PROFILE_STORAGE_KEY, project.hardwareProfiles || BUILTIN_PROFILES);
   saveCollection(RECIPE_STORAGE_KEY, project.importRecipes || []);
   const saved = project.panes;
-  localStorage.setItem(OPEN_PANES_STORAGE_KEY, JSON.stringify(saved.map(item => ({
+  persistentStorage.setItem(OPEN_PANES_STORAGE_KEY, JSON.stringify(saved.map(item => ({
     imageId: item?.imageId || null,
     slot: item?.slot ?? null,
     side: item?.side ?? null,
@@ -10758,7 +10782,7 @@ function wireRecipeWorkbench(recipes) {
   };
 }
 
-const storedTheme = localStorage.getItem("acorn-file-forge-theme");
+const storedTheme = persistentStorage.getItem("acorn-file-forge-theme");
 const initialTheme = storedTheme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
 document.documentElement.dataset.theme = initialTheme;
 const themeToggle = document.querySelector("#themeToggle");
@@ -10828,7 +10852,7 @@ function updateThemeButton() {
 themeToggle.onclick = () => {
   const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
   document.documentElement.dataset.theme = next;
-  localStorage.setItem("acorn-file-forge-theme", next);
+  persistentStorage.setItem("acorn-file-forge-theme", next);
   updateThemeButton();
 };
 updateThemeButton();
@@ -10843,6 +10867,57 @@ window.AcornDesktopHost = Object.freeze({
   chooserOpened(preferredIndex = null) {
     const paneNumber = Number.isInteger(preferredIndex) ? preferredIndex + 1 : null;
     toast(`Native file chooser opened${paneNumber ? ` for pane ${paneNumber}` : ""}`);
+  },
+  reviewSelection(files = [], preferredIndex = null) {
+    const selected = Array.isArray(files)
+      ? files.filter(file => file && typeof file.path === "string" && typeof file.name === "string")
+      : [];
+    if (!selected.length) return toast("The native chooser did not return a usable image.", true);
+    const allRom = selected.length > 1 && selected.every(file => formats.isRomImage(file.name));
+    const hasAdfs = selected.some(file => formats.isPotentialAdfsImage(file.name));
+    const equalRomSize = allRom && selected.every(file => Number(file.size) === Number(selected[0].size));
+    const canInterleave = equalRomSize && [2, 4].includes(selected.length);
+    showModal(`<div class="modal-heading"><span class="modal-kicker">OPEN LOCAL MEDIA</span><h2>Review selected image${selected.length === 1 ? "" : "s"}</h2><p>The native host reads these paths directly. The same format and target-hardware decisions used by the web host are applied before a private working copy is created.</p></div>
+      <div class="folder-import-preview">${selected.map((file, order) => `<code>${order + 1}. ${esc(file.name)} · ${humanSize(file.size)}</code>`).join("")}</div>
+      ${hasAdfs ? '<div class="field"><label>ADFS target hardware</label><select name="targetHardware"><option value="auto">Auto / inspect only</option><option value="beebscsi">BeebSCSI DAT + DSC · Electron / BBC / Master</option><option value="electron-plus3">Electron Plus 3 · normal ADFS</option><option value="bbc-master">BBC / Master · normal 8-bit ADFS</option><option value="risc-os">Archimedes / RISC OS</option></select><small>Used only for possible ADFS images.</small></div>' : ""}
+      ${allRom ? `<div class="field"><label>Multiple ROM files</label><select name="romSetMode"><option value="separate">Open as separate ROM images</option><option value="linear">One component set · consecutive banks</option>${canInterleave ? `<option value="byte-interleaved-${selected.length}">One component set · ${selected.length}-way byte interleave</option>` : ""}</select><small>${canInterleave ? "Choose a component-set layout only when these files are physical chips from one logical ROM." : "Interleaving requires two or four equal-sized components."}</small></div><div class="field"><label>ROM platform</label><select name="romPlatform"><option value="bbc-master-electron">BBC / Master / Electron</option><option value="archimedes">Archimedes / RISC OS</option><option value="custom">Custom hardware</option></select></div>` : selected.length === 1 ? '<div class="field"><label>Raw format override</label><select name="formatOverride"><option value="">Auto-detect</option><option value="rom">Open selected bytes as an Acorn ROM</option></select><small>Use this for a headerless ROM with a generic filename.</small></div>' : ""}
+      <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="open">Open selected image${selected.length === 1 ? "" : "s"}</button></div>`, form => {
+        const targetHardware = String(form.get("targetHardware") || "auto");
+        const romSetMode = String(form.get("romSetMode") || "separate");
+        const reservedPanes = new Set();
+        const reservePane = preferred => {
+          if (Number.isInteger(preferred) && panes[preferred] && !reservedPanes.has(preferred)) {
+            reservedPanes.add(preferred);
+            return preferred;
+          }
+          let target = panes.findIndex((pane, index) => !pane.image && !reservedPanes.has(index));
+          if (target < 0) target = addPane();
+          reservedPanes.add(target);
+          return target;
+        };
+        const plans = allRom && romSetMode !== "separate" ? [{
+          paths: selected.map(file => file.path),
+          preferredPane: reservePane(preferredIndex),
+          forceKind: "rom",
+          targetHardware: "auto",
+          rom: {
+            layout: romSetMode,
+            platform: String(form.get("romPlatform") || "bbc-master-electron"),
+            componentNames: selected.map(file => file.name),
+          },
+        }] : selected.map((file, offset) => ({
+          paths: [file.path],
+          preferredPane: reservePane(offset === 0 ? preferredIndex : null),
+          targetHardware: formats.isPotentialAdfsImage(file.name) ? targetHardware : "auto",
+          forceKind: (allRom || (selected.length === 1 && form.get("formatOverride") === "rom")) ? "rom" : "",
+        }));
+        window.webkit.messageHandlers.acornDesktop.postMessage(JSON.stringify({ command: "open-plans", plans }));
+      });
+      const targetSelect = modalContent.querySelector('[name="targetHardware"]');
+      const profileTarget = activeWorkbenchProfile().targetHardware || "auto";
+      if (targetSelect && [...targetSelect.options].some(option => option.value === profileTarget)) targetSelect.value = profileTarget;
+      const platformSelect = modalContent.querySelector('[name="romPlatform"]');
+      if (platformSelect && activeWorkbenchProfile().machine === "archimedes") platformSelect.value = "archimedes";
   },
   showOpening(name, preferredIndex = null) {
     const index = Number.isInteger(preferredIndex) && panes[preferredIndex]
@@ -10867,7 +10942,7 @@ window.AcornDesktopHost = Object.freeze({
         `"${family}", system-ui, sans-serif`,
       );
     }
-    if (!localStorage.getItem("acorn-file-forge-theme")) {
+    if (!persistentStorage.getItem("acorn-file-forge-theme")) {
       document.documentElement.dataset.theme = appearance.dark ? "dark" : "light";
       updateThemeButton();
     }
@@ -10895,12 +10970,72 @@ window.AcornDesktopHost = Object.freeze({
   },
 });
 
+let desktopStorageSyncInstalled = false;
+let desktopStorageTimer = null;
+const DESKTOP_TRANSIENT_STORAGE_KEYS = new Set(["acorn-file-forge-session-owner"]);
+
+function localStorageSnapshot() {
+  return Object.fromEntries(
+    Array.from({ length: localStorage.length }, (_unused, index) => localStorage.key(index))
+      .filter(key => key && !DESKTOP_TRANSIENT_STORAGE_KEYS.has(key))
+      .map(key => [key, localStorage.getItem(key) ?? ""]),
+  );
+}
+
+async function hydrateDesktopClientState() {
+  const state = await api("/api/desktop/client-state");
+  localStorage.clear();
+  Object.entries(state.localStorage || {}).forEach(([key, value]) => {
+    if (DESKTOP_TRANSIENT_STORAGE_KEYS.has(key)) return;
+    localStorage.setItem(key, String(value));
+  });
+  const persist = () => {
+    clearTimeout(desktopStorageTimer);
+    desktopStorageTimer = setTimeout(() => {
+      api("/api/desktop/client-state", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ localStorage: localStorageSnapshot() }),
+      }).catch(error => toast(`Could not retain Linux desktop preferences: ${error.message}`, true));
+    }, 150);
+  };
+  if (!desktopStorageSyncInstalled) {
+    persistentStorageChanged = persist;
+    desktopStorageSyncInstalled = true;
+  }
+  let desktopCollection = structuredClone(state.collection || { images: [], settings: { key: "preferences", wanted: [] } });
+  collectionCatalogue = window.AcornCollectionCatalogue.createRemote({
+    uuid: newUuid,
+    load: async () => structuredClone(desktopCollection),
+    save: async collection => {
+      desktopCollection = structuredClone(collection);
+      await api("/api/desktop/client-state", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ collection }),
+      });
+    },
+  });
+  const retainedTheme = persistentStorage.getItem("acorn-file-forge-theme");
+  if (retainedTheme) {
+    document.documentElement.dataset.theme = retainedTheme;
+    updateThemeButton();
+  }
+}
+
 async function startWorkbench() {
   try {
     const health = await rawApi("/api/health");
     platformContract = health.platform || platformContract;
   } catch (_error) {
     // The shared web host remains the safe default when capability discovery fails.
+  }
+  if (platformContract.host === "desktop") {
+    try {
+      await hydrateDesktopClientState();
+    } catch (error) {
+      toast(`Could not restore Linux desktop preferences: ${error.message}`, true);
+    }
   }
   await restoreOpenPanes();
 }
