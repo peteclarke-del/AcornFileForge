@@ -2506,13 +2506,19 @@ and every snapshot beneath it.
 
 ## Built-in help
 
-Use **Help** in the top-right corner for the illustrated handbook. It covers
+Use **Help → Handbook** in the top-right corner for the illustrated guide. It covers
 the expandable freeform pane workspace, window snapping, undo and named
 checkpoints, all supported formats, MMB blank disks and protection,
 drag and drop, directory traversal, Universal Menus, UEF conversion,
 HFE safety and conversion, BeebSCSI pairing, long-operation recovery, keyboard
 selection, saving, and safety. The guide uses screenshots from the current
 interface and works in light or dark mode.
+
+Use **Help → About Acorn File Forge** to confirm the version actually served by
+the running process, distinguish the web and Linux desktop editions, identify
+the filesystem engine, and open the source, release and third-party notice
+pages. The version comes from the same `VERSION` file used by packages and
+release tags.
 
 Browser state is not a substitute for saving. Download important work before
 upgrading the container, deleting its volume, or cleaning Docker storage.
@@ -2743,7 +2749,9 @@ and `import-planning.js` owns target naming, host metadata and DFS packing.
 owns guarded actions and persistent job progress. Storage validation, recovery
 and operation polling therefore have one implementation each instead of being
 repeated through the pane controller.
-`help.js` owns the in-app handbook and its topic navigation.
+`help.js` owns the in-app handbook and its topic navigation. `about.js` owns
+the runtime About panel; it receives version, engine and host metadata from the
+same health contract used by the workbench.
 `hex-editor.js` owns raw fixed-range editing, `code-editor.js` owns language
 intelligence and source presentation, and `app.js` coordinates panes and
 workflows. The content classifier remains a

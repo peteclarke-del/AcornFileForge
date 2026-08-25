@@ -1079,6 +1079,7 @@ function showHelp() {
           <section id="help-project">
             <h3>Project and support</h3>
             <p class="help-lead">Acorn File Forge is an open-source project. Its documentation covers installation, every supported media family, the file editors, ROM maintenance, firmware and release validation.</p>
+            <div class="help-note"><strong>Confirm the running build:</strong> close this handbook, then choose <strong>Help → About Acorn File Forge</strong>. The About dialog reports the version returned by the current server, the web or Linux desktop edition, filesystem engine, licence and project links.</div>
             <div class="help-task"><h4>Choose the detailed reference</h4><ul>
               <li><a href="https://github.com/peteclarke-del/AcornFileForge/blob/main/docs/README.md" target="_blank" rel="noopener noreferrer">Documentation index</a>: a task and capability map for the complete handbook.</li>
               <li><a href="https://github.com/peteclarke-del/AcornFileForge/blob/main/README.md" target="_blank" rel="noopener noreferrer">Product and media handbook</a>: formats, restrictions, workflows, architecture, configuration and tests.</li>
