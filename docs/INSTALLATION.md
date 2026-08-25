@@ -11,7 +11,8 @@ application and frontend rather than maintaining a separate editor. See the
 
 ## Install a Debian package
 
-The release page can provide one `.deb` for each built architecture. A package
+The release page provides one `.deb` for each supported distribution and
+architecture combination. A package
 must be built on the Debian or Ubuntu release it targets because Capstone and
 other native Python extensions use that distribution's Python ABI. Current
 Debian 13 and Ubuntu 24.04 or later provide the required GTK 4, Libadwaita and
@@ -20,7 +21,7 @@ WebKit 6 packages.
 Install a downloaded package with APT so its system dependencies are resolved:
 
 ```bash
-sudo apt install ./acorn-file-forge_VERSION_ARCH.deb
+sudo apt install ./acorn-file-forge_1.0.0-1~deb13_amd64.deb
 ```
 
 Launch **Acorn File Forge** from the application menu, open an associated image
@@ -33,24 +34,33 @@ sudo apt remove acorn-file-forge
 
 Removal leaves working images and preferences in the user's XDG data and
 configuration directories. Delete those only after saving all required work.
-The package contains the shared application, pinned Python dependencies,
+The package contains the shared application, pinned Python dependencies, the
+pinned HxCFloppyEmulator command-line converter (`hxcfe`) and its private
+runtime libraries,
 desktop entry, MIME definitions, icon, AppStream metadata, manual page and
 handbook. Acorn firmware, commercial software and optional emulators are not
 bundled.
 
+HxCFE provides HFE opening, creation and guarded saving. The executable and
+libraries are private to Acorn File Forge, so no separate host HxC package is
+required. See the [HFE and HxCFE guide](HFE-HXC-GUIDE.md) for runtime paths,
+supported HFE revisions and the verification process.
+
 To build the native package on the current machine:
 
 ```bash
-sudo apt install -y python3 python3-pip dpkg-dev desktop-file-utils appstream
+sudo apt install -y python3 python3-pip dpkg-dev desktop-file-utils appstream git make gcc libc6-dev
 tools/build-linux-package.sh
 ```
 
 The result is written to `dist/`. The build downloads the complete dependency
-set pinned in `packaging/linux/requirements-debian.txt`, so release builders
-should use a controlled network or an approved Python package mirror.
+set pinned in `packaging/linux/requirements-debian.txt` and compiles HxCFE from
+the revision recorded in `tools/build-hxc-runtime.sh`, so release builders
+should use a controlled network or approved source and Python package mirrors.
 `tools/build-release.sh` requires a clean Git tree and writes the source
-archive, architecture-specific `.deb` and `SHA256SUMS`. Run it separately on
-every supported package architecture and distribution release.
+archive, current-system `.deb` and `SHA256SUMS`. The tag-driven release workflow
+builds and inspects Debian 13 and Ubuntu 24.04 packages for AMD64, ARM64 and
+ARMv7 before it publishes them with a combined checksum manifest.
 
 Return to the [documentation index](README.md) for media, editor, ROM, firmware
 and release references.
@@ -79,7 +89,7 @@ You need:
 Large DAT, HDF and RAW images require additional temporary space while an image
 is uploaded, checkpointed and packaged. Allow space for the source image, its
 working copy and the finished ZIP at the same time. Raspberry Pi builds also
-need room for native HxC, Capstone, Elkulator and B-em compilation.
+need room for native HxCFE, Capstone, Elkulator and B-em compilation.
 
 ## Install on desktop Linux, macOS or Windows
 
@@ -161,7 +171,8 @@ single build step is slow.
 The build performs the following platform-sensitive work:
 
 1. Builds a native Capstone installation when no suitable wheel can be used.
-2. Builds the HxC command-line converter.
+2. Builds the pinned HxCFloppyEmulator command-line converter (`hxcfe`), its
+   private libraries and the upstream licence.
 3. Builds Elkulator and B-em runtime components.
 4. Installs Trixie package names appropriate to the target architecture,
    including `liballegro4.4t64`.
@@ -356,7 +367,7 @@ working sessions.
 
 ### Build appears to stop for a long time
 
-Use `docker compose build --progress=plain`. HxC, Capstone and emulator builds
+Use `docker compose build --progress=plain`. HxCFE, Capstone and emulator builds
 can be slow on a Pi. A healthy build continues to print compiler output or
 eventually advances. Check free disk, available memory, swap and host
 temperature before assuming a software deadlock.

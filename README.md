@@ -71,14 +71,18 @@ Release builds also provide a native-architecture Debian package. Install it
 on the Debian or Ubuntu release for which it was built:
 
 ```bash
-sudo apt install ./acorn-file-forge_VERSION_ARCH.deb
+sudo apt install ./acorn-file-forge_1.0.0-1~deb13_amd64.deb
 acorn-file-forge
 ```
 
-The package installs the application under `/opt/acorn-file-forge`, registers
-the launcher, icon, MIME types, AppStream record and manual page, and vendors
-the pinned Python packages. It does not bundle Acorn firmware or commercial
-media. Build a package for the current machine with
+Stable releases provide Debian 13 and Ubuntu 24.04 packages for AMD64, ARM64
+and ARMv7. Debian filenames contain `deb13`; Ubuntu filenames contain
+`ubuntu24.04`. The package installs the application under
+`/opt/acorn-file-forge`, registers the launcher, icon, MIME types, AppStream
+record and manual page, and vendors the pinned Python packages. It does not
+bundle Acorn firmware or commercial media. The architecture-native HxC
+converter and its private libraries are included so HFE workflows do not rely
+on an untracked host tool. Build a package for the current machine with
 `tools/build-linux-package.sh`; build the complete clean-tree release set with
 `tools/build-release.sh`.
 
@@ -127,7 +131,7 @@ they will not be committed or packaged.
 
 ## Current status
 
-The current release candidate is `1.0.0-rc.2`. It provides the editing and
+The current stable release is `1.0.0`. It provides the editing and
 transfer workflows described in this guide, including movable, resizable and
 stackable panes, undo and named checkpoints, owner-isolated recovery,
 background job tracking, MMB and ADFS menu maintenance, HFE handling, an Online
@@ -1743,11 +1747,14 @@ DFS rules are enforced before a write is attempted:
 DSD images expose side 0 and side 2 separately, matching BBC drive numbering.
 Compaction can optionally prioritize boot files or another requested order.
 
-## HFE floppy images
+## HFE floppy images and HxCFE
 
 HFE is a track and bit-cell container rather than a filing system. Acorn File
-Forge uses the official HxC conversion engine to expose the DFS or ADFS sectors
-inside an HFE, then presents them through the normal file browser.
+Forge uses the official HxCFloppyEmulator command-line converter, `hxcfe`, to
+expose the DFS or ADFS sectors inside an HFE, then presents them through the
+normal file browser. Docker images and native Debian/Ubuntu packages include a
+pinned, architecture-native HxCFE build and its supporting libraries. No
+separate host HxC installation is needed.
 
 ![Creating an HFE floppy image](docs/images/hfe-create.png)
 
@@ -1774,6 +1781,9 @@ The original HFE remains untouched in the session until a verified replacement
 has been produced. This matters because an apparently normal catalogue can
 coexist with non-sector protection data that a filesystem editor cannot
 represent.
+
+See the [HFE and HxCFE guide](docs/HFE-HXC-GUIDE.md) for the complete opening,
+creation, guarded-save, package-layout and troubleshooting procedures.
 
 ## Working with ROM images
 
@@ -2815,7 +2825,7 @@ curl http://localhost:8666/api/health
 A healthy response looks like:
 
 ```json
-{"engine":"oaknut","status":"ok","version":"1.0.0-rc.2"}
+{"engine":"oaknut","status":"ok","version":"1.0.0"}
 ```
 
 ## Main dependencies
@@ -2830,8 +2840,8 @@ archive, container image or native package.
 - Gunicorn 26
 - Oaknut Disc, ADFS and ROMFS 12.15.1, including writable FileCore
   S/M/L/D/E/E+/F/F+/G/G+ and hard-disk support
-- HxC Floppy Emulator command-line engine 2.16.15.2, compiled from a pinned
-  upstream revision during the Docker build
+- HxC Floppy Emulator command-line engine 2.16.15.2, compiled from one pinned
+  upstream revision for both Docker and native release packages
 - Docker or Docker Compose
 
 Oaknut provides the filesystem implementation. Acorn File Forge adds the web

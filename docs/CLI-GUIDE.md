@@ -289,6 +289,11 @@ checkpoint and use that as the base for subsequent recorded changes. UEF and
 HFE workflow export remains unavailable until the container-level rebuild can
 be proved lossless.
 
+HFE operations use the same bundled HxCFloppyEmulator command-line converter
+(`hxcfe`) as the graphical workbench. Docker and native release packages carry
+the executable and its libraries. See the [HFE and HxCFE guide](HFE-HXC-GUIDE.md)
+for supported layouts and the encode, decode and byte-comparison save gate.
+
 ## Safety notes
 
 - Inputs are copied into an isolated temporary work directory. The source file

@@ -18,7 +18,7 @@ function showHelp() {
           <a href="#help-files">Files and folders</a>
           <strong>MEDIA GUIDES</strong>
           <a href="#help-dfs">SSD and DSD</a>
-          <a href="#help-hfe">HFE floppy images</a>
+          <a href="#help-hfe">HFE and HxCFE</a>
           <a href="#help-rom">ROM images</a>
           <a href="#help-romfs">ROMFS data ROMs</a>
           <a href="#help-mmb">MMB disk banks</a>
@@ -99,7 +99,7 @@ function showHelp() {
             <div class="help-task">
               <h4>Install and launch</h4>
               <ol>
-                <li>For a release build on current Debian or Ubuntu, install the architecture-specific <code>.deb</code> with <code>sudo apt install ./acorn-file-forge_VERSION_ARCH.deb</code>. APT installs the required Python 3, GTK 4, Libadwaita, WebKitGTK 6 and GObject packages.</li>
+                <li>Stable releases provide separate Debian 13 and Ubuntu 24.04 packages for AMD64, ARM64 and ARMv7. Install the matching <code>.deb</code> with APT, for example <code>sudo apt install ./acorn-file-forge_1.0.0-1~deb13_amd64.deb</code>. APT installs the required Python 3, GTK 4, Libadwaita, WebKitGTK 6 and GObject packages.</li>
                 <li>For development from a project checkout, install those system packages and run <code>tools/install-linux-desktop.sh</code> instead.</li>
                 <li>Launch <strong>Acorn File Forge</strong> from the application menu. The package command is <code>acorn-file-forge</code>; a checkout uses <code>tools/acorn-file-forge-desktop</code>.</li>
                 <li>Use the native folder button, <strong>File → Open image</strong> in a pane or <kbd>Ctrl</kbd>+<kbd>O</kbd> to select one or several images with the GTK chooser. You can also drag image files from the Linux file manager onto a pane. Native selection and drag and drop pass local paths to the private desktop service, so image bytes are not uploaded through the embedded browser.</li>
@@ -302,9 +302,9 @@ function showHelp() {
             <div class="help-note"><strong>To copy a whole DFS disk to ADFS:</strong> drag the blue disk-format badge or the open DFS pane heading onto an ADFS pane. Choose a directory name, and the catalogue will be extracted there.</div>
           </section>
           <section id="help-hfe">
-            <h3>HFE floppy images: safe editing</h3>
+            <h3>HFE floppy images and HxCFE: safe editing</h3>
             <figure><img src="/help/hfe-create.png" alt="Create image dialog showing HFE-wrapped DFS and ADFS floppy choices"><figcaption>Create a new HFE around DFS SSD/DSD or ADFS S/M/L geometry. Existing supported HFE images open through the normal image picker.</figcaption></figure>
-            <p>HFE stores floppy track timing and bit cells, while DFS and ADFS describe files inside the sectors. Acorn File Forge decodes the sectors with the HxC engine and then opens the detected filing system.</p>
+            <p>HFE stores floppy track timing and bit cells, while DFS and ADFS describe files inside the sectors. Acorn File Forge uses the official HxCFloppyEmulator command-line converter, <code>hxcfe</code>, to decode those sectors and then opens the detected filing system. Docker images and native Debian/Ubuntu packages include a pinned, architecture-native HxCFE build and its supporting libraries. No separate HxC installation is required.</p>
             <ol>
               <li>Open an HFE normally, or create an HFE-wrapped DFS/ADFS floppy from <strong>File → New → New Image</strong>.</li>
               <li>Check the opening warning. A clean HFE v1 disk is editable through the usual file tools.</li>
@@ -314,6 +314,13 @@ function showHelp() {
             </ol>
             <div class="help-note"><strong>What the pane shows:</strong> the format badge reads HFE, while the directory rules, sides and capacity come from its decoded DFS or ADFS filesystem. Advanced images show <strong>Read-only safe view</strong> and hide editing, compaction and menu-writing controls.</div>
             <div class="help-note"><strong>MMB and ADFS transfers:</strong> a DFS-formatted HFE may be inserted into an MMB. Any supported HFE filesystem can be opened in one pane and copied or extracted into another image. MMB stores only DFS sectors, so timing, weak-bit and protection information from an advanced HFE is deliberately omitted and reported as a destination warning.</div>
+            <div class="help-task"><h4>How saving is verified</h4><ol>
+              <li>HxCFE encodes the changed sectors into a new HFE, using the original track layout as a reference where applicable.</li>
+              <li>HxCFE decodes the candidate output again.</li>
+              <li>Acorn File Forge byte-compares the decoded result with the complete working filesystem.</li>
+              <li>A mismatch blocks the download and preserves the original HFE. A successful HFE is added to the timestamped save package.</li>
+            </ol></div>
+            <div class="help-note"><strong>Installed Linux runtime:</strong> the private HxCFE executable is <code>/opt/acorn-file-forge/native/bin/hxcfe</code> and its libraries are under <code>/opt/acorn-file-forge/native/lib</code>. The application launcher configures that library path automatically.</div>
           </section>
           <section id="help-rom">
             <h3>ROM images: banks, headers and chip sets</h3>
@@ -1054,6 +1061,7 @@ function showHelp() {
               <dt>Not enough space</dt><dd>Delete unwanted data, compact the filesystem, or create a larger destination. DFS also has a 31-file catalogue limit.</dd>
               <dt>DSD will not insert</dt><dd>Choose a starting position with two adjacent empty MMB slots.</dd>
               <dt>HFE is read-only</dt><dd>The image uses HFE v2/v3, reports bad sectors, or contains track features the sector editor cannot reproduce safely. Export its files or copy its readable sectors to another image.</dd>
+              <dt>HxCFE is reported missing</dt><dd>Official Docker images and native 1.0.0 packages include HxCFE and its supporting libraries. Reinstall the package matching the host distribution and architecture if <code>/opt/acorn-file-forge/native/bin/hxcfe</code> is absent. A source checkout receives HxCFE when its Docker image or native package is built.</dd>
               <dt>A FileCore image cannot be opened</dt><dd>Confirm it is a raw ADFS/FileCore image or a supported HDF/HD4 layout rather than a compressed archive or track dump. The Docker build pins Oaknut 12.15.1 and needs no local patch. The detailed error distinguishes an unrecognised filesystem from a corrupt map or directory.</dd>
               <dt>Name collision found</dt><dd>Use the default DISC-0000 naming strategy, or review every highlighted name. The check is case-insensitive and scoped to each destination parent.</dd>
               <dt>Empty disk found</dt><dd>Choose Skip and continue or Abort. Blank disks can be stored in MMB, but do not become empty ADFS directories.</dd>

@@ -128,6 +128,24 @@ class DiskPerformanceTests(unittest.TestCase):
             self.assertEqual(local_copy.call_count, 1)
             self.assertEqual(session.path.read_bytes(), source.read_bytes())
 
+    def test_known_adfs_local_open_skips_the_all_filesystem_probe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = DiskService(root / "source-work").create_blank(
+                "adfs-e", "SOURCE"
+            ).path
+            service = DiskService(root / "open-work")
+
+            with patch.object(
+                service,
+                "_run_json",
+                side_effect=AssertionError("known ADFS media used the generic probe"),
+            ):
+                opened = service.create_from_path(source)
+
+            self.assertEqual(opened.kind, "adfs")
+            self.assertEqual(opened.path.stat().st_size, source.stat().st_size)
+
     def test_sparse_optimisation_does_not_look_like_an_image_edit(self):
         with tempfile.TemporaryDirectory() as directory:
             image = Path(directory) / "scsi0.dat"

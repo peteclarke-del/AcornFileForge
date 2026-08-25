@@ -64,17 +64,24 @@ A release `.deb` installs the same desktop host without retaining a Git
 checkout or creating a per-checkout virtual environment:
 
 ```bash
-sudo apt install ./acorn-file-forge_VERSION_ARCH.deb
+sudo apt install ./acorn-file-forge_1.0.0-1~deb13_amd64.deb
 ```
 
 The package places the shared application in `/opt/acorn-file-forge` and the
 launcher at `/usr/bin/acorn-file-forge`. It registers the application menu,
 file associations, icon, AppStream metadata and `acorn-file-forge(1)` manual.
 Pinned Python dependencies are included in an architecture-specific vendor
-directory. GTK, Libadwaita, WebKit and PyGObject remain distribution packages
-so security updates continue to come from APT.
+directory. The package also carries an architecture-native
+HxCFloppyEmulator command-line converter (`hxcfe`) and its private libraries,
+so HFE creation, opening and verified saving work without a separate host
+installation. GTK, Libadwaita, WebKit and PyGObject remain distribution
+packages so security updates continue to come from APT. The
+[HFE and HxCFE guide](HFE-HXC-GUIDE.md) documents its package paths and direct
+runtime check.
 
-Build packages on the Debian or Ubuntu release that will run them. Native
+Release filenames identify `deb13` or `ubuntu24.04` and use the Debian
+architecture name `amd64`, `arm64` or `armhf`. Build packages on the Debian or
+Ubuntu release that will run them. Native
 Python extensions are not assumed to be portable between different Python
 ABIs. The package intentionally excludes firmware, commercial images and
 managed emulator binaries. Configure installed emulators with the variables in

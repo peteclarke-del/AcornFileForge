@@ -21,10 +21,8 @@ FROM debian:bookworm-slim AS hxc-builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git make gcc libc6-dev \
     && rm -rf /var/lib/apt/lists/*
-RUN git clone https://github.com/jfdelnero/HxCFloppyEmulator.git /src \
-    && cd /src \
-    && git checkout b1eee4cd73391ceaf2ad4ac57e28bf11c91333ba
-RUN make -C /src/build HxCFloppyEmulator_cmdline
+COPY tools/build-hxc-runtime.sh /usr/local/bin/build-hxc-runtime
+RUN build-hxc-runtime /opt/hxc
 
 FROM debian:bookworm-slim AS elkulator-builder
 
@@ -89,9 +87,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=python-deps /python-install/usr/local /usr/local
 RUN python -c "from capstone import CS_ARCH_ARM, CS_ARCH_M68K, CS_ARCH_MOS65XX, Cs; Cs(CS_ARCH_MOS65XX, 0); print('Capstone ARM, M68K and MOS65XX support is available')"
 
-COPY --from=hxc-builder /src/build/hxcfe /usr/local/bin/hxcfe
-COPY --from=hxc-builder /src/build/libhxcfe.so /usr/local/lib/libhxcfe.so
-COPY --from=hxc-builder /src/build/libusbhxcfe.so /usr/local/lib/libusbhxcfe.so
+COPY --from=hxc-builder /opt/hxc/bin/hxcfe /usr/local/bin/hxcfe
+COPY --from=hxc-builder /opt/hxc/lib/libhxcfe.so /usr/local/lib/libhxcfe.so
+COPY --from=hxc-builder /opt/hxc/lib/libusbhxcfe.so /usr/local/lib/libusbhxcfe.so
 COPY --from=elkulator-builder /src/elkulator-runtime /opt/elkulator
 COPY --from=bem-builder /src/bem-runtime /opt/b-em
 COPY firmware/mame /opt/acorn-file-forge/firmware/mame

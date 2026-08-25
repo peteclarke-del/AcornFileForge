@@ -12,6 +12,11 @@ tape, ROM and hard-drive images.
 Files named on the command line are opened through the same private-copy and
 format-validation path as the GTK file chooser. A matching BeebSCSI DAT and DSC
 pair is treated as one image.
+.PP
+HFE floppy images are decoded and encoded with the bundled
+HxCFloppyEmulator command-line converter, hxcfe. Clean sector-based HFE v1
+images are editable and are decoded again for byte-exact verification before
+download. Advanced or damaged HFE images open read-only.
 .SH ENVIRONMENT
 .TP
 .B ACORN_FILE_FORGE_DISABLE_WEBKIT_SANDBOX
@@ -30,3 +35,5 @@ Owner identity and atomic client state when XDG_CONFIG_HOME is unset.
 .SH SEE ALSO
 The installed handbook is under
 .IR /usr/share/doc/acorn-file-forge/ .
+The HFE and HxCFE guide is
+.IR /usr/share/doc/acorn-file-forge/handbook/HFE-HXC-GUIDE.md .

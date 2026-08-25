@@ -15,7 +15,7 @@ the independent ARM64, ARMv7 or physical-hardware rows below.
 Record the intended version before starting:
 
 ```bash
-export RELEASE_VERSION=1.0.0-rc.2
+export RELEASE_VERSION=1.0.0
 test "$(cat VERSION)" = "$RELEASE_VERSION"
 ```
 
@@ -42,6 +42,9 @@ Use the real release value. Do not copy the example unchanged.
       called out in the release notes.
 - [ ] `tools/build-release.sh` creates a source archive, native `.deb` and
       `SHA256SUMS` from the clean tagged tree.
+- [ ] `.github/workflows/release.yml` builds Debian 13 and Ubuntu 24.04
+      packages for AMD64, ARM64 and ARMv7, inspects their metadata and imports
+      their vendored native dependencies before publication.
 
 ## 2. Documentation
 
@@ -292,6 +295,11 @@ git push origin "v$RELEASE_VERSION"
 
 Do not tag a feature-branch head. GitHub may create a different merge commit,
 and the release tag must identify the code users actually clone.
+
+Pushing the tag starts the release workflow. It validates the tag against
+`VERSION`, builds the source archive and six distribution-specific packages,
+creates `SHA256SUMS`, and publishes the GitHub Release only after every package
+gate succeeds.
 
 Finally:
 

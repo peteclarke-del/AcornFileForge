@@ -20,6 +20,12 @@ sector read-back verification. Acorn File Forge calls this out before and after
 the write. Test an HFE-derived physical disk on suitable hardware before
 depending on it.
 
+Opening, creating and saving the HFE itself uses the HxCFloppyEmulator
+command-line converter (`hxcfe`) bundled with Acorn File Forge. That conversion
+stage is separate from the optional Greaseweazle hardware write. See the
+[HFE and HxCFE guide](HFE-HXC-GUIDE.md) for the supported track-container
+workflow and its byte-comparison save check.
+
 ## Install Greaseweazle
 
 Install the official Greaseweazle host tools so the `gw` command is available

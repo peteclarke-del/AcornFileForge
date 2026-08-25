@@ -30,7 +30,7 @@ samples, working images and Git metadata.
 
 | Component | Pinned revision or source | Licence boundary |
 | --- | --- | --- |
-| HxC Floppy Emulator command-line engine | `b1eee4cd73391ceaf2ad4ac57e28bf11c91333ba` | GPL-3.0; see the upstream `HxCFloppyEmulator_cmdline/COPYING` |
+| HxC Floppy Emulator command-line engine | `b1eee4cd73391ceaf2ad4ac57e28bf11c91333ba` | GPL-3.0; the Linux package installs the upstream `COPYING` file under `native/share/licenses` |
 | Elkulator | `6cab45aba68fc3d3bdaea4c28b5de4de0307e00e` | The pinned upstream repository does not expose a clear top-level licence file. Redistribution must be reviewed against upstream source notices before publishing a binary package. |
 | B-em | `6018d5e91a097d0a6dc0aee95e0477845e12660c` | GPL-2.0; see the upstream `COPYING` |
 | 1MHzWifi emulator integration | `c02e1dc42d36c1747780833c368dabd614091572` | Retains the notices and terms in the upstream repository and generated ROM content |

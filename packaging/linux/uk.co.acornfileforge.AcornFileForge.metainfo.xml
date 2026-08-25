@@ -18,10 +18,22 @@
       as the web edition, with a GTK file chooser, desktop file associations
       and private XDG working state.
     </p>
+    <p>
+      A bundled architecture-native HxCFloppyEmulator command-line converter
+      opens, creates and verifies supported HFE floppy images without requiring
+      a separate host installation.
+    </p>
   </description>
   <launchable type="desktop-id">uk.co.acornfileforge.AcornFileForge.desktop</launchable>
   <url type="homepage">https://github.com/peteclarke-del/AcornFileForge</url>
   <url type="bugtracker">https://github.com/peteclarke-del/AcornFileForge/issues</url>
+  <releases>
+    <release version="1.0.0" date="2026-08-25">
+      <description>
+        <p>First stable release with shared web and native Linux workbenches, including bundled HxCFE support for HFE floppy images.</p>
+      </description>
+    </release>
+  </releases>
   <provides>
     <binary>acorn-file-forge</binary>
   </provides>
