@@ -21,6 +21,25 @@ NATIVE_OPEN_EXTENSIONS = IMAGE_EXTENSIONS | {".dsc", ".zip"}
 MAX_NATIVE_OPEN_PLANS = 256
 
 
+def _desktop_message_text(result) -> str:
+    """Return a script message from current and legacy WebKitGTK bindings.
+
+    WebKitGTK 6 passes a JSC.Value directly to the signal handler. Older
+    bindings wrapped that value in WebKit.JavascriptResult. Keeping the API
+    difference here avoids coupling the native command handling to either
+    representation.
+    """
+    get_js_value = getattr(result, "get_js_value", None)
+    value = get_js_value() if callable(get_js_value) else result
+    to_string = getattr(value, "to_string", None)
+    if not callable(to_string):
+        raise TypeError("WebKit supplied an unsupported script message value.")
+    message = to_string()
+    if not isinstance(message, str):
+        raise TypeError("WebKit supplied a non-text script message.")
+    return message
+
+
 def _arguments(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Acorn File Forge Linux desktop host")
     parser.add_argument("images", nargs="*", type=Path, help="Images to open")
@@ -204,7 +223,15 @@ def run(argv: list[str] | None = None) -> int:
             self.window.present()
 
         def _desktop_message(self, _manager, result) -> None:
-            message = result.get_js_value().to_string()
+            try:
+                message = _desktop_message_text(result)
+            except TypeError as exc:
+                GLib.idle_add(
+                    self._deliver_error,
+                    "the native desktop command",
+                    str(exc),
+                )
+                return
             if message == "open-images" or message.startswith("open-images:"):
                 _command, separator, pane_value = message.partition(":")
                 try:

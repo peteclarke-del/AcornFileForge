@@ -5,8 +5,23 @@ project_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 output_dir=${1:-"$project_root/dist"}
 version=$(sed -n '1p' "$project_root/VERSION")
 debian_version=$(printf '%s' "$version" | sed 's/-rc\./~rc./')
+package_revision=${ACORN_PACKAGE_REVISION:-}
+package_target=${ACORN_PACKAGE_TARGET:-Current Debian-compatible system}
+
+if [ -n "$package_revision" ] && ! printf '%s\n' "$package_revision" \
+    | grep -Eq '^-[0-9]+~[a-z0-9][a-z0-9.+]*$'; then
+    echo "ACORN_PACKAGE_REVISION must be empty or a Debian revision such as -1~deb13." >&2
+    exit 2
+fi
+if ! printf '%s\n' "$package_target" \
+    | grep -Eq '^[A-Za-z0-9][A-Za-z0-9 .()+/-]*$'; then
+    echo "ACORN_PACKAGE_TARGET contains unsupported control characters." >&2
+    exit 2
+fi
+
+package_version=$debian_version$package_revision
 architecture=$(dpkg --print-architecture)
-package_name=acorn-file-forge_${debian_version}_${architecture}.deb
+package_name=acorn-file-forge_${package_version}_${architecture}.deb
 SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(git -C "$project_root" log -1 --format=%ct)}
 export SOURCE_DATE_EPOCH
 build_root=$(mktemp -d)
@@ -36,10 +51,30 @@ mkdir -p \
     "$stage/usr/share/metainfo" \
     "$stage/usr/share/mime/packages"
 
-cp -a "$project_root/app" "$project_root/desktop" "$application/"
+cp -a \
+    "$project_root/acorn_greaseweazle" \
+    "$project_root/app" \
+    "$project_root/desktop" \
+    "$application/"
 mkdir -p "$application/tools"
 cp "$project_root/tools/linux-desktop-environment.sh" "$application/tools/"
 cp "$project_root/VERSION" "$application/"
+
+if [ -n "${ACORN_HXC_RUNTIME_DIR:-}" ]; then
+    for required in \
+        bin/hxcfe \
+        lib/libhxcfe.so \
+        lib/libusbhxcfe.so \
+        share/licenses/HxCFloppyEmulator-COPYING; do
+        if [ ! -f "$ACORN_HXC_RUNTIME_DIR/$required" ]; then
+            echo "ACORN_HXC_RUNTIME_DIR is missing $required." >&2
+            exit 2
+        fi
+    done
+    cp -a "$ACORN_HXC_RUNTIME_DIR/." "$application/native/"
+else
+    "$project_root/tools/build-hxc-runtime.sh" "$application/native"
+fi
 
 python3 -m pip install \
     --disable-pip-version-check \
@@ -72,7 +107,7 @@ cp -a "$project_root/docs" "$stage/usr/share/doc/acorn-file-forge/handbook"
 installed_size=$(du -sk "$stage" | awk '{print $1}')
 cat > "$stage/DEBIAN/control" <<EOF
 Package: acorn-file-forge
-Version: $debian_version
+Version: $package_version
 Section: utils
 Priority: optional
 Architecture: $architecture
@@ -80,6 +115,7 @@ Installed-Size: $installed_size
 Maintainer: Acorn File Forge contributors <peteclarke-del@users.noreply.github.com>
 Depends: python3 (>= 3.11), python3-gi, gir1.2-gtk-4.0, gir1.2-adw-1, gir1.2-webkit-6.0, shared-mime-info, desktop-file-utils
 Homepage: https://github.com/peteclarke-del/AcornFileForge
+X-Acorn-Target: $package_target
 Description: Acorn media image workshop
  Browse, edit, validate and convert Acorn BBC, Electron, Archimedes and
  RISC OS disk, tape, ROM and hard-drive images from a native GTK application.
@@ -92,6 +128,7 @@ find "$stage" -type f -exec chmod 644 {} +
 if [ -d "$application/vendor/bin" ]; then
     find "$application/vendor/bin" -type f -exec chmod 755 {} +
 fi
+find "$application/native/bin" -type f -exec chmod 755 {} +
 chmod 755 \
     "$stage/DEBIAN/postinst" \
     "$stage/DEBIAN/postrm" \
