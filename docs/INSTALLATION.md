@@ -21,7 +21,7 @@ WebKit 6 packages.
 Install a downloaded package with APT so its system dependencies are resolved:
 
 ```bash
-sudo apt install ./acorn-file-forge_1.0.1-1~deb13_amd64.deb
+sudo apt install ./acorn-file-forge_1.0.2-1~deb13_amd64.deb
 ```
 
 Launch **Acorn File Forge** from the application menu, open an associated image

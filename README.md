@@ -71,7 +71,7 @@ Release builds also provide a native-architecture Debian package. Install it
 on the Debian or Ubuntu release for which it was built:
 
 ```bash
-sudo apt install ./acorn-file-forge_1.0.1-1~deb13_amd64.deb
+sudo apt install ./acorn-file-forge_1.0.2-1~deb13_amd64.deb
 acorn-file-forge
 ```
 
@@ -79,7 +79,9 @@ Stable releases provide Debian 13 and Ubuntu 24.04 packages for AMD64, ARM64
 and ARMv7. Debian filenames contain `deb13`; Ubuntu filenames contain
 `ubuntu24.04`. The package installs the application under
 `/opt/acorn-file-forge`, registers the launcher, icon, MIME types, AppStream
-record and manual page, and vendors the pinned Python packages. It does not
+record and manual page, and vendors the pinned Python packages. The package
+provides scalable and fixed-size icons and gives the GTK window the matching
+desktop identity for reliable GNOME, Ubuntu Dock and X11 association. It does not
 bundle Acorn firmware or commercial media. The architecture-native HxC
 converter and its private libraries are included so HFE workflows do not rely
 on an untracked host tool. Build a package for the current machine with
@@ -131,7 +133,7 @@ they will not be committed or packaged.
 
 ## Current status
 
-The current stable release is `1.0.1`. It provides the editing and
+The current stable release is `1.0.2`. It provides the editing and
 transfer workflows described in this guide, including movable, resizable and
 stackable panes, undo and named checkpoints, owner-isolated recovery,
 background job tracking, MMB and ADFS menu maintenance, HFE handling, an Online
@@ -2840,7 +2842,7 @@ curl http://localhost:8666/api/health
 A healthy response looks like:
 
 ```json
-{"engine":"oaknut","status":"ok","version":"1.0.1"}
+{"engine":"oaknut","status":"ok","version":"1.0.2"}
 ```
 
 ## Main dependencies

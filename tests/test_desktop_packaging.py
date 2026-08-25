@@ -54,6 +54,8 @@ class DesktopPackagingTests(unittest.TestCase):
         self.assertIn("user_content_manager=self.content_manager", desktop_host)
         self.assertIn('Gtk.Button.new_from_icon_name("document-open-symbolic")', desktop_host)
         self.assertIn('icon_name="open-menu-symbolic"', desktop_host)
+        self.assertIn("Gtk.Window.set_default_icon_name", desktop_host)
+        self.assertIn("self.window.set_icon_name", desktop_host)
         self.assertIn("applyNativeAppearance", frontend)
         self.assertIn("open-images:${index}", frontend)
         self.assertIn("self.chooser_targets[chooser]", desktop_host)
@@ -113,6 +115,24 @@ class DesktopPackagingTests(unittest.TestCase):
         ):
             self.assertIn(required, builder)
         self.assertIn("<id>uk.co.acornfileforge.AcornFileForge</id>", metainfo)
+        self.assertIn("StartupWMClass=uk.co.acornfileforge.AcornFileForge", (
+            ROOT / "packaging/linux/uk.co.acornfileforge.AcornFileForge.desktop.in"
+        ).read_text(encoding="utf-8"))
+        self.assertIn("Icon=acorn-file-forge", (
+            ROOT / "packaging/linux/uk.co.acornfileforge.AcornFileForge.desktop.in"
+        ).read_text(encoding="utf-8"))
+        for icon_size in (48, 64, 128, 256):
+            self.assertTrue((
+                ROOT
+                / "packaging/linux/icons"
+                / f"{icon_size}x{icon_size}"
+                / "apps/acorn-file-forge.png"
+            ).is_file())
+        self.assertIn("packaging/linux/icons", builder)
+        self.assertIn("usr/share/pixmaps/acorn-file-forge.png", builder)
+        self.assertIn("packaging/linux/icons", (
+            ROOT / "tools/install-linux-desktop.sh"
+        ).read_text(encoding="utf-8"))
         for maintainer_script in (postinst, postrm):
             self.assertIn("gtk4-update-icon-cache", maintainer_script)
             self.assertIn("gtk-update-icon-cache", maintainer_script)
@@ -137,7 +157,7 @@ class DesktopPackagingTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/release.yml").read_text(
             encoding="utf-8"
         )
-        self.assertEqual("1.0.1", (ROOT / "VERSION").read_text(encoding="utf-8").strip())
+        self.assertEqual("1.0.2", (ROOT / "VERSION").read_text(encoding="utf-8").strip())
         for required in (
             "debian:trixie-slim",
             "ubuntu:24.04",
@@ -150,7 +170,7 @@ class DesktopPackagingTests(unittest.TestCase):
             self.assertIn(required, workflow)
         self.assertIn("tools/build-source-archive.sh", workflow)
         self.assertIn('cd "$stage/opt/acorn-file-forge"', workflow)
-        self.assertTrue((ROOT / "docs/releases/1.0.1.md").is_file())
+        self.assertTrue((ROOT / "docs/releases/1.0.2.md").is_file())
 
 
 if __name__ == "__main__":
