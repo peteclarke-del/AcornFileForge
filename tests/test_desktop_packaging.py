@@ -137,7 +137,7 @@ class DesktopPackagingTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/release.yml").read_text(
             encoding="utf-8"
         )
-        self.assertEqual("1.0.0", (ROOT / "VERSION").read_text(encoding="utf-8").strip())
+        self.assertEqual("1.0.1", (ROOT / "VERSION").read_text(encoding="utf-8").strip())
         for required in (
             "debian:trixie-slim",
             "ubuntu:24.04",
@@ -150,7 +150,7 @@ class DesktopPackagingTests(unittest.TestCase):
             self.assertIn(required, workflow)
         self.assertIn("tools/build-source-archive.sh", workflow)
         self.assertIn('cd "$stage/opt/acorn-file-forge"', workflow)
-        self.assertTrue((ROOT / "docs/releases/1.0.0.md").is_file())
+        self.assertTrue((ROOT / "docs/releases/1.0.1.md").is_file())
 
 
 if __name__ == "__main__":
