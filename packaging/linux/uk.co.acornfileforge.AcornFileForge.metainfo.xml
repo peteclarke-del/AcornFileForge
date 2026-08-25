@@ -28,6 +28,11 @@
   <url type="homepage">https://github.com/peteclarke-del/AcornFileForge</url>
   <url type="bugtracker">https://github.com/peteclarke-del/AcornFileForge/issues</url>
   <releases>
+    <release version="1.0.2" date="2026-08-25">
+      <description>
+        <p>Restores reliable Linux application-menu and running-window icons with fixed-size fallbacks, explicit GTK identity and complete icon-cache refreshes.</p>
+      </description>
+    </release>
     <release version="1.0.1" date="2026-08-25">
       <description>
         <p>Adds an About dialog with live application, host and filesystem-engine details, package links and licence information.</p>

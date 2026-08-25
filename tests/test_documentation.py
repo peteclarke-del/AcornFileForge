@@ -81,7 +81,7 @@ class DocumentationTests(unittest.TestCase):
     def test_hxcfe_runtime_and_hfe_workflow_are_documented(self) -> None:
         guide = (ROOT / "docs" / "HFE-HXC-GUIDE.md").read_text(encoding="utf-8")
         help_text = (ROOT / "app" / "static" / "help.js").read_text(encoding="utf-8")
-        release = (ROOT / "docs" / "releases" / "1.0.1.md").read_text(
+        release = (ROOT / "docs" / "releases" / "1.0.2.md").read_text(
             encoding="utf-8"
         )
         for required in (
