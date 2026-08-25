@@ -411,9 +411,12 @@ rationale and author. A valid `.affcheat.json` record contains:
 Apply repeats both the complete-file hash check and the original-byte check. It
 then writes through the normal filesystem transaction, which creates an image
 checkpoint before the change. A mismatched revision, byte sequence or target
-is refused. The browser-private patch library stores no image data, is limited
+is refused. The host-private patch library stores no image data, is limited
 to 500 records and matches by exact hash rather than a title. Entries can be
 exported individually and cleared without affecting images or checkpoints.
+The web edition retains it in origin-scoped browser storage. The Linux desktop
+edition retains it in the same private XDG client-state file as workspace
+settings and the collection catalogue.
 Archive members and BASIC source are not patch targets in this first guarded
 workflow. Emulator observations are tester supplied until managed watchpoint
 capture can correlate runtime events automatically.

@@ -50,11 +50,35 @@ GTK module paths when started from an IDE terminal, preventing incompatible
 Snap libraries from being loaded into the native application.
 
 Some Ubuntu installations deny the unprivileged user namespace that
-WebKitGTK's Bubblewrap process normally creates. The launcher enables WebKit's
-fallback mode so the application does not disappear before drawing its first
-window. This fallback is deliberately limited to the desktop host, whose
-WebView loads only the authenticated service bound to `127.0.0.1`; it does not
-change the Docker/browser edition.
+WebKitGTK's Bubblewrap process normally creates. The launcher detects that
+specific kernel restriction and enables WebKit's compatibility fallback only
+when required. Set `ACORN_FILE_FORGE_DISABLE_WEBKIT_SANDBOX=0` to require the
+sandbox, `1` to force the fallback for diagnosis, or leave the default `auto`.
+The fallback is limited to the desktop host, whose WebView loads only the
+authenticated service bound to `127.0.0.1`; it does not change the
+Docker/browser edition.
+
+## Install a release package
+
+A release `.deb` installs the same desktop host without retaining a Git
+checkout or creating a per-checkout virtual environment:
+
+```bash
+sudo apt install ./acorn-file-forge_VERSION_ARCH.deb
+```
+
+The package places the shared application in `/opt/acorn-file-forge` and the
+launcher at `/usr/bin/acorn-file-forge`. It registers the application menu,
+file associations, icon, AppStream metadata and `acorn-file-forge(1)` manual.
+Pinned Python dependencies are included in an architecture-specific vendor
+directory. GTK, Libadwaita, WebKit and PyGObject remain distribution packages
+so security updates continue to come from APT.
+
+Build packages on the Debian or Ubuntu release that will run them. Native
+Python extensions are not assumed to be portable between different Python
+ABIs. The package intentionally excludes firmware, commercial images and
+managed emulator binaries. Configure installed emulators with the variables in
+the Emulator paths section below.
 
 Launch **Acorn File Forge** from the desktop application menu, run
 `~/.local/bin/acorn-file-forge`, or open a registered SSD, DSD, MMB, ADFS,
@@ -63,9 +87,11 @@ matched automatically when they share a basename.
 
 The folder button in the native header, **File → Open image** in a pane and
 <kbd>Ctrl</kbd>+<kbd>O</kbd> all use the GTK file chooser. This keeps local media
-off the browser upload path. The chooser uses automatic target detection; use
-the Workbench hardware profile to describe the intended machine before making
-target-specific changes.
+off the browser upload path. A compact review appears before anything opens.
+It starts with the active Workbench target, permits an explicit ADFS target and
+lets multiple ROM files be opened independently or assembled as one linear or
+byte-interleaved component set. The same review is used for file associations
+and file-manager drops.
 
 You can also drag image files from the Linux file manager onto a workbench
 pane. The first image targets the pane under the pointer and further images use
@@ -80,6 +106,11 @@ bytes through WebKit.
   closes it with the GTK application.
 - A launch token protects every private service request. It is removed from
   the visible WebView address immediately after startup.
+- A separate private owner identifier remains stable between launches. It
+  recovers this Linux user's sessions without weakening the per-launch token.
+- Workspace settings, hardware profiles and the private collection catalogue
+  are retained in an atomic, mode-0600 XDG configuration file. They therefore
+  survive the random loopback port and WebView-origin change.
 - Native path selection avoids uploading through a browser request. The source
   is cloned by the filesystem when supported, otherwise it is sparse-copied to
   a safe working session before editing. A 512 MiB BeebSCSI DAT therefore does
@@ -88,8 +119,11 @@ bytes through WebKit.
   The expensive full-image sparse optimisation is deferred until Save, where
   the existing progress dialog describes directory repair, checksum and final
   validation stages.
-- Working sessions are stored under the XDG data directory and recover just as
-  browser-owned sessions do.
+- Working sessions are stored under the XDG data directory and use the same
+  owner-isolated recovery model as the web edition.
+- Reviewed native open plans run through one serial worker. A second chooser or
+  file-manager action cannot race the first session creation or reuse a stale
+  preferred pane.
 - Save image produces the same timestamped ZIP and technical README. WebKitGTK
   writes it to the user's normal Downloads directory.
 - **Tools → Build hardware deployment** uses the same isolated snapshot and

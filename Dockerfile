@@ -131,4 +131,4 @@ RUN mkdir -p /app/work
 
 EXPOSE 8666 8668
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8666", "--workers", "1", "--threads", "8", "--timeout", "300", "--access-logfile", "-", "app.server:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8666", "--workers", "1", "--threads", "8", "--timeout", "300", "--access-logfile", "-", "app.wsgi:app"]

@@ -54,3 +54,21 @@ test("collection backup validation rejects unversioned input", () => {
     images: [{ id: "one", records: [], menus: [] }],
   }).images.length, 1);
 });
+
+(async () => {
+  let document = { images: [], settings: { key: "preferences", wanted: [] } };
+  const remote = catalogue.createRemote({
+    load: async () => structuredClone(document),
+    save: async value => { document = structuredClone(value); },
+    now: () => "2026-08-24T12:00:00Z",
+    uuid: () => "remote-one",
+  });
+  await remote.upsertManifest(manifest("desktop.mmb", "c", "Chuckie Egg"), { sessionId: "desktop-session" });
+  await remote.saveSettings({ wanted: ["Elite"] });
+  assert.equal((await remote.list())[0].id, "remote-one");
+  assert.deepEqual(Array.from((await remote.settings()).wanted), ["Elite"]);
+  process.stdout.write("ok - remote collection adapter persists through its host store\n");
+})().catch(error => {
+  process.stderr.write(`not ok - remote collection adapter persists through its host store\n${error.stack}\n`);
+  process.exitCode = 1;
+});

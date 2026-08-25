@@ -41,7 +41,7 @@ that match the running frontend.
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | DFS SSD and DSD | Yes | Yes, including load/execute words | Yes | Files and complete images | Catalogue, access and capacity checks | Image, metadata and README |
 | MMB banks | Yes, including empty slots | Yes | Yes | Slots, batches and open image panes | Duplicates, menus, PAGE, access and slot health | MMB and README |
-| ADFS S, M, L, E and F floppy images | Yes, including directories | Yes, including load/execute words | Yes | Files, directories and images | Filesystem, map, launcher and compatibility checks | Image, metadata and README |
+| ADFS and FileCore S/M/L/D/E/E+/F/F+/G/G+ images | Yes, including directories | Where the detected layout is writable, including load/execute words | Yes, for supported layouts | Files, directories and images | Filesystem, map, launcher and compatibility checks | Image, metadata and README |
 | BeebSCSI DAT and DSC | Yes, including deep trees | Yes, including load/execute words | Yes | Files, trees and extracted disks | Geometry, map, directory and installed-software checks | DAT, DSC and README |
 | HDF, HDD, IMG, RAW and BIN FileCore media | Yes | Where the detected layout is writable | Selected layouts | Files and directories | Geometry, map and target-profile checks | Image and README |
 | UEF tapes | Yes, as a decoded hierarchy | Same-length proven members | No | Extracted files into writable media | Physical chunks, reconstruction proof and structural comparison | Rebuilt source or converted media |
@@ -87,7 +87,7 @@ for a read-only gameplay-state report. It distinguishes strong,
 likely and possible evidence, supports purpose filters and links to optional
 online identification and specialist references. It does not patch uncertain
 code. Proven machine-code changes can be saved as exact-hash guarded patches;
-the browser-private library matches the complete file hash and original bytes,
+the host-private library matches the complete file hash and original bytes,
 then applies through an automatic checkpoint. Runtime observations remain
 tester supplied until managed watchpoint correlation is complete. See the
 [cheat analysis guide](CHEAT-ANALYSIS-GUIDE.md).
@@ -138,8 +138,10 @@ decisions. See the [CLI guide](CLI-GUIDE.md).
 
 ### Catalogue a collection
 
-The header **Collection** command indexes complete manifests in browser-private
-IndexedDB. It records user-supplied locations and machines, identifies exact
+The header **Collection** command indexes complete manifests in private local
+state. The web edition uses origin-scoped IndexedDB; the Linux desktop edition
+uses an atomic, mode-0600 XDG configuration file. It records user-supplied
+locations and machines, identifies exact
 cross-image content and title variants, maintains a wanted-title list and marks
 entries stale when an open image revision changes. Full database backup/import
 and a smaller report export remain separate. See the

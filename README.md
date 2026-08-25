@@ -31,7 +31,8 @@ Paste handle files and MMB slots, while Alt+Left and Alt+Right on a pane grip
 reorders panes.
 
 The operating-system colour preference is used on first visit. The Light / Dark
-button in the header stores the chosen mode in this browser. Theme colours live
+button in the header stores the chosen mode in the current host's private
+state. Theme colours live
 in `app/static/theme.css` as semantic custom properties. Layout, typography and
 component geometry live separately in `app/static/styles.css`, so another
 palette can be introduced without rewriting the interface. Any new palette
@@ -66,10 +67,30 @@ tools/install-linux-desktop.sh
 tools/acorn-file-forge-desktop
 ```
 
+Release builds also provide a native-architecture Debian package. Install it
+on the Debian or Ubuntu release for which it was built:
+
+```bash
+sudo apt install ./acorn-file-forge_VERSION_ARCH.deb
+acorn-file-forge
+```
+
+The package installs the application under `/opt/acorn-file-forge`, registers
+the launcher, icon, MIME types, AppStream record and manual page, and vendors
+the pinned Python packages. It does not bundle Acorn firmware or commercial
+media. Build a package for the current machine with
+`tools/build-linux-package.sh`; build the complete clean-tree release set with
+`tools/build-release.sh`.
+
 The native chooser accepts several images at once. Supported images can also
 be dragged from the Linux file manager onto a pane. Matching DAT and DSC files
 are paired before opening, and both paths use the fast private local-file
-adapter rather than uploading bytes through WebKit.
+adapter rather than uploading bytes through WebKit. A review step applies the
+active hardware profile, permits an explicit ADFS target and distinguishes
+separate ROM images from linear or byte-interleaved physical ROM sets. Native
+opens are serialised, while a stable private owner and XDG-backed client state
+retain sessions, workspace settings, profiles and the collection catalogue
+across random-port desktop launches.
 
 Read the [Linux desktop guide](docs/LINUX-DESKTOP.md) for prerequisite packages,
 XDG storage, emulator paths and removal. The
@@ -108,21 +129,23 @@ they will not be committed or packaged.
 
 The current release candidate is `1.0.0-rc.2`. It provides the editing and
 transfer workflows described in this guide, including movable, resizable and
-stackable panes, undo and named checkpoints, browser-private recovery,
+stackable panes, undo and named checkpoints, owner-isolated recovery,
 background job tracking, MMB and ADFS menu maintenance, HFE handling, an Online
 Library and hardware-aware ADFS checks. UEF projects expose the physical chunk
 layout and permit same-length member edits only when the recording can be
-rebuilt without altering timing or unknown chunks. A browser-private IndexedDB
+rebuilt without altering timing or unknown chunks. A host-private collection
 catalogue retains owned-image manifests, hashes, menu titles, publishers,
 machines and physical locations, then reports duplicates, variants and missing
-wanted titles even when those images are closed.
+wanted titles even when those images are closed. The web edition uses
+origin-scoped IndexedDB. The Linux desktop edition stores the same bounded
+state atomically in its private XDG configuration directory.
 
 Raw and banked ROM analysis, editable Acorn ROMFS data images, content-aware
 file editors, archive browsing, guarded BASIC transformations and annotated
 6502, ARM and 68000 disassembly are included. Cheat analysis combines static
 evidence with tester-supplied emulator observations; proven changes can be
-packaged as exact-hash guarded patches and retained in a private browser
-library. Managed Elkulator, B-em and MAME sessions support the media each tool
+packaged as exact-hash guarded patches and retained in the same host-private
+state. Managed Elkulator, B-em and MAME sessions support the media each tool
 can mount. Electron MMFS profiles can test a complete MMB through a generated
 private FAT32 card and the Pi1MHz adapter. Recognised menu programs can also be
 captured in the emulator sandbox for comparison with their decoded preview.
@@ -151,7 +174,8 @@ the reusable release checklist.
 - The [file editor and code analysis handbook](docs/FILE-EDITOR-GUIDE.md) covers
   content detection, BASIC and script editing, source transformations,
   disassembly projects, archives, synchronized bytes and emulator hand-off.
-- The [installation guide](docs/INSTALLATION.md) covers desktop and Raspberry Pi builds, updates, retained sessions and common failures.
+- The [installation guide](docs/INSTALLATION.md) covers Docker, Debian packages,
+  Raspberry Pi builds, updates, retained sessions and common failures.
 - The [Linux desktop guide](docs/LINUX-DESKTOP.md) covers the GTK application,
   native file handling, XDG storage and emulator configuration.
 - The [physical floppy guide](docs/PHYSICAL-FLOPPY-GUIDE.md) covers optional
@@ -159,7 +183,8 @@ the reusable release checklist.
 - The [platform contract](docs/PLATFORM-CONTRACT.md) defines the mandatory
   parity boundary between browser and native hosts.
 - The [headless CLI guide](docs/CLI-GUIDE.md) covers automation, stable JSON results, dry-runs and deterministic recipes.
-- The [private collection guide](docs/COLLECTION-GUIDE.md) covers browser-owned indexing, stale revisions, reports, backups and privacy boundaries.
+- The [private collection guide](docs/COLLECTION-GUIDE.md) covers web and Linux
+  desktop indexing, stale revisions, reports, backups and privacy boundaries.
 - The [cheat-candidate analysis guide](docs/CHEAT-ANALYSIS-GUIDE.md) covers BASIC and machine-code evidence, confidence, online references and safe emulator verification.
 - The [release checklist](docs/RELEASE-CHECKLIST.md) defines the generated-media, fault-injection, benchmark, browser and real-hardware gates.
 - [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md),
@@ -494,7 +519,7 @@ copy preserves sparse zero ranges instead of writing hundreds of megabytes of
 unused DAT capacity. The logical checkpoint remains a complete byte-for-byte
 image and restores normally.
 
-Checkpoints live inside the private, browser-owned working session. They
+Checkpoints live inside the private, owner-isolated working session. They
 survive normal refreshes and container restarts with the Docker work volume,
 but clearing that recovery session or removing the volume removes its
 checkpoints too. They are not a replacement for downloading an important
@@ -579,7 +604,7 @@ address, two distinct emulator gameplay observations, an explanation and an
 author. It records the complete source SHA-256, original and replacement bytes,
 hardware profile and rollback instructions. Apply checks that exact hash and
 the guarded bytes again, then uses the normal automatic image checkpoint. A
-browser-private library retains up to 500 of these small patch records and
+host-private library retains up to 500 of these small patch records and
 matches by exact file content, never by a title or filename. The observations
 are deliberately entered by the tester: automatic debugger-to-gameplay
 correlation remains an open proof gate and the UI does not pretend otherwise.
@@ -1268,7 +1293,7 @@ dependency also removes any combination that can no longer exist.
 
 A profile also records the Online Library filter, filing system, MMFS build,
 expected PAGE, ADFS validation target, and managed emulator, debugger, RAM and
-startup choices. Custom profiles are stored in the browser and the applied
+startup choices. Custom profiles are stored in the current host's private state and the applied
 profile is also persisted with the private image session. The health dashboard
 highlights conflicts such as using the Tube with Electron or low-PAGE MMFS
 software. The active Workbench profile is remembered and supplies the workspace
@@ -2428,14 +2453,17 @@ first. Recovery preserves completed edits after a refresh, accidental browser
 navigation, interrupted download, or container restart. Removing the Docker
 volume removes those sessions.
 
-Recovery is private to the browser that opened or created the image. The server
-issues a random, year-long `HttpOnly`, `SameSite=Strict` ownership cookie and
-mirrors the same opaque ID in origin-scoped browser storage. Either copy can
-restore the other after a browser update or container restart. Recovery
-listings, direct image API access and deletion all enforce the owner match.
-There is no shared global session browser. Clearing both site cookies and site
-storage deliberately breaks the link, so important work should be downloaded
-before browser data is cleared.
+Recovery is private to the owner that opened or created the image. In the web
+edition the server issues a random, year-long `HttpOnly`, `SameSite=Strict`
+ownership cookie and mirrors the same opaque ID in origin-scoped browser
+storage. Either copy can restore the other after a browser update or container
+restart. The desktop edition keeps a stable owner ID in
+`$XDG_CONFIG_HOME/acorn-file-forge/owner-id`, or the corresponding directory
+under `~/.config`, with mode `0600`. Recovery listings, direct image API access
+and deletion always enforce that owner match. There is no shared global session
+browser. Clearing both site cookies and site storage breaks web recovery;
+deleting the desktop owner ID breaks desktop recovery. Download important work
+before clearing either identity.
 
 Closing a work pane now detaches the image without deleting its server-side
 working copy. Reopen it through **Recover previous session**. Permanent removal
@@ -2524,12 +2552,22 @@ in the [project repository](https://github.com/peteclarke-del/AcornFileForge).
   up to 300 seconds.
 - Acorn filenames are matched case-insensitively. The application preserves
   the spelling stored in the image.
-- For safe cross-format operation, the interface rejects control characters
-  and path syntax characters even if a byte-edited source image happens to
-  contain them.
+- One canonical filename policy is used by browser uploads, native path opens,
+  clipboard operations, drag and drop, Online Library imports and dry-runs.
+  DFS leaves allow seven Latin-1 characters, MMB disk titles allow twelve,
+  ROMFS leaves allow ten, and ADFS uses the detected directory limit: normally
+  ten, or up to 255 for FileCore Big directories.
+- Leading or trailing whitespace, control characters, path syntax and names
+  that cannot be represented in Latin-1 are rejected at the API boundary. The
+  compatibility review can propose NFKC-normalised replacements, underscores
+  and safe truncation before the first write. Collision checks are
+  case-insensitive and scoped to the destination parent, so identical leaf
+  names in different directories do not conflict. Duplicate MMB disk titles
+  remain valid because slot identity is independent of title.
 - Compact is important for old-map ADFS and DFS. New-map media would not need
-  the same contiguous-free-space maintenance, but those formats are outside
-  the current write support.
+  the same contiguous-free-space maintenance. Released Oaknut support provides
+  writable FileCore D/E/E+/F/F+/G/G+ layouts where the detected container and
+  directory format can be preserved safely.
 
 ## Configuration
 
@@ -2542,6 +2580,7 @@ services:
     container_name: acorn-file-forge
     ports:
       - "8666:8666"
+      - "8668:8668"
     environment:
       ACORN_FILE_FORGE_WORK_DIR: /app/work
       ACORN_MAX_UPLOAD_GIB: "8"
@@ -2587,6 +2626,8 @@ parallel reads and prevent overlapping writes to the same image.
 
 Backend routes are split by responsibility:
 
+- `app/wsgi.py` is the Gunicorn composition root. It creates the production
+  service without making route modules depend on process startup.
 - `app/routes/images.py` handles opening, creating, saving, conversion, and
   compaction.
 - `app/routes/files.py` handles tree browsing, file operations, extraction,
@@ -2612,12 +2653,18 @@ Backend routes are split by responsibility:
   JSON decoding and user-facing engine error cleanup. `DiskService` retains
   compatibility wrappers so established callers and tests remain stable.
 - `app/beebscsi_geometry.py` owns BeebSCSI descriptor and old-map geometry calculations.
+- `app/filename_policy.py` is the canonical filesystem name policy shared by
+  validation, import planning and mutation services.
+- `app/desktop_state.py` validates and atomically stores the Linux desktop
+  workspace, profile, collection and editor state in its private XDG file.
 - `app/mmb_layout.py` owns MMB header, record, slot and image offset calculations.
 - `app/mmb_disk_service.py` owns sequential MMB slot catalogue reads and menu
   signature searches. It is composed into `DiskService` as a focused mixin so
   callers keep one stable image API.
 - `app/rom_disk_service.py` owns raw ROM bank inspection, layout, movement,
   replacement, physical-component export and persistent ROM/editor projects.
+- `app/rom_components.py` validates physical ROM component ordering,
+  interleaving and the 64 MiB combined-image bound.
 - `app/tape_disk_service.py` owns cached UEF access and UEF-to-DFS conversion,
   proof-gated same-length tape-member rebuilds, generated boot files, filename
   allocation and loader rewrites. It

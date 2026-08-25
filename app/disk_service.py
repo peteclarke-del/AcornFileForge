@@ -38,6 +38,7 @@ from .image_session import (
     SESSION_OWNER as SESSION_OWNER,
 )
 from .formats import ADFS_EXTENSIONS, DFS_EXTENSIONS, HFE_EXTENSIONS, MMB_EXTENSIONS, ROM_EXTENSIONS, TAPE_EXTENSIONS
+from .filename_policy import session_name_policy
 from .filesystem_disk_service import FilesystemDiskMixin
 from .mmb_layout import (
     ENTRY_SIZE as MMB_ENTRY_SIZE,
@@ -157,30 +158,7 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
 
     @staticmethod
     def validate_leaf_name(session: ImageSession, name: str, slot: int | None = None) -> str:
-        name = str(name or "")
-        if session.kind == "romfs":
-            if not name:
-                raise DiskError("Enter a ROMFS filename.")
-            if len(name) > 10:
-                raise DiskError("ROMFS filenames can contain at most 10 characters.")
-            try:
-                name.encode("latin-1")
-            except UnicodeEncodeError as exc:
-                raise DiskError("ROMFS filenames must use Latin-1 characters.") from exc
-            if "\0" in name or any(ord(char) < 32 for char in name):
-                raise DiskError("ROMFS filenames cannot contain NUL or control characters in the editor.")
-            return name
-        name = name.strip()
-        is_dfs = session.kind == "dfs" or (session.kind == "mmb" and slot is not None)
-        limit = 7 if is_dfs else int(session.adfs_capabilities.get("nameLimit") or 10)
-        label = "DFS" if is_dfs else "ADFS"
-        if not name:
-            raise DiskError(f"Enter a {label} filename.")
-        if len(name) > limit:
-            raise DiskError(f"{label} filenames can contain at most {limit} characters.")
-        if any(ord(char) < 32 or char in ".:*#/" for char in name):
-            raise DiskError(f"“{name}” contains a character that cannot be used in a {label} filename.")
-        return name
+        return session_name_policy(session, slot).validate(name)
 
     @staticmethod
     def require_writable_geometry(session: ImageSession) -> None:

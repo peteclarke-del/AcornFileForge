@@ -22,18 +22,27 @@ class DesktopPackagingTests(unittest.TestCase):
 
     def test_launcher_resolves_symlink_and_removes_snap_gtk_paths(self) -> None:
         launcher = (ROOT / "tools/acorn-file-forge-desktop").read_text(encoding="utf-8")
+        environment = (ROOT / "tools/linux-desktop-environment.sh").read_text(
+            encoding="utf-8"
+        )
 
         self.assertIn('launcher_path=$(readlink -f -- "$0")', launcher)
-        self.assertIn("GDK_PIXBUF_MODULEDIR", launcher)
-        self.assertIn("GSETTINGS_SCHEMA_DIR", launcher)
-        self.assertIn('"$HOME"/snap/*', launcher)
+        self.assertIn("linux-desktop-environment.sh", launcher)
+        self.assertIn("GDK_PIXBUF_MODULEDIR", environment)
+        self.assertIn("GSETTINGS_SCHEMA_DIR", environment)
+        self.assertIn('"$HOME"/snap/*', environment)
 
     def test_launcher_handles_restricted_webkit_user_namespaces(self) -> None:
         launcher = (ROOT / "tools/acorn-file-forge-desktop").read_text(encoding="utf-8")
+        environment = (ROOT / "tools/linux-desktop-environment.sh").read_text(
+            encoding="utf-8"
+        )
         desktop_host = (ROOT / "desktop/__main__.py").read_text(encoding="utf-8")
 
-        self.assertIn("WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1", launcher)
-        self.assertIn("authenticated, loopback-only", launcher)
+        self.assertIn("linux-desktop-environment.sh", launcher)
+        self.assertIn("WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1", environment)
+        self.assertIn("apparmor_restrict_unprivileged_userns", environment)
+        self.assertIn("ACORN_FILE_FORGE_DISABLE_WEBKIT_SANDBOX", environment)
         self.assertIn('self.webview.connect("decide-policy", self._navigation_policy)', desktop_host)
         self.assertIn("Gio.AppInfo.launch_default_for_uri", desktop_host)
 
@@ -64,6 +73,49 @@ class DesktopPackagingTests(unittest.TestCase):
         self.assertIn('"$HOME/.local/share"', paths)
         self.assertIn("XDG_DATA_DIRS_VSCODE_SNAP_ORIG", installer)
         self.assertIn("inherited_data_home", installer)
+
+    def test_debian_package_reuses_shared_application_and_desktop_environment(self) -> None:
+        builder = (ROOT / "tools/build-linux-package.sh").read_text(encoding="utf-8")
+        launcher = (ROOT / "packaging/linux/acorn-file-forge").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('cp -a "$project_root/app" "$project_root/desktop"', builder)
+        self.assertIn("linux-desktop-environment.sh", launcher)
+        self.assertIn('PYTHONPATH="$project_root/vendor:$project_root', launcher)
+        self.assertIn("dpkg-deb --build --root-owner-group", builder)
+        self.assertNotIn("firmware", builder)
+
+    def test_debian_package_registers_desktop_mime_appstream_and_manual(self) -> None:
+        builder = (ROOT / "tools/build-linux-package.sh").read_text(encoding="utf-8")
+        metainfo = (
+            ROOT / "packaging/linux/uk.co.acornfileforge.AcornFileForge.metainfo.xml"
+        ).read_text(encoding="utf-8")
+
+        for required in (
+            "uk.co.acornfileforge.AcornFileForge.desktop",
+            "uk.co.acornfileforge.AcornFileForge.xml",
+            "uk.co.acornfileforge.AcornFileForge.metainfo.xml",
+            "acorn-file-forge.1.gz",
+        ):
+            self.assertIn(required, builder)
+        self.assertIn("<id>uk.co.acornfileforge.AcornFileForge</id>", metainfo)
+
+    def test_debian_dependency_lock_contains_every_application_requirement(self) -> None:
+        application = {
+            line.strip().lower()
+            for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.startswith("#")
+        }
+        package_lock = {
+            line.strip().lower()
+            for line in (
+                ROOT / "packaging/linux/requirements-debian.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.startswith("#")
+        }
+
+        self.assertTrue(application.issubset(package_lock))
 
 
 if __name__ == "__main__":

@@ -166,5 +166,77 @@
     return { available: true, list, settings, saveSettings, upsertManifest, markStale, remove, clear, exportBackup, importBackup };
   }
 
-  root.AcornCollectionCatalogue = { BACKUP_FORMAT, BACKUP_VERSION, catalogueEntry, collectionReport, create, imageKey, titleKey, titlesFromManifest, validateBackup };
+  function createRemote({ load, save, now, uuid }) {
+    if (typeof load !== "function" || typeof save !== "function") return { available: false };
+    let serial = Promise.resolve();
+    const normalise = document => ({
+      images: Array.isArray(document?.images) ? document.images : [],
+      settings: document?.settings && typeof document.settings === "object"
+        ? document.settings
+        : { key: "preferences", wanted: [] },
+    });
+    const read = async () => normalise(await load());
+    const mutate = operation => {
+      const result = serial.then(async () => {
+        const document = await read();
+        const value = await operation(document);
+        await save(document);
+        return value;
+      });
+      serial = result.catch(() => {});
+      return result;
+    };
+    const settledRead = async () => {
+      await serial;
+      return read();
+    };
+    const list = async () => (await settledRead()).images;
+    const settings = async () => (await settledRead()).settings;
+    const saveSettings = value => mutate(document => {
+      document.settings = { key: "preferences", wanted: (value.wanted || []).map(text).filter(Boolean) };
+    });
+    const upsertManifest = (manifest, options = {}) => mutate(document => {
+      const key = imageKey(manifest.image?.kind, manifest.image?.name, options.location);
+      const previous = document.images.find(entry => options.id ? entry.id === options.id : entry.sessionId === options.sessionId || entry.imageKey === key);
+      const entry = catalogueEntry(manifest, options, previous, now, uuid);
+      const offset = document.images.findIndex(item => item.id === entry.id);
+      if (offset >= 0) document.images[offset] = entry;
+      else document.images.push(entry);
+      return entry;
+    });
+    const markStale = image => mutate(document => {
+      let changed = 0;
+      document.images = document.images.map(entry => {
+        const matches = entry.sessionId === image.id || (entry.name === image.name && entry.kind === image.kind);
+        if (!matches || !image.revision || entry.revision === image.revision || entry.stale) return entry;
+        changed += 1;
+        return { ...entry, stale: true };
+      });
+      return changed;
+    });
+    const remove = ids => mutate(document => {
+      const selected = new Set(ids);
+      document.images = document.images.filter(entry => !selected.has(entry.id));
+    });
+    const clear = () => mutate(document => {
+      document.images = [];
+      document.settings = { key: "preferences", wanted: [] };
+    });
+    const exportBackup = async () => {
+      const document = await settledRead();
+      return { format: BACKUP_FORMAT, version: BACKUP_VERSION, exportedAt: (now || (() => new Date().toISOString()))(), ...document };
+    };
+    const importBackup = (documentValue, replace = false) => mutate(document => {
+      validateBackup(documentValue);
+      if (replace) document.images = [];
+      const byId = new Map(document.images.map(entry => [entry.id, entry]));
+      documentValue.images.forEach(entry => byId.set(entry.id, entry));
+      document.images = [...byId.values()];
+      if (documentValue.settings) document.settings = documentValue.settings;
+      return documentValue.images.length;
+    });
+    return { available: true, list, settings, saveSettings, upsertManifest, markStale, remove, clear, exportBackup, importBackup };
+  }
+
+  root.AcornCollectionCatalogue = { BACKUP_FORMAT, BACKUP_VERSION, catalogueEntry, collectionReport, create, createRemote, imageKey, titleKey, titlesFromManifest, validateBackup };
 })(typeof window === "undefined" ? globalThis : window);

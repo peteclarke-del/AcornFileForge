@@ -19,10 +19,10 @@ from app.platform_contract import (
 try:
     from app.server import create_app
     from app.routes.desktop import _image_pair
-    from desktop.__main__ import _paired_selection
+    from desktop.__main__ import _paired_selection, _review_open_plans
     from desktop.runtime import DesktopServer, desktop_paths
 except ModuleNotFoundError:  # Flask and Werkzeug are container dependencies.
-    create_app = DesktopServer = desktop_paths = _image_pair = _paired_selection = None
+    create_app = DesktopServer = desktop_paths = _image_pair = _paired_selection = _review_open_plans = None
 
 
 class PlatformContractTests(unittest.TestCase):
@@ -40,6 +40,7 @@ class PlatformContractTests(unittest.TestCase):
                 work_dir=root / "desktop",
                 platform="desktop",
                 desktop_token="d" * 32,
+                desktop_owner="o" * 32,
             )
 
         web_routes = {rule.endpoint for rule in web.url_map.iter_rules()}
@@ -60,6 +61,7 @@ class PlatformContractTests(unittest.TestCase):
                 work_dir=Path(temporary),
                 platform="desktop",
                 desktop_token="d" * 32,
+                desktop_owner="o" * 32,
             )
             client = app.test_client()
             denied = client.get("/api/health")
@@ -68,6 +70,8 @@ class PlatformContractTests(unittest.TestCase):
             )
 
         self.assertEqual(denied.status_code, 403)
+        self.assertNotIn("X-Acorn-Session-Owner", denied.headers)
+        self.assertNotIn("acorn_file_forge_owner", denied.headers.get("Set-Cookie", ""))
         self.assertEqual(allowed.status_code, 200)
         contract = allowed.get_json()["platform"]
         self.assertEqual(contract["format"], PLATFORM_CONTRACT_FORMAT)
@@ -106,8 +110,33 @@ class PlatformContractTests(unittest.TestCase):
                     health = json.load(response)
 
         self.assertEqual(denied.exception.code, 403)
+        denied.exception.close()
         self.assertGreater(port, 0)
         self.assertEqual(health["platform"]["host"], "desktop")
+
+    @unittest.skipIf(DesktopServer is None, "Flask is available in the application container")
+    def test_desktop_owner_is_stable_while_launch_authentication_rotates(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary) / "work"
+            first = DesktopServer(work)
+            second = DesktopServer(work)
+
+        self.assertEqual(first.owner, second.owner)
+        self.assertNotEqual(first.token, second.token)
+
+    @unittest.skipIf(DesktopServer is None, "Flask is available in the application container")
+    def test_desktop_owner_recovers_from_non_ascii_state_and_is_private(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary) / "work"
+            config = Path(temporary) / "config"
+            config.mkdir()
+            owner_path = config / "owner-id"
+            owner_path.write_bytes(b"\xffbroken")
+
+            server = DesktopServer(work)
+
+            self.assertRegex(server.owner, r"^[A-Za-z0-9_-]{32,64}$")
+            self.assertEqual(owner_path.stat().st_mode & 0o777, 0o600)
 
     @unittest.skipIf(desktop_paths is None, "Desktop runtime dependencies unavailable")
     def test_desktop_paths_follow_xdg_locations(self) -> None:
@@ -172,6 +201,22 @@ class PlatformContractTests(unittest.TestCase):
 
         self.assertEqual(paired, [ssd.resolve(), dat.resolve()])
         self.assertEqual(descriptor_only, [dsc.resolve()])
+
+    @unittest.skipIf(_review_open_plans is None, "Desktop dependencies unavailable")
+    def test_native_open_batch_is_validated_before_it_is_queued(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            image = Path(temporary) / "one.ssd"
+            image.touch()
+            message = json.dumps({
+                "command": "open-plans",
+                "plans": [
+                    {"paths": [str(image)]},
+                    {"paths": [str(Path(temporary) / "missing.ssd")]},
+                ],
+            })
+
+            with self.assertRaisesRegex(ValueError, "no longer available"):
+                _review_open_plans(message)
 
 
 if __name__ == "__main__":

@@ -2,22 +2,35 @@
   "use strict";
 
   function targetNameRule(pane, original) {
-    if (pane.image?.kind === "rom") return { valid: true, suggested: original, limit: 180, label: "ROM bank", adjusted: false, truncated: false };
+    const policyKey = pane.image?.kind === "mmb" && pane.slot == null ? "disk" : "file";
+    const contract = pane.image?.filenamePolicies?.[policyKey];
+    if (pane.image?.kind === "rom") return { valid: true, suggested: original, limit: Number(contract?.limit || 180), label: contract?.label || "ROM bank", adjusted: false, truncated: false };
     if (pane.image?.kind === "romfs") {
       const raw = String(original || "");
-      const suggested = raw.normalize("NFKD").replace(/[^\x20-\xff]/g, "_").slice(0, 10) || "FILE";
+      const limit = Number(contract?.limit || 10);
+      const suggested = raw.normalize("NFKC").replace(/[^\x20-\xff]/g, "_").slice(0, limit) || "FILE";
       return {
-        valid: raw.length > 0 && raw.length <= 10 && !/[\x00-\x1f]/.test(raw),
-        suggested, limit: 10, label: "ROMFS", adjusted: raw !== suggested, truncated: raw.length > 10,
+        valid: raw.length > 0 && raw.length <= limit && !/[\x00-\x1f]/.test(raw),
+        suggested, limit, label: contract?.label || "ROMFS", adjusted: raw !== suggested, truncated: raw.length > limit,
       };
     }
     const isDfs = pane.image?.kind === "dfs" || (pane.image?.kind === "mmb" && pane.slot !== null);
-    const limit = isDfs ? 7 : Number(pane.image?.filesystemCapabilities?.nameLimit || 10);
-    const label = isDfs ? "DFS" : "ADFS";
+    const limit = Number(contract?.limit || (isDfs ? 7 : pane.image?.filesystemCapabilities?.nameLimit || 10));
+    const label = contract?.label || (isDfs ? "DFS" : "ADFS");
     const raw = String(original || "").split(/[/:]/).pop();
-    let suggested = raw.normalize("NFKD").replace(/[^\x20-\x7e]/g, "").replace(/[.:*#/]/g, "_").slice(0, limit);
+    const forbidden = String(contract?.forbidden || ".:*#/").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const invalidPattern = `[${forbidden}\\x00-\\x1f]`;
+    const invalid = new RegExp(invalidPattern, "g");
+    const latin1 = contract?.latin1 ?? true;
+    let suggested = Array.from(raw.normalize("NFKC"), character => (
+      latin1 && character.codePointAt(0) > 0xFF ? "_" : character
+    )).join("").replace(invalid, "_").trim().slice(0, limit);
     if (!suggested) suggested = "FILE";
-    const valid = raw.length > 0 && raw.length <= limit && !/[.:*#/\x00-\x1f]/.test(raw);
+    const valid = raw.length > 0
+      && raw === raw.trim()
+      && raw.length <= limit
+      && (!latin1 || Array.from(raw).every(character => character.codePointAt(0) <= 0xFF))
+      && !new RegExp(invalidPattern).test(raw);
     return { valid, suggested, limit, label, adjusted: !valid || raw !== suggested, truncated: raw.length > limit };
   }
 

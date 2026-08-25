@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 
 PLATFORM_CONTRACT_FORMAT = "acorn-file-forge-platform-contract"
-PLATFORM_CONTRACT_VERSION = 4
+PLATFORM_CONTRACT_VERSION = 5
 PLATFORM_KINDS = frozenset({"web", "desktop"})
 
 # A capability belongs here only when both hosts expose the same implementation
@@ -45,6 +45,8 @@ HOST_EXCLUSIVE_ENDPOINTS = {
     "web": frozenset(),
     "desktop": frozenset({
         "desktop.open_local_path",
+        "desktop.get_client_state",
+        "desktop.put_client_state",
         "desktop.physical_floppy_status",
         "desktop.write_physical_floppy",
     }),

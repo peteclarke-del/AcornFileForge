@@ -18,8 +18,10 @@ from acorn_greaseweazle import (
 )
 
 from ..disk_service import DiskError, DiskService
-from ..image_opening import open_image_path
+from ..desktop_state import DesktopClientState
+from ..image_opening import open_image_path, open_rom_component_paths
 from ..operations import OperationRegistry
+from ..rom_components import MAX_ROM_COMPONENTS
 from .common import payload
 from .effects import request_effect
 
@@ -145,14 +147,52 @@ def _physical_media(service: DiskService, session, details: dict, progress):
 def create_desktop_blueprint(
     service: DiskService,
     operations: OperationRegistry | None = None,
+    client_state: DesktopClientState | None = None,
 ) -> Blueprint:
     operations = operations or OperationRegistry()
     blueprint = Blueprint("desktop", __name__)
+
+    @blueprint.get("/api/desktop/client-state")
+    def get_client_state():
+        return jsonify((client_state or DesktopClientState(service.work_dir / "client-state.json")).read())
+
+    @blueprint.put("/api/desktop/client-state")
+    @request_effect("external", "saving durable Linux desktop preferences")
+    def put_client_state():
+        data = payload()
+        state = client_state or DesktopClientState(service.work_dir / "client-state.json")
+        document = state.update(
+            local_storage=data.get("localStorage") if "localStorage" in data else None,
+            collection=data.get("collection") if "collection" in data else None,
+        )
+        return jsonify(version=document["version"])
 
     @blueprint.post("/api/desktop/open-path")
     @request_effect("lifecycle", "opening a local desktop image session")
     def open_local_path():
         data = payload()
+        component_values = data.get("componentPaths")
+        if isinstance(component_values, list) and len(component_values) > 1:
+            if data.get("forceKind") != "rom":
+                raise DiskError("Multiple native paths require an explicit ROM component-set plan.")
+            if len(component_values) > MAX_ROM_COMPONENTS:
+                raise DiskError(
+                    f"A ROM set cannot contain more than {MAX_ROM_COMPONENTS} components."
+                )
+            components = [
+                _regular_file(value, "ROM component") for value in component_values
+            ]
+            rom = data.get("rom") if isinstance(data.get("rom"), dict) else {}
+            try:
+                session = open_rom_component_paths(
+                    service,
+                    components,
+                    layout=str(rom.get("layout") or "linear"),
+                    platform=str(rom.get("platform") or "bbc-master-electron"),
+                )
+            except (OSError, ValueError) as exc:
+                raise DiskError(str(exc)) from exc
+            return jsonify(image=service.summary(session))
         image_path, descriptor_path = _image_pair(data)
         session = open_image_path(
             service,

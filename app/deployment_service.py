@@ -325,7 +325,13 @@ def _deployment_plan(service, session, payload: dict, progress: Callable | None 
         "sourceKind": session.kind,
         "targetKind": "host",
         "changes": [
-            {"name": PurePosixPath(entry.path).name, "nameIsLeaf": True, "source": session.name, "type": entry.role}
+            {
+                "name": PurePosixPath(entry.path).name,
+                "nameIsLeaf": True,
+                "parent": str(PurePosixPath(entry.path).parent),
+                "source": session.name,
+                "type": entry.role,
+            }
             for entry in entries
         ],
     })

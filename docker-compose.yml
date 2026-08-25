@@ -15,7 +15,7 @@ services:
     command: >-
       sh -c "websockify --web=/usr/share/novnc 8668 localhost:5900 &
       exec gunicorn --bind 0.0.0.0:8666 --workers 1 --threads 8 --timeout 300
-      --access-logfile - app.server:app"
+      --access-logfile - app.wsgi:app"
 
 volumes:
   acorn-file-forge-work:

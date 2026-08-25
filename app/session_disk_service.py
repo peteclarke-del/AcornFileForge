@@ -9,6 +9,7 @@ from pathlib import Path
 from .checkpoints import CheckpointError
 from .editor_project import normalise_editor_project
 from .errors import DiskError
+from .filename_policy import session_name_policy, target_name_policy
 from .image_session import ImageSession, SESSION_OWNER
 from .rom import DEFAULT_BANK_SIZE, bank_count, validate_bank_size
 from .rom_workbench import normalise_project
@@ -366,6 +367,10 @@ class SessionDiskMixin:
         romfs = self.romfs_details(session) if session.kind == "romfs" else None
         image_stat = session.path.stat()
         image_size = image_stat.st_size
+        file_policy = session_name_policy(
+            session, 0 if session.kind == "mmb" else None
+        )
+        disk_policy = target_name_policy("mmb", item_type="disk image")
         return {
             "id": session.id,
             "name": session.name,
@@ -394,6 +399,10 @@ class SessionDiskMixin:
             } if session.kind == "rom" else None),
             "romfs": romfs,
             "filesystemCapabilities": session.adfs_capabilities or None,
+            "filenamePolicies": {
+                "file": file_policy.public_contract(),
+                "disk": disk_policy.public_contract() if session.kind == "mmb" else None,
+            },
             "targetHardware": session.target_hardware,
             "hardwareProfile": session.hardware_profile,
             "warnings": [

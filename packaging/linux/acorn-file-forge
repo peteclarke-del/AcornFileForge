@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+project_root=/opt/acorn-file-forge
+python=/usr/bin/python3
+
+. "$project_root/tools/linux-desktop-environment.sh"
+acorn_prepare_desktop_environment
+
+cd "$project_root"
+PATH="$project_root/vendor/bin:$PATH"
+PYTHONPATH="$project_root/vendor:$project_root${PYTHONPATH:+:$PYTHONPATH}"
+export PATH PYTHONPATH
+exec "$python" -m desktop "$@"
