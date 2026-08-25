@@ -47,6 +47,11 @@ The Docker image installs the same executable and libraries under
 5. Read the warning at the top of the pane. It states the HFE version, track
    count, side count, bitrate and whether the image is editable.
 
+An HFE is not considered successfully opened until its decoded DFS or ADFS
+catalogue can be listed in the pane. HFE recognition without a browseable Acorn
+filesystem is reported as a conversion or filesystem error, not as a blank
+disk.
+
 The original HFE is retained unchanged throughout the session. Filesystem edits
 are made to decoded working sectors, not directly to the selected host file.
 

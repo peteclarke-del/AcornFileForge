@@ -452,7 +452,19 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
         ])
         if not raw.is_file() or not raw.stat().st_size:
             raise DiskError("The HFE image did not contain a usable sector filesystem.")
-        kind = self.identify_kind(raw)
+        try:
+            kind = self.identify_kind(raw)
+        except DiskError as exc:
+            raise DiskError(
+                "HxCFE decoded the HFE track data, but the resulting sectors do not "
+                "contain a supported DFS or ADFS filesystem. The HFE container is "
+                "valid, but its contents cannot be browsed as an Acorn disk image."
+            ) from exc
+        if kind not in {"dfs", "adfs"}:
+            raise DiskError(
+                f"HxCFE decoded the HFE track data as {kind.upper()}, but only "
+                "DFS- and ADFS-formatted HFE floppy images are browseable."
+            )
         hfe_layout = (
             {163840: "ACORN_ADFS_160K", 327680: "ACORN_ADFM_320K", 655360: "ACORN_ADFL_640K"}.get(raw.stat().st_size)
             if kind == "adfs"

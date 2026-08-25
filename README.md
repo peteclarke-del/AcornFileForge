@@ -1401,6 +1401,13 @@ still stops only at a safe filesystem boundary.
 
 ## Supported media
 
+Every media family in this table is browseable through the normal pane workflow.
+Support means that Acorn File Forge opens the image, identifies the contained
+filesystem or media structure, and presents its files, directories, slots,
+tape records, ROM banks, or ROMFS catalogue as appropriate. Recognition alone
+is not treated as format support. A container whose decoded contents use an
+unrecognised filesystem is rejected with that distinction made clear.
+
 | Media | Common names | What Acorn File Forge can do |
 |---|---|---|
 | Acorn DFS | SSD, DSD | Browse catalogue prefixes, add, export, rename, delete, lock, compact, validate, and copy files |

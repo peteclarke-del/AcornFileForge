@@ -99,6 +99,8 @@ class DesktopPackagingTests(unittest.TestCase):
 
     def test_debian_package_registers_desktop_mime_appstream_and_manual(self) -> None:
         builder = (ROOT / "tools/build-linux-package.sh").read_text(encoding="utf-8")
+        postinst = (ROOT / "packaging/linux/postinst").read_text(encoding="utf-8")
+        postrm = (ROOT / "packaging/linux/postrm").read_text(encoding="utf-8")
         metainfo = (
             ROOT / "packaging/linux/uk.co.acornfileforge.AcornFileForge.metainfo.xml"
         ).read_text(encoding="utf-8")
@@ -111,6 +113,9 @@ class DesktopPackagingTests(unittest.TestCase):
         ):
             self.assertIn(required, builder)
         self.assertIn("<id>uk.co.acornfileforge.AcornFileForge</id>", metainfo)
+        for maintainer_script in (postinst, postrm):
+            self.assertIn("gtk4-update-icon-cache", maintainer_script)
+            self.assertIn("gtk-update-icon-cache", maintainer_script)
 
     def test_debian_dependency_lock_contains_every_application_requirement(self) -> None:
         application = {
