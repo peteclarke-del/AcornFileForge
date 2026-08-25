@@ -14,6 +14,7 @@ that match the running frontend.
 | Install, update, back up or troubleshoot the Docker service | [Installation and operations](INSTALLATION.md) |
 | Install or develop the native Linux application | [Linux desktop application](LINUX-DESKTOP.md) |
 | Write SSD, DSD, ADFS or HFE images to a real disk | [Greaseweazle physical floppy guide](PHYSICAL-FLOPPY-GUIDE.md) |
+| Open, create, edit, verify or troubleshoot HFE images | [HFE and HxCFE guide](HFE-HXC-GUIDE.md) |
 | Build a checked Gotek, MMFS, BeebSCSI, Pi1MHz or RISC OS media tree | [Hardware deployment assistant](HARDWARE-DEPLOYMENT-GUIDE.md) |
 | Review the mandatory web and desktop parity rules | [Web and desktop platform contract](PLATFORM-CONTRACT.md) |
 | Understand every supported media family and normal workflow | [Main project handbook](../README.md) |
@@ -21,12 +22,13 @@ that match the running frontend.
 | Inspect, preserve or edit load and execution addresses | [Acorn file catalogue metadata](FILE-METADATA-GUIDE.md) |
 | Inspect, compare, build, patch or program ROM and ROMFS images | [ROM image handbook](ROM-GUIDE.md) |
 | Build and validate a release | [Release checklist](RELEASE-CHECKLIST.md) |
+| Review the stable 1.0.0 release | [Acorn File Forge 1.0.0 notes](releases/1.0.0.md) |
 | Contribute code or documentation | [Contribution guide](../CONTRIBUTING.md) |
 | Understand maintainership and project decisions | [Project governance](../GOVERNANCE.md) |
 | Report a vulnerability | [Security policy](../SECURITY.md) |
 | Check dependency, emulator and firmware licence boundaries | [Third-party notices](../THIRD_PARTY_NOTICES.md) |
 | Ask for support or report conduct concerns | [Support](../SUPPORT.md) and [code of conduct](../CODE_OF_CONDUCT.md) |
-| Review retained validation evidence | [Current AMD64 RC2 evidence](release-evidence/2026-08-17-amd64-rc2.md) |
+| Review retained validation evidence | [AMD64 RC2 evidence](release-evidence/2026-08-17-amd64-rc2.md) |
 | Review completed and outstanding product improvements | [Product backlog](BACKLOG.md) |
 | Audit the emulator firmware shipped in the image | [Firmware notes](../firmware/README.md) |
 | Review the Oaknut FileCore integration and format limits | [Oaknut FileCore support](OAKNUT-FILECORE-SUPPORT.md) |
