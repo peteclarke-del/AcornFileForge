@@ -30,6 +30,12 @@ class GeneratedMediaMatrixTests(unittest.TestCase):
                 reopened = DiskService(root / "work").get(item.session.id)
                 summary = service.summary(reopened)
                 self.assertEqual(summary["id"], item.session.id)
+                if reopened.kind == "mmb":
+                    self.assertEqual(len(service.list_slots(reopened)), 511, item.format)
+                else:
+                    listing = service.browse_directory(reopened, "$", None)
+                    self.assertIn("entries", listing, item.format)
+                    self.assertEqual(listing["path"], "$", item.format)
 
     def test_generated_writable_filesystems_accept_and_return_known_content(self):
         with tempfile.TemporaryDirectory() as folder:
