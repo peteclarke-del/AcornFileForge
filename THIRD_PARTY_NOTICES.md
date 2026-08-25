@@ -11,7 +11,7 @@ copyright holder.
 | Component | Version in this repository | Licence | Project |
 | --- | --- | --- | --- |
 | Flask | 3.1.3 | BSD-3-Clause | <https://github.com/pallets/flask> |
-| Gunicorn | 26.0.0 | MIT | <https://github.com/benoitc/gunicorn> |
+| Gunicorn | 26.1.0 | MIT | <https://github.com/benoitc/gunicorn> |
 | Oaknut Disc, ADFS and ROMFS | 12.15.1 | MIT | <https://github.com/john-tornblom/oaknut> |
 | Capstone | 5.0.9 | BSD-3-Clause | <https://github.com/capstone-engine/capstone> |
 | Playwright | 1.62.1, development and browser tests | Apache-2.0 | <https://github.com/microsoft/playwright> |
