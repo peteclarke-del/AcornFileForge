@@ -304,7 +304,7 @@ function showHelp() {
           <section id="help-hfe">
             <h3>HFE floppy images and HxCFE: safe editing</h3>
             <figure><img src="/help/hfe-create.png" alt="Create image dialog showing HFE-wrapped DFS and ADFS floppy choices"><figcaption>Create a new HFE around DFS SSD/DSD or ADFS S/M/L geometry. Existing supported HFE images open through the normal image picker.</figcaption></figure>
-            <p>HFE stores floppy track timing and bit cells, while DFS and ADFS describe files inside the sectors. Acorn File Forge uses the official HxCFloppyEmulator command-line converter, <code>hxcfe</code>, to decode those sectors and then opens the detected filing system. Docker images and native Debian/Ubuntu packages include a pinned, architecture-native HxCFE build and its supporting libraries. No separate HxC installation is required.</p>
+            <p>HFE stores floppy track timing and bit cells, while DFS and ADFS describe files inside the sectors. Acorn File Forge uses the official HxCFloppyEmulator command-line converter, <code>hxcfe</code>, to decode those sectors and then opens the detected filing system. A supported HFE is not merely recognised: its decoded catalogue is browseable through the normal pane. Docker images and native Debian/Ubuntu packages include a pinned, architecture-native HxCFE build and its supporting libraries. No separate HxC installation is required.</p>
             <ol>
               <li>Open an HFE normally, or create an HFE-wrapped DFS/ADFS floppy from <strong>File → New → New Image</strong>.</li>
               <li>Check the opening warning. A clean HFE v1 disk is editable through the usual file tools.</li>
