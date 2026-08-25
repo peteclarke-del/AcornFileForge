@@ -53,6 +53,15 @@ button { color: inherit; }
 .theme-toggle { display: flex; align-items: center; gap: 7px; border: 1px solid var(--line); background: var(--paper); color: var(--ink); border-radius: 9px; padding: 8px 11px; cursor: pointer; font-size: 12px; }
 .theme-toggle span { font-size: 17px; line-height: 1; }
 .theme-toggle b { font-size: 11px; }
+.top-help-menu { position: relative; }
+.top-help-menu > summary { list-style: none; }
+.top-help-menu > summary::-webkit-details-marker { display: none; }
+.top-help-menu[open] > summary { border-color: var(--blue); background: var(--cream); }
+.top-help-menu-panel { position: absolute; z-index: 2147483200; top: calc(100% + 7px); right: 0; display: grid; width: 220px; padding: 6px; border: 1px solid var(--line); border-radius: 9px; background: var(--paper); box-shadow: var(--shadow); }
+.top-help-menu-panel button { display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; gap: 7px; border: 0; border-radius: 6px; padding: 9px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.top-help-menu-panel button:hover, .top-help-menu-panel button:focus-visible { background: var(--cream); color: var(--teal); }
+.top-help-menu-panel button span { text-align: center; }
+.top-help-menu-panel button b { font-size: 11px; }
 .jobs-button { position: relative; }
 .jobs-button i { position: absolute; top: -6px; right: -6px; display: grid; min-width: 18px; height: 18px; padding: 0 4px; place-items: center; border-radius: 99px; background: var(--orange); color: var(--on-accent); font: 800 9px/1 DM Mono, monospace; }
 .button {
@@ -1177,6 +1186,16 @@ dialog:has(.help-guide) { width: min(1120px, calc(100vw - 24px)); }
 .help-content dl { display: grid; grid-template-columns: 130px minmax(0, 1fr); gap: 7px 12px; }
 .help-content dt { font: 600 10px DM Mono, monospace; }
 .help-content dd { margin: 0; }
+.about-dialog { display: grid; gap: 15px; }
+.about-heading { display: grid; grid-template-columns: 68px minmax(0, 1fr); align-items: center; gap: 15px; padding-right: 28px; }
+.about-heading img { width: 68px; height: 68px; filter: drop-shadow(2px 2px 0 var(--brand-shadow)); }
+.about-heading small { color: var(--teal); font: 700 9px DM Mono, monospace; letter-spacing: .1em; }
+.about-heading h2 { margin: 3px 0; }
+.about-heading p, .about-dialog > p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.about-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 7px 12px; margin: 0; padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--cream); }
+.about-facts dt { color: var(--muted); font: 700 9px DM Mono, monospace; text-transform: uppercase; }
+.about-facts dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 11px; }
+.about-links { display: flex; flex-wrap: wrap; gap: 8px; }
 .installed-menu-preview { display: grid; gap: 14px; }
 .menu-preview-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; }
 .menu-preview-heading h2 { margin: 2px 0 0; }

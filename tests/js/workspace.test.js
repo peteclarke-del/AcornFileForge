@@ -22,6 +22,7 @@ const visuals = load("app/static/file-visuals.js", "AcornFileVisuals");
 const imports = load("app/static/import-planning.js", "AcornImportPlanning");
 const metadata = load("app/static/acorn-metadata.js", "AcornMetadata");
 const help = load("app/static/help.js", "AcornHelp");
+const about = load("app/static/about.js", "AcornAbout");
 const editorWorkspace = load("app/static/editor-workspace.js", "AcornEditorWorkspace");
 const identifiers = load("app/static/identifiers.js", "AcornIdentifiers");
 const operationUI = load("app/static/operation-ui.js", "AcornOperationUI");
@@ -112,6 +113,26 @@ test("catalogue metadata presents every address as a full Acorn word", () => {
 test("help handbook is isolated behind an injected modal boundary", () => {
   const showHelp = help.create({ showModal() {}, modalContent: {} });
   assert.equal(typeof showHelp, "function");
+});
+
+test("the application header exposes handbook and about help actions", () => {
+  const markup = fs.readFileSync(path.join(__dirname, "../../app/static/index.html"), "utf8");
+  assert.match(markup, /id="helpMenu"/);
+  assert.match(markup, /id="helpGuideButton"/);
+  assert.match(markup, /id="aboutButton"/);
+});
+
+test("about content uses runtime version and host metadata", () => {
+  let markup = "";
+  const showAbout = about.create({
+    showModal(value) { markup = value; },
+    esc: value => String(value),
+    context: () => ({ version: "1.2.3", engine: "oaknut", host: "desktop" }),
+  });
+  showAbout();
+  assert.match(markup, /Version 1\.2\.3/);
+  assert.match(markup, /Linux desktop application/);
+  assert.match(markup, /Third-party notices/);
 });
 
 test("editor workspace persistence validates, limits and restores documents", () => {

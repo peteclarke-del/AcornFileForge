@@ -24,6 +24,8 @@ const {
 
 const panes = [newPaneState()];
 let platformContract = { host: "web", hostCapabilities: [] };
+let applicationVersion = "development";
+let applicationEngine = "oaknut";
 
 function hasHostCapability(capability) {
   return platformContract.hostCapabilities?.includes(capability) || false;
@@ -48,6 +50,11 @@ const { confirmPageOverride } = window.AcornSafetyDialogs.create({ esc, normalis
 let collectionCatalogue = window.AcornCollectionCatalogue.create({ uuid: newUuid });
 const collectionRevisionsSeen = new Map();
 const showHelp = window.AcornHelp.create({ showModal, modalContent });
+const showAbout = window.AcornAbout.create({
+  showModal,
+  esc,
+  context: () => ({ version: applicationVersion, engine: applicationEngine, host: platformContract.host }),
+});
 const formats = window.AcornFormats;
 let persistentStorageChanged = () => {};
 const persistentStorage = {
@@ -10787,7 +10794,18 @@ const initialTheme = storedTheme || (matchMedia("(prefers-color-scheme: dark)").
 document.documentElement.dataset.theme = initialTheme;
 const themeToggle = document.querySelector("#themeToggle");
 document.querySelector("#addPaneButton").onclick = addPane;
-document.querySelector("#helpButton").onclick = showHelp;
+const helpMenu = document.querySelector("#helpMenu");
+document.querySelector("#helpGuideButton").onclick = () => { helpMenu.open = false; showHelp(); };
+document.querySelector("#aboutButton").onclick = () => { helpMenu.open = false; showAbout(); };
+document.addEventListener("pointerdown", event => {
+  if (helpMenu.open && !event.target.closest("#helpMenu")) helpMenu.open = false;
+});
+document.addEventListener("keydown", event => {
+  if (event.key === "Escape" && helpMenu.open) {
+    helpMenu.open = false;
+    helpMenu.querySelector("summary")?.focus();
+  }
+});
 document.querySelector("#workbenchButton").onclick = () => renderWorkbench();
 document.querySelector("#jobsButton").onclick = showJobsPanel;
 document.querySelector("#workspaceSearchButton").onclick = showWorkspaceSearch;
@@ -11027,6 +11045,8 @@ async function startWorkbench() {
   try {
     const health = await rawApi("/api/health");
     platformContract = health.platform || platformContract;
+    applicationVersion = health.version || applicationVersion;
+    applicationEngine = health.engine || applicationEngine;
   } catch (_error) {
     // The shared web host remains the safe default when capability discovery fails.
   }
