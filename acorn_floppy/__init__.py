@@ -2,6 +2,7 @@
 
 from .device import (
     ACORN_GEOMETRIES,
+    KNOWN_DEVICES,
     FloppyDevice,
     FloppyError,
     FloppyGeometry,
@@ -16,6 +17,7 @@ from .device import (
 
 __all__ = [
     "ACORN_GEOMETRIES",
+    "KNOWN_DEVICES",
     "FloppyDevice",
     "FloppyError",
     "FloppyGeometry",

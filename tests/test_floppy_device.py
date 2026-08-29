@@ -328,6 +328,14 @@ class DeviceValidationTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(validated_device(name), name.strip())
 
+    def test_the_accepted_value_is_a_known_constant_not_the_input(self) -> None:
+        """Returning the caller's own string would carry its taint onward."""
+        from acorn_floppy import KNOWN_DEVICES, validated_device
+
+        result = validated_device("  /dev/fd0  ")
+        self.assertIn(result, KNOWN_DEVICES)
+        self.assertTrue(any(result is candidate for candidate in KNOWN_DEVICES))
+
     def test_other_block_devices_are_refused(self) -> None:
         """A system disk is a block device too, and must never be readable here."""
         from acorn_floppy import validated_device
@@ -340,7 +348,7 @@ class DeviceValidationTests(unittest.TestCase):
     def test_traversal_and_arbitrary_paths_are_refused(self) -> None:
         from acorn_floppy import validated_device
 
-        for name in ("/etc/passwd", "/dev/fd0/../sda", "../fd0", "", None, "fd0"):
+        for name in ("/etc/passwd", "/dev/fd0/../sda", "../fd0", "", None, "fd0", "/dev/fd9"):
             with self.subTest(name=name):
                 with self.assertRaises(FloppyError):
                     validated_device(name)
@@ -381,7 +389,8 @@ class DeviceRouteHardeningTests(unittest.TestCase):
         self.assertIn("not a floppy device", response.get_json()["error"])
         device.return_value.read.assert_not_called()
 
-    def test_a_traversing_capture_name_cannot_escape_the_scratch_directory(self) -> None:
+    def test_the_capture_filename_never_comes_from_the_request(self) -> None:
+        """A requested name is applied to the session, never to the path."""
         from acorn_floppy import FloppyReadResult
 
         with patch("app.routes.desktop.FloppyDevice") as device:
@@ -392,9 +401,9 @@ class DeviceRouteHardeningTests(unittest.TestCase):
                 "/api/desktop/floppy-drive/read",
                 json={"device": "/dev/fd0", "geometry": "dfs-80", "name": "../../escape"},
             )
-            if device.return_value.read.called:
-                destination = Path(device.return_value.read.call_args[0][0]).resolve()
-                self.assertTrue(
-                    str(destination).startswith(str(Path(self.temporary.name).resolve())),
-                    f"capture escaped to {destination}",
-                )
+            destination = Path(device.return_value.read.call_args[0][0])
+            self.assertEqual(destination.name, "capture.ssd")
+            self.assertTrue(
+                str(destination.resolve()).startswith(str(Path(self.temporary.name).resolve())),
+                f"capture escaped to {destination}",
+            )

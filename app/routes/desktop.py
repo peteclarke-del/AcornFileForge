@@ -157,18 +157,25 @@ def _physical_media(service: DiskService, session, details: dict, progress):
 PHYSICAL_READ_FORMATS = frozenset({"ssd", "dsd", "adf", "ads", "adm", "adl", "hfe", "scp"})
 
 
-def _capture_destination(folder: Path, stem: object, suffix: str) -> Path:
-    """Build a capture path that cannot escape the directory it belongs in.
+# A capture is written under a fixed name inside a private scratch directory,
+# so no part of a request reaches the filesystem. The name the caller asked for
+# is applied to the session afterwards, where it is validated by the same rules
+# as any other rename.
+CAPTURE_STEM = "capture"
 
-    The name arrives in a request, so it is reduced to a safe filename and the
-    result is then confirmed to resolve inside the scratch directory. A name
-    that tries to traverse out is refused rather than silently rewritten.
-    """
-    safe = DiskService.safe_filename(str(stem or "").strip() or "capture")
-    destination = (folder / f"{Path(safe).stem or 'capture'}{suffix}").resolve()
-    if destination.parent != folder.resolve():
-        raise DiskError("The capture name is not a valid filename.")
-    return destination
+
+def _name_captured_session(service: DiskService, session, requested: object) -> None:
+    """Apply the caller's chosen name to a freshly captured image."""
+    wanted = str(requested or "").strip()
+    if not wanted:
+        return
+    suffix = Path(str(getattr(session, "name", "") or "")).suffix
+    try:
+        service.rename_session(session, f"{Path(wanted).stem}{suffix}")
+    except (DiskError, TypeError, ValueError):
+        # A capture that cannot take the requested name is still a good
+        # capture, so it keeps the default rather than being discarded.
+        pass
 
 
 def create_desktop_blueprint(
@@ -291,7 +298,7 @@ def create_desktop_blueprint(
         revolutions = data.get("revolutions")
         operation_id = str(data.get("operationId") or "") or None
         with tempfile.TemporaryDirectory(dir=service.work_dir, prefix="gw-read-") as folder:
-            destination = _capture_destination(Path(folder), data.get("name"), f".{requested}")
+            destination = Path(folder) / f"{CAPTURE_STEM}.{requested}"
             try:
                 with operations.tracked(
                     operation_id,
@@ -306,6 +313,7 @@ def create_desktop_blueprint(
                     )
                     progress("Opening the captured image", None, None)
                     session = service.create_from_path(destination)
+                    _name_captured_session(service, session, data.get("name"))
             except GreaseweazleError as exc:
                 raise DiskError(str(exc)) from exc
         return jsonify(image=service.summary(session), result=asdict(result))
@@ -346,7 +354,7 @@ def create_desktop_blueprint(
         except FloppyError as exc:
             raise DiskError(str(exc)) from exc
         with tempfile.TemporaryDirectory(dir=service.work_dir, prefix="fd-read-") as folder:
-            destination = _capture_destination(Path(folder), data.get("name"), layout.extension)
+            destination = Path(folder) / f"{CAPTURE_STEM}{layout.extension}"
             try:
                 with operations.tracked(
                     operation_id,
@@ -356,6 +364,7 @@ def create_desktop_blueprint(
                     result = FloppyDevice(device).read(destination, geometry_id, progress)
                     progress("Opening the captured image", None, None)
                     session = service.create_from_path(destination)
+                    _name_captured_session(service, session, data.get("name"))
             except FloppyError as exc:
                 raise DiskError(str(exc)) from exc
         return jsonify(image=service.summary(session), result=asdict(result))

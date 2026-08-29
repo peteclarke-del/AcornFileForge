@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import errno
 import os
-import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
@@ -131,26 +130,40 @@ def geometry_for_size(size: int) -> FloppyGeometry | None:
 
 
 # Linux names floppy devices /dev/fd0 upward, optionally with a geometry
-# suffix such as /dev/fd0u800. Nothing else is a floppy, and accepting an
-# arbitrary path would let a request name any block device on the machine.
-DEVICE_PATTERN = re.compile(r"^/dev/fd\d+[a-z0-9]*$")
+# suffix such as /dev/fd0u800. The complete set is small and fixed, so it is
+# enumerated rather than matched: a request names a drive, and selecting a
+# constant from this tuple keeps a request-supplied string from ever reaching
+# the filesystem.
+_DRIVE_COUNT = 4
+_GEOMETRY_SUFFIXES = (
+    "", "d360", "h360", "h720", "h880", "h1200", "h1440", "h1680", "h1722",
+    "h1743", "h1760", "h1920", "h2880", "u360", "u720", "u800", "u820", "u830",
+    "u1040", "u1120", "u1440", "u1600", "u1680", "u1722", "u1743", "u1760",
+    "u1840", "u1920", "u2880", "u3200", "u3520", "u3840",
+)
+KNOWN_DEVICES: tuple[str, ...] = tuple(
+    f"/dev/fd{index}{suffix}"
+    for index in range(_DRIVE_COUNT)
+    for suffix in _GEOMETRY_SUFFIXES
+)
 
 
 def validated_device(name: object) -> str:
-    """Return a floppy device path, or refuse anything that is not one.
+    """Return a known floppy device path, or refuse anything that is not one.
 
-    A request may name the drive to use, so the value must be constrained
-    before it reaches the filesystem. Restricting the shape rejects a system
-    disk such as /dev/sda outright: that is a block device too, and reading it
-    would otherwise hand back the first part of its contents as an image.
+    A request may name the drive to use, so the value is matched against the
+    fixed set above and the matching constant is returned. That rejects a
+    system disk such as /dev/sda outright, which is a block device too and
+    whose first tracks would otherwise be readable as an image.
     """
     value = str(name or "").strip()
-    if not DEVICE_PATTERN.fullmatch(value):
-        raise FloppyError(
-            f"“{value}” is not a floppy device. Choose one of the drives this host "
-            "exposes, such as /dev/fd0."
-        )
-    return value
+    for candidate in KNOWN_DEVICES:
+        if candidate == value:
+            return candidate
+    raise FloppyError(
+        f"“{value}” is not a floppy device. Choose one of the drives this host "
+        "exposes, such as /dev/fd0."
+    )
 
 
 def available_devices(candidates: int = 4) -> list[str]:
@@ -334,7 +347,7 @@ __all__ = [
     "FloppyProbe",
     "FloppyReadResult",
     "FloppyWriteResult",
-    "DEVICE_PATTERN",
+    "KNOWN_DEVICES",
     "available_devices",
     "validated_device",
     "geometry",
