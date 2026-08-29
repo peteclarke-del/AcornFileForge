@@ -15,6 +15,7 @@ htmlcov/
 node_modules/
 test-results/
 .venv-desktop/
+.venv/
 
 # Local editor and operating-system files
 .DS_Store

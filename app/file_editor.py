@@ -243,6 +243,7 @@ def search_image_files(
     results = []
     scanned = 0
     skipped_large = 0
+    unreadable = 0
     searchable_files = files[:MAX_IMAGE_SEARCH_FILES]
     for file_index, row in enumerate(searchable_files):
         row_slot = int(row["slot"]) if row.get("slot") is not None else slot
@@ -293,7 +294,10 @@ def search_image_files(
             except OperationCancelled:
                 raise
             except Exception:
-                pass
+                # One unreadable or damaged file must not abandon a whole-image
+                # search, but it is counted so the result can report that its
+                # coverage was incomplete rather than implying a clean sweep.
+                unreadable += 1
         else:
             skipped_large += 1
             if digest_query:
@@ -314,7 +318,7 @@ def search_image_files(
                 except OperationCancelled:
                     raise
                 except Exception:
-                    pass
+                    unreadable += 1
         hash_match = bool(digest_query and digest.startswith(digest_query))
         if name_match or metadata_matches or hash_match or matches:
             results.append({
@@ -357,6 +361,7 @@ def search_image_files(
         "filesScanned": scanned,
         "skippedLarge": skipped_large,
         "failedSlots": failed_slots,
+        "unreadableFiles": unreadable,
         "allSlots": bool(session.kind == "mmb" and all_slots),
         "truncated": len(files) >= MAX_IMAGE_SEARCH_FILES or len(results) >= MAX_IMAGE_SEARCH_RESULTS,
         "results": results,

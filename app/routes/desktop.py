@@ -9,6 +9,13 @@ import tempfile
 
 from flask import Blueprint, jsonify, request
 
+from acorn_floppy import (
+    ACORN_GEOMETRIES,
+    geometry as floppy_geometry,
+    FloppyDevice,
+    FloppyError,
+    available_devices,
+)
 from acorn_greaseweazle import (
     DRIVE_CHOICES,
     GreaseweazleClient,
@@ -144,6 +151,11 @@ def _physical_media(service: DiskService, session, details: dict, progress):
             temporary.unlink(missing_ok=True)
 
 
+# Capture targets the workbench can open again. Flux keeps everything a
+# drive produced; the sector formats decode as they read.
+PHYSICAL_READ_FORMATS = frozenset({"ssd", "dsd", "adf", "ads", "adm", "adl", "hfe", "scp"})
+
+
 def create_desktop_blueprint(
     service: DiskService,
     operations: OperationRegistry | None = None,
@@ -240,6 +252,125 @@ def create_desktop_blueprint(
                         progress,
                     )
         except GreaseweazleError as exc:
+            raise DiskError(str(exc)) from exc
+        return jsonify(result=asdict(result), media=details)
+
+    @blueprint.post("/api/desktop/physical-floppy/read")
+    @request_effect("external", "reading a physical floppy through Greaseweazle")
+    def read_physical_floppy():
+        """Capture a disk in a connected drive and open it as a new image.
+
+        The capture lands in a temporary file first. Only a Greaseweazle run
+        that completes and leaves a usable image is opened as a session, so a
+        failed or empty read never becomes a pane the user might trust.
+        """
+        data = payload()
+        drive = str(data.get("drive") or "")
+        requested = str(data.get("format") or "ssd").strip().lower()
+        if requested not in PHYSICAL_READ_FORMATS:
+            raise DiskError(
+                "Choose a capture format: "
+                + ", ".join(sorted(PHYSICAL_READ_FORMATS))
+                + "."
+            )
+        revolutions = data.get("revolutions")
+        name = DiskService.safe_filename(
+            str(data.get("name") or "").strip() or "capture"
+        )
+        stem = Path(name).stem or "capture"
+        operation_id = str(data.get("operationId") or "") or None
+        with tempfile.TemporaryDirectory(dir=service.work_dir, prefix="gw-read-") as folder:
+            destination = Path(folder) / f"{stem}.{requested}"
+            try:
+                with operations.tracked(
+                    operation_id,
+                    f"Reading physical drive {drive}",
+                    "Physical floppy captured",
+                ) as progress:
+                    result = GreaseweazleClient().read(
+                        destination,
+                        drive,
+                        progress,
+                        revolutions=int(revolutions) if revolutions is not None else None,
+                    )
+                    progress("Opening the captured image", None, None)
+                    session = service.create_from_path(destination)
+            except GreaseweazleError as exc:
+                raise DiskError(str(exc)) from exc
+        return jsonify(image=service.summary(session), result=asdict(result))
+
+    @blueprint.get("/api/desktop/floppy-drive")
+    @request_effect("external", "probing a floppy controller")
+    def floppy_drive_status():
+        """Report the floppy controller this host exposes, if any."""
+        devices = available_devices()
+        probe = FloppyDevice(devices[0]).probe() if devices else FloppyDevice().probe()
+        return jsonify(
+            available=probe.available,
+            device=probe.device,
+            detail=probe.detail,
+            size=probe.size,
+            devices=devices,
+            geometries=[
+                {
+                    "id": item.identifier,
+                    "label": item.label,
+                    "extension": item.extension,
+                    "size": item.size,
+                }
+                for item in sorted(ACORN_GEOMETRIES.values(), key=lambda row: row.size)
+            ],
+        )
+
+    @blueprint.post("/api/desktop/floppy-drive/read")
+    @request_effect("external", "reading a disk from a floppy controller")
+    def read_floppy_drive():
+        """Capture a disk from a real drive and open it as a new image."""
+        data = payload()
+        device = str(data.get("device") or "/dev/fd0")
+        geometry_id = str(data.get("geometry") or "")
+        name = DiskService.safe_filename(str(data.get("name") or "").strip() or "capture")
+        stem = Path(name).stem or "capture"
+        operation_id = str(data.get("operationId") or "") or None
+        try:
+            layout = floppy_geometry(geometry_id)
+        except FloppyError as exc:
+            raise DiskError(str(exc)) from exc
+        with tempfile.TemporaryDirectory(dir=service.work_dir, prefix="fd-read-") as folder:
+            destination = Path(folder) / f"{stem}{layout.extension}"
+            try:
+                with operations.tracked(
+                    operation_id,
+                    f"Reading {layout.label} from {device}",
+                    "Disk captured from the floppy drive",
+                ) as progress:
+                    result = FloppyDevice(device).read(destination, geometry_id, progress)
+                    progress("Opening the captured image", None, None)
+                    session = service.create_from_path(destination)
+            except FloppyError as exc:
+                raise DiskError(str(exc)) from exc
+        return jsonify(image=service.summary(session), result=asdict(result))
+
+    @blueprint.post("/api/desktop/floppy-drive/write")
+    @request_effect("external", "writing a disk through a floppy controller")
+    def write_floppy_drive():
+        """Write an open image to a real drive, erasing the disk in it."""
+        data = payload()
+        session = service.get(str(data.get("image") or ""))
+        device = str(data.get("device") or "/dev/fd0")
+        details = _physical_media_details(service, session, data.get("slot"))
+        operation_id = str(data.get("operationId") or "") or None
+        try:
+            with operations.tracked(
+                operation_id,
+                f"Writing {details['name']} to {device}",
+                "Floppy drive write complete",
+            ) as progress:
+                with _physical_media(service, session, details, progress) as image:
+                    result = FloppyDevice(device).write(
+                        image, progress, confirm=bool(data.get("confirm")),
+                    )
+        except FloppyError as exc:
             raise DiskError(str(exc)) from exc
         return jsonify(result=asdict(result), media=details)
 

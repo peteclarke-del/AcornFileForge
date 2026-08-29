@@ -157,7 +157,7 @@ class DesktopPackagingTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/release.yml").read_text(
             encoding="utf-8"
         )
-        self.assertEqual("1.0.2", (ROOT / "VERSION").read_text(encoding="utf-8").strip())
+        self.assertEqual("1.1.0", (ROOT / "VERSION").read_text(encoding="utf-8").strip())
         for required in (
             "debian:trixie-slim",
             "ubuntu:24.04",
@@ -175,3 +175,85 @@ class DesktopPackagingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ShippedPackageTests(unittest.TestCase):
+    """Every importable package must reach every artefact that ships the app.
+
+    A new top-level package is easy to add and easy to forget in the Dockerfile
+    and the Debian builder, which produces an application that imports cleanly
+    in a checkout and fails only once installed.
+    """
+
+    @staticmethod
+    def _application_packages() -> set[str]:
+        root = Path(__file__).resolve().parent.parent
+        return {
+            path.name
+            for path in root.iterdir()
+            if path.is_dir()
+            and (path / "__init__.py").is_file()
+            and not path.name.startswith((".", "_"))
+            and path.name not in {"tests"}
+        }
+
+    # The container is the web edition and deliberately has no GTK host, so it
+    # does not ship the desktop shell. It must still ship everything the Flask
+    # application imports, including the hardware adapters, because the desktop
+    # blueprint is imported by the shared application factory on both hosts.
+    CONTAINER_EXCLUDES = frozenset({"desktop"})
+
+    def test_the_container_image_copies_every_package_the_web_edition_imports(self) -> None:
+        root = Path(__file__).resolve().parent.parent
+        dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
+        for package in sorted(self._application_packages() - self.CONTAINER_EXCLUDES):
+            with self.subTest(package=package):
+                self.assertIn(
+                    f"COPY {package} ./{package}",
+                    dockerfile,
+                    f"the container image does not ship {package}",
+                )
+
+    def test_the_web_edition_starts_without_the_desktop_shell(self) -> None:
+        """The excluded package must genuinely be unnecessary to serve the web app."""
+
+        for package in sorted(self.CONTAINER_EXCLUDES):
+            with self.subTest(package=package):
+                self.assertFalse(
+                    any(
+                        f"import {package}" in line or f"from {package}" in line
+                        for path in (Path(__file__).resolve().parent.parent / "app").rglob("*.py")
+                        for line in path.read_text(encoding="utf-8").splitlines()
+                        if not line.strip().startswith("#")
+                    ),
+                    f"app imports {package}, so the container cannot omit it",
+                )
+
+    def test_the_debian_package_copies_every_application_package(self) -> None:
+        root = Path(__file__).resolve().parent.parent
+        builder = (root / "tools" / "build-linux-package.sh").read_text(encoding="utf-8")
+        for package in sorted(self._application_packages()):
+            with self.subTest(package=package):
+                self.assertIn(
+                    f'"$project_root/{package}"',
+                    builder,
+                    f"the Debian package does not ship {package}",
+                )
+
+    def test_the_package_ships_source_rather_than_build_machine_bytecode(self) -> None:
+        """Bytecode compiled here is wrong for any other supported Python.
+
+        A stale ``.pyc`` is preferred over the source it no longer matches, so
+        shipping the build machine's cache risks running code the package does
+        not contain.
+        """
+        root = Path(__file__).resolve().parent.parent
+        builder = (root / "tools" / "build-linux-package.sh").read_text(encoding="utf-8")
+        self.assertIn("-name __pycache__", builder)
+        self.assertIn("-name '*.py[co]' -delete", builder)
+        # The removal must happen before the size is measured and the package built.
+        self.assertLess(
+            builder.index("__pycache__"),
+            builder.index("dpkg-deb --build"),
+        )
+

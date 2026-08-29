@@ -13,7 +13,7 @@ from ..acorn_metadata import spark_metadata
 from ..archive_utils import validated_zip_members
 from ..catalog_service import CatalogueService, archive_members
 from ..disk_service import DiskError, DiskService
-from ..formats import DFS_EXTENSIONS, HFE_EXTENSIONS, TAPE_EXTENSIONS
+from ..formats import DFS_EXTENSIONS, HFE_EXTENSIONS, SCP_EXTENSIONS, TAPE_EXTENSIONS
 from ..filename_policy import session_name_policy
 from ..menu.analysis import analyse_adfs_directory, analyse_disk, enrich_if_ambiguous
 from ..menu.mmb import (
@@ -25,7 +25,7 @@ from .common import payload
 from .effects import image_mutation, request_effect
 
 
-DISK_EXTENSIONS = DFS_EXTENSIONS | HFE_EXTENSIONS | TAPE_EXTENSIONS
+DISK_EXTENSIONS = DFS_EXTENSIONS | HFE_EXTENSIONS | SCP_EXTENSIONS | TAPE_EXTENSIONS
 
 
 def _catalogue_identities(value: object) -> set[str]:
@@ -76,7 +76,7 @@ def _preferred_disk_members(filename: str, content: bytes) -> list[tuple[str, by
     members = _disk_members(filename, content)
     if not members:
         return []
-    priority = {".ssd": 0, ".dsd": 1, ".hfe": 2, ".uef": 3}
+    priority = {".ssd": 0, ".dsd": 1, ".hfe": 2, ".scp": 3, ".uef": 4}
     best = min(priority.get(Path(name).suffix.lower(), 99) for name, _data in members)
     return [
         (name, data)

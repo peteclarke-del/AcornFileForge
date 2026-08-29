@@ -26,4 +26,8 @@
     <comment>HxC floppy image</comment>
     <glob pattern="*.hfe"/>
   </mime-type>
+  <mime-type type="application/x-acorn-scp">
+    <comment>SuperCard Pro flux capture</comment>
+    <glob pattern="*.scp"/>
+  </mime-type>
 </mime-info>

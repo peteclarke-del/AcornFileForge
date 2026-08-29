@@ -44,7 +44,7 @@ const {
   toast,
   trapFocus,
 } = window.AcornUI;
-const { archiveCrumbs, capacityMarkup, crumbs, paneFormat } = window.AcornPaneView.create({ esc, humanSize });
+const { archiveCrumbs, capacityMarkup, crumbs, exportAvailability, paneFormat } = window.AcornPaneView.create({ esc, humanSize });
 const { folderTargetPlans } = window.AcornTransferPlanning.create({ targetNameRule });
 const { confirmPageOverride } = window.AcornSafetyDialogs.create({ esc, normalisePage, trapFocus });
 let collectionCatalogue = window.AcornCollectionCatalogue.create({ uuid: newUuid });
@@ -523,11 +523,11 @@ async function showPhysicalFloppyDialog(index) {
     const status = await api(`/api/desktop/images/${pane.image.id}/physical-floppy?${query}`);
     const verification = status.media.automaticVerification
       ? "Every written sector will be read back and verified automatically."
-      : "HFE stores raw bitcells, so Greaseweazle cannot automatically verify this write. Test the disk in suitable hardware afterwards.";
+      : "This flux-level image cannot be verified with a sector read-back. Test the disk in suitable hardware afterwards.";
     const unavailable = status.available ? "" : `<div class="help-warning"><strong>Greaseweazle is not ready.</strong> ${esc(status.detail)}</div>`;
     showModal(`<div class="analysis-dialog physical-floppy-dialog"><header><div><small>PHYSICAL MEDIA</small><h2>Write ${esc(status.media.name)}</h2></div></header>
       <p>This will write the current working image to a real floppy disk. Unsaved image changes are included.</p>
-      <dl class="physical-floppy-summary"><div><dt>Image type</dt><dd>${esc(status.media.format)}</dd></div><div><dt>Verification</dt><dd>${status.media.automaticVerification ? "Automatic sector verification" : "Not available for HFE"}</dd></div></dl>
+      <dl class="physical-floppy-summary"><div><dt>Image type</dt><dd>${esc(status.media.format)}</dd></div><div><dt>Verification</dt><dd>${status.media.automaticVerification ? "Automatic sector verification" : "Not available for flux images"}</dd></div></dl>
       ${unavailable}
       <label class="field"><span>Physical drive</span><select name="physicalDrive" ${status.available ? "" : "disabled"}>${status.drives.map(drive => `<option value="${esc(drive.id)}">${esc(drive.label)}</option>`).join("")}</select></label>
       <div class="help-warning"><strong>This is destructive.</strong> All existing data on the disk in the selected drive will be overwritten. ${esc(verification)}</div>
@@ -546,7 +546,7 @@ async function showPhysicalFloppyDialog(index) {
         const verified = result.result.verified;
         showModal(`<div class="analysis-dialog physical-floppy-complete"><header><div><small>PHYSICAL MEDIA</small><h2>${verified ? "Disk written and verified" : "Disk written"}</h2></div></header>
           <p>${esc(result.media.name)} was written to drive ${esc(result.result.drive)}.</p>
-          <div class="help-${verified ? "note" : "warning"}"><strong>${verified ? "Verification passed." : "Verification was not available."}</strong> ${verified ? "Greaseweazle confirmed every written track." : "Test this HFE-derived disk in its target hardware before relying on it."}</div>
+          <div class="help-${verified ? "note" : "warning"}"><strong>${verified ? "Verification passed." : "Verification was not available."}</strong> ${verified ? "Greaseweazle confirmed every written track." : "Test this flux-derived disk in its target hardware before relying on it."}</div>
           <div class="modal-actions"><button class="button primary" value="cancel">Close</button></div></div>`, null, { replace: true });
         return false;
       }, { replace: true });
@@ -844,9 +844,10 @@ function renderPane(index, preserveScroll = false) {
       ${newSubmenu}
       <button class="menu-command menu-load-image"><b>▤</b><span>Open image…</span></button>
       <button class="menu-command menu-save-image"><b>⇩</b><span>Save image</span></button>
+      ${pane.image.exportFormats?.length ? `<button class="menu-command menu-export-image"><b>⇄</b><span>Export as…</span></button>` : ""}
       ${isTape || pane.image.readOnly ? "" : `<span class="menu-separator" role="separator"></span>`}
       ${isSlots ? `<div class="open-disk-imports">${openDiskImportMarkup(index)}</div>
-        <button class="menu-command insert-disk" ${selectedEmptySlot ? "" : "disabled"}><b>↥</b><span>Insert existing SSD / DSD / HFE / ZIP…</span></button>
+        <button class="menu-command insert-disk" ${selectedEmptySlot ? "" : "disabled"}><b>↥</b><span>Insert existing SSD / DSD / HFE / SCP / ZIP…</span></button>
         <button class="menu-command import-folder" ${pane.entries.some(entry => entry.empty) ? "" : "disabled"}><b>▣</b><span>Insert folder of disk images…</span></button>
         `
         : !isTape && !pane.image.readOnly ? `<button class="menu-command import-file" ${canEditFiles ? "" : 'disabled title="Open $ or another DFS catalogue group before inserting files."'}><b>＋</b><span>${isRom ? "Insert ROM bank(s)…" : "Insert File…"}</span></button>
@@ -940,7 +941,7 @@ function renderPane(index, preserveScroll = false) {
         <button class="menu-command run-pane-emulator"><b>▶</b><span>Run ${emulatorTargetName}…</span></button>
         <button class="menu-command debug-pane-emulator"><b>⌁</b><span>Debug ${emulatorTargetName}…</span></button>`
       : "";
-  const physicalSuffix = String(pane.image.name || "").toLowerCase().match(/\.(ssd|dsd|adf|ads|adm|adl|hfe)$/);
+  const physicalSuffix = String(pane.image.name || "").toLowerCase().match(/\.(ssd|dsd|adf|ads|adm|adl|hfe|scp)$/);
   const physicalSlot = pane.slot !== null
     ? Number(pane.slot)
     : isSlots && selectedKeys.size === 1 && selected?.formatted ? Number(selected.slot) : null;
@@ -963,6 +964,8 @@ function renderPane(index, preserveScroll = false) {
       ${isArchive ? "" : isRom ? '<button class="menu-command rom-workbench"><b>⌬</b><span>ROM Workbench…</span></button><button class="menu-command configure-rom"><b>▥</b><span>ROM layout…</span></button>' : isRomfs ? `${pane.image.readOnly ? "" : '<button class="menu-command configure-romfs"><b>▥</b><span>ROMFS properties…</span></button>'}` : isSlots || isTape ? (isTape ? '<button class="menu-command uef-project"><b>≋</b><span>UEF tape project…</span></button><button class="menu-command convert-tape"><b>⇥</b><span>Convert tape to disk</span></button>' : "") : pane.image.readOnly ? "" : '<button class="menu-command compact-image"><b>≋</b><span>Compact filesystem</span></button>'}
     </div>
   </details>`;
+  const exportControl = exportAvailability(pane.image);
+
   const toolbarMarkup = `${fileTools}${clipboardTools}${viewTools}${libraryTools}
       ${pane.image.readOnly ? "" : menuTools}
       ${analysisTools}
@@ -981,6 +984,7 @@ function renderPane(index, preserveScroll = false) {
         <button class="icon-button new-image" title="New Blank Image" aria-label="New Blank Image">${PANE_ICONS.newImage}</button>
         <button class="icon-button replace-image" title="Load New Image" aria-label="Load New Image">${PANE_ICONS.loadImage}</button>
         <button class="icon-button save-image" title="Save Image" aria-label="Save Image">${PANE_ICONS.saveImage}</button>
+        <button class="icon-button export-image" title="${esc(exportControl.label)}" aria-label="${esc(exportControl.label)}"${exportControl.available ? "" : " disabled"}>${PANE_ICONS.exportImage}</button>
         <button class="icon-button refresh-image" title="Refresh View" aria-label="Refresh View">${PANE_ICONS.refreshView}</button>
         <button class="icon-button minimize-pane" title="Minimise Pane" aria-label="Minimise Pane">${PANE_ICONS.minimizePane}</button>
         <button class="icon-button maximize-pane" title="Maximise Pane" aria-label="Maximise Pane" aria-pressed="false">${PANE_ICONS.maximizePane}</button>
@@ -1018,6 +1022,8 @@ function renderPane(index, preserveScroll = false) {
   host.querySelector(".menu-new-matching-image")?.addEventListener("click", event => guardedPaneAction(index, () => newImageFromFileMenu(index, event.currentTarget.dataset.format)));
   host.querySelector(".menu-load-image")?.addEventListener("click", () => chooseImage(index));
   host.querySelector(".menu-save-image")?.addEventListener("click", () => guardedPaneAction(index, () => saveImage(index)));
+  host.querySelector(".menu-export-image")?.addEventListener("click", () => guardedPaneAction(index, () => exportImageAs(index)));
+  host.querySelector(".export-image")?.addEventListener("click", () => guardedPaneAction(index, () => exportImageAs(index)));
   host.querySelector(".menu-close-pane")?.addEventListener("click", () => closePane(index));
   host.querySelector(".view-refresh")?.addEventListener("click", () => refreshCurrentView(index));
   host.querySelector(".view-all-disks")?.addEventListener("click", () => returnToMmb(index));
@@ -3568,7 +3574,7 @@ function chooseHostFolder(index) {
   input.setAttribute("webkitdirectory", "");
   input.setAttribute("directory", "");
   if (panes[index].image?.kind === "mmb" && panes[index].slot === null) {
-    input.accept = ".ssd,.dsd,.hfe,.zip";
+    input.accept = ".ssd,.dsd,.hfe,.scp,.zip";
   }
   input.onchange = () => {
     const files = [...input.files];
@@ -4097,8 +4103,8 @@ async function importHostFile(index, file, forceRaw = false, batch = null) {
     <h2>Insert ${esc(file.name)}</h2>${batchLabel}<p>${nameRule.valid ? "Choose the target filename and optional Acorn metadata." : `${esc(file.name)} is not a legal ${nameRule.label} filename, so a safe replacement has been suggested.`}</p>
     <div class="field"><label>Target filename · max ${nameRule.limit} characters</label>
       <input name="targetName" maxlength="${nameRule.limit}" value="${esc(nameRule.suggested)}" required></div>
-    <div class="field"><label>Load address (for example 0x1900)</label><input name="load" value="${esc(detected.load || "")}" placeholder="0xFFFF"></div>
-    <div class="field"><label>Execute address</label><input name="execute" value="${esc(detected.execute || "")}" placeholder="0xFFFF"></div>
+    <div class="field"><label>Load address</label><input name="load" value="${esc(detected.load || "")}" placeholder="&amp;1900" pattern="(?:&amp;|0x)?[0-9A-Fa-f]{1,8}"><small>Hexadecimal, written as 1900, &amp;1900 or 0x1900. Leave empty for none.</small></div>
+    <div class="field"><label>Execute address</label><input name="execute" value="${esc(detected.execute || "")}" placeholder="&amp;1900" pattern="(?:&amp;|0x)?[0-9A-Fa-f]{1,8}"></div>
     ${pane.image.kind === "adfs" ? '<div class="field"><label>RISC OS filetype</label><input name="filetype" placeholder="Text or 0xFFF"></div>' : ""}
     <input type="hidden" name="applyRemaining" value="no">
     <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button>${canApplyAll ? '<button class="button ghost apply-import-all" value="add">Insert and apply to all remaining</button>' : ""}<button class="button primary" value="add">Insert File</button></div>`,
@@ -5303,6 +5309,43 @@ async function saveImage(index) {
   }
 }
 
+function exportImageAs(index) {
+  const pane = panes[index];
+  const formats = pane.image.exportFormats || [];
+  if (!formats.length) {
+    toast("This image has no compatible export formats.", true);
+    return;
+  }
+  showModal(`
+    <h2>Export image as…</h2>
+    <p>Convert the current decoded sectors of <strong>${esc(pane.image.name)}</strong> into another compatible container. The working image is left unchanged; a new file downloads separately from the usual Save ZIP.</p>
+    <div class="field"><label>Target format</label><select name="format">
+      ${formats.map(entry => `<option value="${esc(entry.format)}">${esc(entry.label)}</option>`).join("")}
+    </select></div>
+    <div class="help-note">HFE and SCP exports are verified by decoding the result again and comparing it byte-for-byte with the current sectors before the download starts.</div>
+    <div class="modal-actions"><button class="button ghost" value="cancel">Cancel</button><button class="button primary" value="export">Export</button></div>`,
+  async form => {
+    const format = form.get("format");
+    const entry = formats.find(candidate => candidate.format === format);
+    await paneOperation(index, "Encoding and verifying the export…", async () => {
+      const response = await fetch(`/api/images/${pane.image.id}/export?${new URLSearchParams({ format })}`);
+      if (!response.ok) {
+        const row = await response.json().catch(() => ({}));
+        throw new Error(row.error || "Export failed");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${pathNameWithoutExtension(pane.image.name)}-export.${entry?.extension || format}`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return { image: pane.image };
+    });
+    toast(`Export to ${entry?.label || format} complete.`);
+  });
+}
+
 async function recoverPreviousSession(index) {
   try {
     const data = await api("/api/images/recoverable");
@@ -5413,7 +5456,7 @@ function chooseSlotImage(index) {
   const input = document.createElement("input");
   input.type = "file";
   input.multiple = true;
-  input.accept = ".ssd,.dsd,.zip";
+  input.accept = ".ssd,.dsd,.hfe,.scp,.zip";
   input.onchange = () => input.files.length && insertFilesIntoSlots(index, entry.slot, [...input.files]);
   input.click();
 }
@@ -8634,7 +8677,7 @@ function editorImageSearch(pane) {
         const parameters = fileContextQuery(pane, pane.path || "$", { query, root: "$", ...(pane.image.kind === "mmb" ? { allSlots: "true" } : {}) });
         parameters.delete("path");
         const report = await api(`/api/images/${pane.image.id}/inspect/search?${parameters}`);
-        status.textContent = `${report.results.length.toLocaleString()} result${report.results.length === 1 ? "" : "s"} · ${report.filesScanned.toLocaleString()} readable files scanned${report.failedSlots ? ` · ${report.failedSlots.toLocaleString()} unreadable MMB slot${report.failedSlots === 1 ? "" : "s"} skipped` : ""}${report.skippedLarge ? ` · ${report.skippedLarge.toLocaleString()} large files searched by name only` : ""}${report.truncated ? " · result limit reached" : ""}`;
+        status.textContent = `${report.results.length.toLocaleString()} result${report.results.length === 1 ? "" : "s"} · ${report.filesScanned.toLocaleString()} readable files scanned${report.failedSlots ? ` · ${report.failedSlots.toLocaleString()} unreadable MMB slot${report.failedSlots === 1 ? "" : "s"} skipped` : ""}${report.skippedLarge ? ` · ${report.skippedLarge.toLocaleString()} large files searched by name only` : ""}${report.unreadableFiles ? ` · ${report.unreadableFiles.toLocaleString()} unreadable file${report.unreadableFiles === 1 ? "" : "s"} skipped` : ""}${report.truncated ? " · result limit reached" : ""}`;
         results.innerHTML = report.results.map((row, index) => `<button type="button" data-image-search-result="${index}"><span class="file-kind-icon ${esc(row.kind)}" aria-hidden="true"></span><b>${row.slot != null ? `<em>Slot ${Number(row.slot)}${row.diskTitle ? ` · ${esc(row.diskTitle)}` : ""}</em>` : ""}${esc(row.path)}</b><small>${row.nameMatch ? "Filename match" : `${row.matches.length} content match${row.matches.length === 1 ? "" : "es"}`} · ${humanSize(row.size)}</small>${row.matches.slice(0, 3).map(match => `<code>Line ${match.line}: ${esc(match.text)}</code>`).join("")}</button>`).join("") || '<p class="code-empty-message">No matching files were found.</p>';
         results.querySelectorAll("[data-image-search-result]").forEach(button => button.onclick = () => finish(report.results[Number(button.dataset.imageSearchResult)]));
       } catch (error) { status.textContent = error.message; }

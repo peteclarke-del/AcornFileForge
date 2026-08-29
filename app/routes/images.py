@@ -262,6 +262,23 @@ def create_images_blueprint(
         )
         return jsonify(image=service.summary(converted), files=files)
 
+    @blueprint.get("/api/images/<image_id>/export/formats")
+    def image_export_formats(image_id):
+        return jsonify(formats=service.export_formats(service.get(image_id)))
+
+    @blueprint.get("/api/images/<image_id>/export")
+    def export_image(image_id):
+        session = service.get(image_id)
+        target_format = request.args.get("format", "native")
+        output, download_name = service.export_image(session, target_format)
+        return send_file(
+            output,
+            mimetype="application/octet-stream",
+            as_attachment=True,
+            download_name=download_name,
+            conditional=False,
+        )
+
     @blueprint.post("/api/images/<image_id>/compact")
     @image_mutation("compacting the filesystem")
     def compact(image_id):

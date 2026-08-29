@@ -20,14 +20,32 @@
     </p>
     <p>
       A bundled architecture-native HxCFloppyEmulator command-line converter
-      opens, creates and verifies supported HFE floppy images without requiring
+      opens, creates and verifies supported HFE floppy images and decodes SCP
+      flux captures without requiring
       a separate host installation.
+    </p>
+    <p>
+      Open DFS and ADFS images can be converted between containers. Any of them
+      exports as its canonical sector image, and DFS images together with ADFS
+      S, M and L floppies also export as HFE or SCP. Every flux export is
+      decoded again and compared byte for byte with the working sectors before
+      the file is released.
+    </p>
+    <p>
+      With the official Greaseweazle tools installed, the native edition writes
+      an open floppy image to a connected drive and captures a physical disk
+      back into a new working image, as decoded sectors or as HFE or SCP flux.
     </p>
   </description>
   <launchable type="desktop-id">uk.co.acornfileforge.AcornFileForge.desktop</launchable>
   <url type="homepage">https://github.com/peteclarke-del/AcornFileForge</url>
   <url type="bugtracker">https://github.com/peteclarke-del/AcornFileForge/issues</url>
   <releases>
+    <release version="1.1.0" date="2026-08-29">
+      <description>
+        <p>Adds SuperCard Pro flux support, container export, reading and writing real disks through a Greaseweazle or a floppy controller, and buildable Windows, macOS and RPM editions.</p>
+      </description>
+    </release>
     <release version="1.0.2" date="2026-08-25">
       <description>
         <p>Restores reliable Linux application-menu and running-window icons with fixed-size fallbacks, explicit GTK identity and complete icon-cache refreshes.</p>

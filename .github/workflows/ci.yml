@@ -9,6 +9,21 @@ permissions:
   contents: read
 
 jobs:
+  lint:
+    name: Python correctness lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      # Runs before the image build so a broken name or import fails in
+      # seconds rather than after a full multi-stage Docker build.
+      - name: Check correctness rules
+        uses: astral-sh/ruff-action@v3
+        with:
+          version: "0.16.4"
+          args: check --output-format github
+
   test:
     name: Python, JavaScript and browser regressions
     runs-on: ubuntu-latest

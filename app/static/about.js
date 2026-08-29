@@ -14,7 +14,7 @@
         <dl class="about-facts">
           <dt>Edition</dt><dd>${esc(host)}</dd>
           <dt>Filesystem engine</dt><dd>${esc(details.engine)}</dd>
-          <dt>Formats</dt><dd>DFS SSD/DSD, HFE, MMB, ADFS and FileCore, BeebSCSI DAT/DSC, HDF/RAW, UEF, ROM and ROMFS</dd>
+          <dt>Formats</dt><dd>DFS SSD/DSD, HFE, SCP, MMB, ADFS and FileCore, BeebSCSI DAT/DSC, HDF/RAW, UEF, ROM and ROMFS</dd>
           <dt>Platforms</dt><dd>BBC Micro and Master, Acorn Electron, Archimedes and RISC OS</dd>
           <dt>Licence</dt><dd>MIT License · Copyright © 2026 Pete Clarke</dd>
         </dl>

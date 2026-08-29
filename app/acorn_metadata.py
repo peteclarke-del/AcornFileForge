@@ -12,11 +12,29 @@ def _hex_field(value: str) -> int:
 
 
 def parse_address(value: object) -> int:
-    """Parse the hex notation used by Acorn catalogues and sidecars."""
+    """Parse the hex notation used by Acorn catalogues and sidecars.
+
+    Acorn writes addresses in hexadecimal, so a bare value such as ``1900``
+    means &1900 here, exactly as it does when typed into the catalogue metadata
+    editor. ``&`` and ``0x`` prefixes are both accepted because Acorn
+    documentation and host tooling each use one of them.
+    """
     text = str(value or "").strip()
     if not re.fullmatch(r"(?:&|0x)?[0-9a-f]{1,8}", text, flags=re.IGNORECASE):
         raise ValueError("an Acorn address contains one to eight hexadecimal digits")
     return _hex_field(text)
+
+
+def engine_address(value: object) -> str:
+    """Render an address unambiguously for the Oaknut command line.
+
+    The engine reads a bare number as decimal, so handing it the user's text
+    verbatim would silently turn &1900 into 1900 decimal. Everything the user
+    types is parsed with :func:`parse_address` first and re-emitted with an
+    explicit ``0x`` prefix, so one written address means one number on every
+    path through the application.
+    """
+    return f"0x{parse_address(value):X}"
 
 
 def canonical_dfs_address(value: object) -> int:

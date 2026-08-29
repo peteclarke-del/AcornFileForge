@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import secrets
+import sys
 import tempfile
 import threading
 from dataclasses import dataclass
@@ -36,12 +37,54 @@ def _xdg_path(variable: str, fallback: Path) -> Path:
     return fallback
 
 
-def desktop_paths() -> DesktopPaths:
-    home = Path.home()
-    data = _xdg_path("XDG_DATA_HOME", home / ".local" / "share") / "acorn-file-forge"
-    config = _xdg_path("XDG_CONFIG_HOME", home / ".config") / "acorn-file-forge"
-    cache = _xdg_path("XDG_CACHE_HOME", home / ".cache") / "acorn-file-forge"
+APPLICATION_DIRECTORY = "acorn-file-forge"
+
+
+def _windows_paths(home: Path) -> DesktopPaths:
+    """Roaming for state worth keeping, local for data that can be rebuilt."""
+    roaming = Path(os.environ.get("APPDATA") or home / "AppData" / "Roaming")
+    local = Path(os.environ.get("LOCALAPPDATA") or home / "AppData" / "Local")
+    data = roaming / "AcornFileForge"
+    return DesktopPaths(
+        data=data,
+        config=data,
+        cache=local / "AcornFileForge" / "Cache",
+        work=local / "AcornFileForge" / "work",
+    )
+
+
+def _macos_paths(home: Path) -> DesktopPaths:
+    support = home / "Library" / "Application Support" / "AcornFileForge"
+    return DesktopPaths(
+        data=support,
+        config=support,
+        cache=home / "Library" / "Caches" / "AcornFileForge",
+        work=support / "work",
+    )
+
+
+def _linux_paths(home: Path) -> DesktopPaths:
+    data = _xdg_path("XDG_DATA_HOME", home / ".local" / "share") / APPLICATION_DIRECTORY
+    config = _xdg_path("XDG_CONFIG_HOME", home / ".config") / APPLICATION_DIRECTORY
+    cache = _xdg_path("XDG_CACHE_HOME", home / ".cache") / APPLICATION_DIRECTORY
     return DesktopPaths(data=data, config=config, cache=cache, work=data / "work")
+
+
+def desktop_paths() -> DesktopPaths:
+    """Return the per-user locations this platform expects an application to use.
+
+    Each desktop has its own convention and users reasonably expect it to be
+    followed: XDG directories on Linux, Application Support and Caches on
+    macOS, and Roaming with Local on Windows. Working images can be rebuilt
+    from their sources, so on Windows they live under Local rather than being
+    synchronised with a roaming profile.
+    """
+    home = Path.home()
+    if sys.platform == "win32":
+        return _windows_paths(home)
+    if sys.platform == "darwin":
+        return _macos_paths(home)
+    return _linux_paths(home)
 
 
 def _stable_owner(config_dir: Path) -> str:

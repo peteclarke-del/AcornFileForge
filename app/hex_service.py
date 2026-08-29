@@ -279,17 +279,8 @@ def write_raw_image(
             image.flush()
             os.fsync(image.fileno())
 
-        for cached in session.slot_cache.values():
-            cached.unlink(missing_ok=True)
-        session.slot_cache.clear()
+        session.invalidate_cached_views()
         session.tape = None
-        session.menu_slot = None
-        session.menu_type = None
-        session.menu_scanned = False
-        session.menu_entries = None
-        session.adfs_menu_roots = None
-        session.hfe_export_path = None
-        session.finalised_mtime_ns = None
         session.dirty = True
         service._append_warning(
             session,

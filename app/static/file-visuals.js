@@ -3,6 +3,7 @@ window.AcornFileVisuals = (() => {
     newImage: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3.5h8l4 4V20.5H6z"/><path d="M14 3.5v4h4M9 14h6M12 11v6"/></svg>',
     loadImage: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 19.5V5.5h6l2 2h8v3"/><path d="M3.5 19.5 6 10.5h15l-2.5 9z"/></svg>',
     saveImage: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3.5h13l3 3v14H4z"/><path d="M7 3.5v6h9v-6M7.5 20.5v-7h9v7"/></svg>',
+    exportImage: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 14.5v6h15v-6"/><path d="M12 3.5v11M8 7.5l4-4 4 4"/></svg>',
     refreshView: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.5 8.5A8 8 0 1 0 20 15"/><path d="M19.5 3.5v5h-5"/></svg>',
     minimizePane: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 17.5h12"/></svg>',
     maximizePane: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5.5" y="5.5" width="13" height="13" rx="1"/></svg>',
