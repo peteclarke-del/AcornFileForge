@@ -5,9 +5,14 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .adfs_menu_discovery import discover_adfs_menu_paths, scan_adfs_menu_directories
-from .dfs_compat import dfs_catalogue_files, infer_dfs_launch_page
+from .adfs_menu_discovery import (
+    MountedAdfsView,
+    # Re-exported for callers that import the ADFS menu API through this module.
+    discover_adfs_menu_paths as discover_adfs_menu_paths,
+)
+from .dfs_compat import infer_dfs_launch_page
 from .errors import DiskError
+from .oaknut_internals import file_copy_item, walk_post_order, write_copy_item
 from .metadata_lookup import (
     best_distribution_filename as best_distribution_filename,
     enrich_from_distribution_filename,
@@ -35,17 +40,12 @@ from .mmb_layout import (
     slot_offset as mmb_slot_offset,
 )
 from .menu.mmb_discovery import (
-    ACORN_USER_FILES,
-    ELECTRON_MAGAZINE_FILES,
     MENU_FILES,
-    MMC_DESKTOP_FILES,
-    SPI_GAME_MENU_FILES,
-    UNIVERSAL_4R_FILES,
     find_menu_slot,
     installed_mmb_menu,
-    installed_mmb_menus,
+    # Re-exported for callers that import the MMB menu API through this module.
+    installed_mmb_menus as installed_mmb_menus,
     is_mmb_menu_backup_title,
-    is_universal_menu,
     menu_type_from_ssd as _menu_type_from_ssd,
 )
 
@@ -686,11 +686,7 @@ def create_adfs_menu(
     if not entries:
         raise DiskError("No child directories were supplied for the menu.")
     template = _template_slot_path(service, template_dir)
-    try:
-        from oaknut.disc.cli import _file_item, _write_copy_item
-        from oaknut.disc.mount import resolve_mount
-    except ImportError as exc:
-        raise DiskError("The Oaknut menu-copy API is unavailable.") from exc
+    from oaknut.disc.mount import resolve_mount
 
     support_files = ("UNIMENU", "SHOW", "TXT2SCN", "UNIREAD")
     with resolve_mount(f"{template}:$") as source_resolved:
@@ -700,7 +696,7 @@ def create_adfs_menu(
                 destination = f"{root}.{name}"
                 if target_mount.exists(destination):
                     target_mount.remove(destination, force=True)
-                item = _file_item(
+                item = file_copy_item(
                     source_resolved.mount,
                     source_path,
                     destination,
@@ -709,7 +705,7 @@ def create_adfs_menu(
                     target_mount,
                     destination,
                     item,
-                    _write_copy_item,
+                    write_copy_item,
                 )
             boot_path = f"{root}.!BOOT"
             if target_mount.exists(boot_path):
@@ -725,7 +721,7 @@ def create_adfs_menu(
                     "filetype": None,
                     "datestamp": None,
                 },
-                _write_copy_item,
+                write_copy_item,
             )
     session.dirty = True
     records = [_normalise_record(item, "H") for item in entries]
@@ -815,7 +811,7 @@ def test_installed_adfs_menu_entries(
         return [], []
     tests: list[dict] = []
     with service.adfs_mount(session) as mount:
-        view = _MountedAdfsView(mount)
+        view = MountedAdfsView(mount)
         if root is None:
             roots = _scan_adfs_menu_roots(mount)
             session.adfs_menu_roots = roots
@@ -1043,10 +1039,6 @@ def delete_adfs_items(
         raise DiskError("Choose at least one ADFS file or directory to delete.")
     if any(source == "$" or not source.startswith("$.") for source in sources):
         raise DiskError("Choose ADFS files or directories below $.")
-    try:
-        from oaknut.disc.cli import _walk_post_order_mount
-    except ImportError as exc:
-        raise DiskError("The Oaknut ADFS delete API is unavailable.") from exc
 
     with service.adfs_mount(session) as mount:
         deleted_items = []
@@ -1110,7 +1102,7 @@ def delete_adfs_items(
 
         for item in deleted_items:
             if item["isDirectory"]:
-                for target in _walk_post_order_mount(mount, item["path"]):
+                for target in walk_post_order(mount, item["path"]):
                     mount.remove(target, force=True)
             else:
                 mount.remove(item["path"], force=True)

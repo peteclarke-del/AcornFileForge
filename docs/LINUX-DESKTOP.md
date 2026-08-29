@@ -64,7 +64,7 @@ A release `.deb` installs the same desktop host without retaining a Git
 checkout or creating a per-checkout virtual environment:
 
 ```bash
-sudo apt install ./acorn-file-forge_1.0.2-1~deb13_amd64.deb
+sudo apt install ./acorn-file-forge_1.1.0-1~deb13_amd64.deb
 ```
 
 The package places the shared application in `/opt/acorn-file-forge` and the
@@ -79,7 +79,7 @@ HxCFloppyEmulator command-line converter (`hxcfe`) and its private libraries,
 so HFE creation, opening and verified saving work without a separate host
 installation. GTK, Libadwaita, WebKit and PyGObject remain distribution
 packages so security updates continue to come from APT. The
-[HFE and HxCFE guide](HFE-HXC-GUIDE.md) documents its package paths and direct
+[HFE, SCP and HxCFE guide](HFE-HXC-GUIDE.md) documents its package paths and direct
 runtime check.
 
 Release filenames identify `deb13` or `ubuntu24.04` and use the Debian

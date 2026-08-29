@@ -15,6 +15,7 @@ from .formats import (
     HFE_EXTENSIONS,
     MMB_EXTENSIONS,
     ROM_EXTENSIONS,
+    SCP_EXTENSIONS,
     TAPE_EXTENSIONS,
 )
 from .menu.analysis import best_distribution_filename
@@ -27,6 +28,7 @@ IMAGE_EXTENSIONS = (
     | TAPE_EXTENSIONS
     | ADFS_EXTENSIONS
     | HFE_EXTENSIONS
+    | SCP_EXTENSIONS
     | ROM_EXTENSIONS
 )
 

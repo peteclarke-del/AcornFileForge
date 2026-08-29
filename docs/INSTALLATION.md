@@ -21,7 +21,7 @@ WebKit 6 packages.
 Install a downloaded package with APT so its system dependencies are resolved:
 
 ```bash
-sudo apt install ./acorn-file-forge_1.0.2-1~deb13_amd64.deb
+sudo apt install ./acorn-file-forge_1.1.0-1~deb13_amd64.deb
 ```
 
 Launch **Acorn File Forge** from the application menu, open an associated image
@@ -43,7 +43,7 @@ bundled.
 
 HxCFE provides HFE opening, creation and guarded saving. The executable and
 libraries are private to Acorn File Forge, so no separate host HxC package is
-required. See the [HFE and HxCFE guide](HFE-HXC-GUIDE.md) for runtime paths,
+required. See the [HFE, SCP and HxCFE guide](HFE-HXC-GUIDE.md) for runtime paths,
 supported HFE revisions and the verification process.
 
 To build the native package on the current machine:

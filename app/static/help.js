@@ -18,7 +18,7 @@ function showHelp() {
           <a href="#help-files">Files and folders</a>
           <strong>MEDIA GUIDES</strong>
           <a href="#help-dfs">SSD and DSD</a>
-          <a href="#help-hfe">HFE and HxCFE</a>
+          <a href="#help-hfe">HFE, SCP and HxCFE</a>
           <a href="#help-rom">ROM images</a>
           <a href="#help-romfs">ROMFS data ROMs</a>
           <a href="#help-mmb">MMB disk banks</a>
@@ -56,7 +56,7 @@ function showHelp() {
               <ol>
                 <li>Choose any empty pane.</li>
                 <li>Select <strong>Open image</strong>, or drag a disk, tape or ROM image from your computer onto the empty pane.</li>
-                <li>Choose the image. Supported families include SSD, DSD, HFE, MMB, ADFS floppy and hard-drive images, DAT/DSC, HDF, HDD, IMG, RAW, BIN and UEF. ZIP distributions can contain one supported image or a matched DAT/DSC pair.</li>
+                <li>Choose the image. Supported families include SSD, DSD, HFE, SCP, MMB, ADFS floppy and hard-drive images, DAT/DSC, HDF, HDD, IMG, RAW, BIN and UEF. ZIP distributions can contain one supported image or a matched DAT/DSC pair.</li>
                 <li>Wait for the opening indicator. The catalogue or MMB slot index appears when identification is complete.</li>
               </ol>
             </div>
@@ -216,7 +216,7 @@ function showHelp() {
               <ol>
                 <li>At file level, read the separate <strong>Load</strong> and <strong>Execute</strong> columns. Each value is the complete eight-digit catalogue word. DFS sign extension is shown conventionally, for example <code>&amp;FFFF1900</code>.</li>
                 <li>On writable DFS, MMB disk, ADFS or ROMFS media, select either address value. Both words are reviewed together so they cannot be changed accidentally in separate operations.</li>
-                <li>Enter one to eight hexadecimal digits, with an optional <code>&amp;</code> or <code>0x</code> prefix, then read the safety warning.</li>
+                <li>Enter one to eight hexadecimal digits, with an optional <code>&amp;</code> or <code>0x</code> prefix, then read the safety warning. Every address field in the application uses this one rule, so <code>1900</code>, <code>&amp;1900</code> and <code>0x1900</code> all mean &amp;1900, and a complete sign-extended word such as <code>&amp;FFFF1900</code> is typed exactly as written.</li>
                 <li>Select <strong>I understand, change addresses</strong> only when the values came from the original catalogue, a trusted <code>.inf</code> sidecar or reliable documentation. The app changes the catalogue record without rewriting the file bytes.</li>
               </ol>
               <div class="help-warning"><strong>Incorrect addresses can stop software loading or corrupt memory.</strong> On RISC OS-style FileCore entries, the same words can encode filetype and timestamp data. The dialog identifies that case before accepting the change.</div>
@@ -302,7 +302,7 @@ function showHelp() {
             <div class="help-note"><strong>To copy a whole DFS disk to ADFS:</strong> drag the blue disk-format badge or the open DFS pane heading onto an ADFS pane. Choose a directory name, and the catalogue will be extracted there.</div>
           </section>
           <section id="help-hfe">
-            <h3>HFE floppy images and HxCFE: safe editing</h3>
+            <h3>HFE and SCP flux images: safe decoding and export</h3>
             <figure><img src="/help/hfe-create.png" alt="Create image dialog showing HFE-wrapped DFS and ADFS floppy choices"><figcaption>Create a new HFE around DFS SSD/DSD or ADFS S/M/L geometry. Existing supported HFE images open through the normal image picker.</figcaption></figure>
             <p>HFE stores floppy track timing and bit cells, while DFS and ADFS describe files inside the sectors. Acorn File Forge uses the official HxCFloppyEmulator command-line converter, <code>hxcfe</code>, to decode those sectors and then opens the detected filing system. A supported HFE is not merely recognised: its decoded catalogue is browseable through the normal pane. Docker images and native Debian/Ubuntu packages include a pinned, architecture-native HxCFE build and its supporting libraries. No separate HxC installation is required.</p>
             <ol>
@@ -321,6 +321,14 @@ function showHelp() {
               <li>A mismatch blocks the download and preserves the original HFE. A successful HFE is added to the timestamped save package.</li>
             </ol></div>
             <div class="help-note"><strong>Installed Linux runtime:</strong> the private HxCFE executable is <code>/opt/acorn-file-forge/native/bin/hxcfe</code> and its libraries are under <code>/opt/acorn-file-forge/native/lib</code>. The application launcher configures that library path automatically.</div>
+            <div class="help-task"><h4>Open a Greaseweazle or SuperCard Pro SCP capture</h4><ol>
+              <li>Open or drag the <code>.scp</code> file onto the workspace. The same picker works in the web and Linux desktop editions.</li>
+              <li>Wait while HxCFE decodes the flux revolutions. Acorn File Forge identifies the recovered sectors as DFS or ADFS, restores a single omitted blank tail sector when HxCFE exhibits its known final-sector behaviour, then validates the complete filesystem.</li>
+              <li>Browse the normal catalogue and directory hierarchy. The pane badge remains <strong>SCP</strong>, while the file rules follow the recovered filesystem.</li>
+              <li>Select <strong>File → Export as…</strong>, or the <strong>Export</strong> control in the pane header between <strong>Save Image</strong> and <strong>Refresh View</strong>, and choose the native sector image. A recovered ADFS-L disk downloads as a 655,360-byte <code>.adl</code> image. The header control is greyed out when the open media has no compatible target.</li>
+            </ol></div>
+            <div class="help-note"><strong>Safety boundary:</strong> recognition of a root directory is not enough. The app rejects an SCP capture if the full Oaknut filesystem validator finds a broken map, catalogue or directory tree. Non-standard index timing is reported but does not block a capture whose recovered sectors validate completely.</div>
+            <div class="help-note"><strong>Editing:</strong> before enabling writes, the app re-encodes the recovered sectors to SCP and decodes them again. A byte difference makes the capture read-only. Read-only captures can still be browsed, analysed, copied into another image and exported as a native SSD, DSD, ADS, ADM, ADL or ADF sector image.</div>
           </section>
           <section id="help-rom">
             <h3>ROM images: banks, headers and chip sets</h3>
@@ -435,11 +443,11 @@ function showHelp() {
             <h3>MMB disk banks: slots and embedded disks</h3>
             <figure><img src="/help/mmb-actions.png" alt="MMB File and Menu controls with slot row actions"><figcaption>Every physical slot is listed. File contains disk insertion and creation; Edit contains clipboard actions; rename, access and eject controls live on each formatted slot row.</figcaption></figure>
             <div class="help-task">
-              <h4>Insert SSD, DSD or HFE image files and ZIP distributions</h4>
+              <h4>Insert SSD, DSD, HFE or SCP image files and ZIP distributions</h4>
               <ol>
                 <li>Select the first empty destination slot.</li>
-                <li>Open <strong>File → Insert existing SSD / DSD / HFE / ZIP</strong>.</li>
-                <li>Select one or several SSD/DSD/HFE files, or ZIP files containing them. Every supported ZIP member is imported in archive order and unrelated documentation or artwork is ignored.</li>
+                <li>Open <strong>File → Insert existing SSD / DSD / HFE / SCP / ZIP</strong>.</li>
+                <li>Select one or several SSD/DSD/HFE/SCP files, or ZIP files containing them. Every supported ZIP member is imported in archive order and unrelated documentation or artwork is ignored.</li>
                 <li>A DSD needs two adjacent empty slots. Its two sides occupy two SSD-sized MMB slots.</li>
                 <li>Review the allocation message and, if a menu is installed, review or skip each offered menu entry.</li>
               </ol>
@@ -541,7 +549,7 @@ function showHelp() {
               <figure><img src="/help/image-import-preview.png" alt="Image import dialog previewing Chuckulus files with optional destination and child-directory controls"><figcaption>Inspect the source before writing. Direct extraction into the current directory is the default; destination browsing and a new child directory are independent options.</figcaption></figure>
               <ol>
                 <li>Navigate to the ADFS directory that will contain the imported software.</li>
-                <li>Drag an open MMB slot, SSD/DSD/HFE image, UEF tape or another supported image from another pane; alternatively use <strong>File → Insert File</strong> and select an image from the host.</li>
+                <li>Drag an open MMB slot, SSD/DSD/HFE/SCP image, UEF tape or another supported image from another pane; alternatively use <strong>File → Insert File</strong> and select an image from the host.</li>
                 <li>Review the source preview. The current directory is selected by default; optionally tick <strong>Choose a different existing directory</strong> and browse the destination tree.</li>
                 <li>Optionally tick <strong>Create a new child directory</strong> and enter its name. Leave it unticked to place the source contents directly in the selected destination.</li>
                 <li>Choose <strong>Keep this disc off all menus</strong>, create or update a global Universal Menu in the current directory, or add the title to any detected Universal Menu elsewhere on the HDD. A menu-bound disc is installed as its own child directory below that menu root. Bulk MMB imports provide the same global choice plus a Menu checkbox on every disc row, so individual titles can remain hidden. Keeping software off-menu never requires a launch file.</li>
@@ -684,7 +692,7 @@ function showHelp() {
                 <tr><td>File</td><td>DFS or ADFS</td><td>Copied with compatible metadata</td></tr>
                 <tr><td>ADFS directory</td><td>ADFS</td><td>Recursive directory copy</td></tr>
                 <tr><td>SSD/DSD, DFS HFE or MMB slot</td><td>MMB</td><td>Inserted into empty slot(s); HFE track extras cannot be retained</td></tr>
-                <tr><td>SSD/DSD/HFE, UEF, ADF or MMB slot</td><td>ADFS</td><td>Extracted into a new directory; ambiguous loader commands are checked</td></tr>
+                <tr><td>SSD/DSD/HFE/SCP, UEF, ADF or MMB slot</td><td>ADFS</td><td>Extracted into a new directory; ambiguous loader commands are checked</td></tr>
                 <tr><td>Several MMB slots</td><td>ADFS</td><td>One directory per non-empty disk, grouped if necessary; every slot is checked</td></tr>
                 <tr><td>Whole hierarchical image</td><td>DFS</td><td>Not offered; copy individual files</td></tr>
               </tbody>
@@ -693,7 +701,7 @@ function showHelp() {
               <h4>Convert ambiguous loaders safely for ADFS</h4>
               <p>DFS machine-code loaders sometimes pass shortened commands such as <code>R.game</code> or <code>L.data</code> directly to OSCLI. Some ADFS floppy releases retain the same abbreviations. They can become ambiguous on an ADFS hard drive because ADFS adds commands including RENAME, REMOVE, LCAT, LEX and LIB.</p>
               <ol>
-                <li>Import a UEF, SSD, DSD, HFE or ADF into an ADFS directory, or copy one or more MMB slots to ADFS in the usual way.</li>
+                <li>Import a UEF, SSD, DSD, HFE, SCP or ADF into an ADFS directory, or copy one or more MMB slots to ADFS in the usual way.</li>
                 <li>Textual <code>!BOOT</code>, <code>BOOT</code>, <code>GO</code>, <code>MENU</code>, <code>LOADER</code> and <code>START</code> scripts have line-start <code>R.</code>, <code>L.</code> and <code>LO.</code> commands expanded to explicit <code>RUN</code> and <code>LOAD</code> commands.</li>
                 <li>Acorn File Forge starts with conventional boot scripts, follows their directly named launch target, and checks those reachable loaders for the exact immediate-pointer sequence used to pass an inline command to OSCLI. Unrelated documentation, reviews and game data are not treated as loaders.</li>
                 <li>Reachable tokenised BASIC loaders are checked for rooted paths such as <code>$.LOADER</code>. If that exact file exists inside the extracted directory, the path is made relative and the BASIC line is rebuilt. A rooted path is retained when its local target cannot be proved, so genuine volume-root dependencies are not guessed at.</li>
@@ -703,7 +711,7 @@ function showHelp() {
                 <li>If the pointer or free memory cannot be proved safe, no bytes are changed. Unresolved commands from the same reachable loader are condensed into one warning for manual testing.</li>
                 <li>Test the imported program on its intended hardware before saving the final image. A static check cannot prove every self-modifying, protected or dynamically constructed loader.</li>
               </ol>
-              <div class="help-warning"><strong>Existing imports are not silently rewritten:</strong> compatibility analysis runs while files are copied into ADFS. To repair a directory imported with an older version, delete that directory and import its UEF, SSD, DSD, HFE, ADF or MMB slot again. If the existing directory is populated, choose Replace only after confirming it is the correct target.</div>
+              <div class="help-warning"><strong>Existing imports are not silently rewritten:</strong> compatibility analysis runs while files are copied into ADFS. To repair a directory imported with an older version, delete that directory and import its UEF, SSD, DSD, HFE, SCP, ADF or MMB slot again. If the existing directory is populated, choose Replace only after confirming it is the correct target.</div>
             </div>
           </section>
           <section id="help-mmb-menu">

@@ -17,6 +17,7 @@ from pathlib import Path
 from .archive_utils import validated_zip_members
 from .checksum import sha256_bytes
 from .errors import DiskError
+from .outbound import checked_url as outbound_checked_url, http_url as outbound_http_url
 
 
 DEFAULT_SOURCES = json.loads((Path(__file__).with_name("catalog_sources.json")).read_text("utf-8"))
@@ -36,11 +37,8 @@ class CatalogueService:
         url: object,
         message: str = "The catalogue supplied an invalid URL.",
     ) -> str:
-        value = str(url or "").strip()
-        parsed = urllib.parse.urlparse(value)
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise DiskError(message)
-        return value
+        """Validate one outbound URL against the shared network policy."""
+        return outbound_http_url(url, message)
 
     def __init__(self, work_dir: Path):
         work_path = Path(work_dir)
@@ -122,6 +120,7 @@ class CatalogueService:
         cached = self._pages.get(url)
         if cached and cached.expires > time.time():
             return cached.body
+        url = outbound_checked_url(url)
         request = urllib.request.Request(url, headers={"User-Agent": "AcornFileForge/1.0 (+local archival tool)", "Accept-Encoding": "identity"})
         try:
             with urllib.request.urlopen(request, timeout=25) as response:
@@ -654,6 +653,7 @@ class CatalogueService:
         url = CatalogueService._http_url(
             url, "The catalogue supplied an invalid download request URL."
         )
+        url = outbound_checked_url(url, "The catalogue supplied an invalid download request URL.")
         request = urllib.request.Request(url, data=b"", method="POST", headers={"User-Agent": "AcornFileForge/1.0 (+local archival tool)", "Accept": "application/json"})
         try:
             with urllib.request.urlopen(request, timeout=25) as response:
@@ -661,7 +661,7 @@ class CatalogueService:
         except Exception as exc:
             raise DiskError(f"Could not generate the catalogue download: {exc}") from exc
         generated = str(payload.get("url") or "") if isinstance(payload, dict) else ""
-        return CatalogueService._http_url(
+        return outbound_checked_url(
             generated, "The catalogue did not return a usable download URL."
         )
 

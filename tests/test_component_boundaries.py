@@ -1,3 +1,4 @@
+import inspect
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -8,6 +9,7 @@ from app.menu_records import normalise_page, parse_menu_data, serialise_menu
 from app.mmb_layout import ENTRY_SIZE, HEADER_SIZE, INDEX_START, SLOT_SIZE, entry_offset, image_size, slot_offset
 from app.menu import adfs, analysis, mmb
 from app.disk_service import DiskService
+from app.flux_containers import FLUX_CONTAINERS
 from app.filesystem_disk_service import FilesystemDiskMixin
 from app.rom_disk_service import RomDiskMixin
 from app.session_disk_service import SessionDiskMixin
@@ -98,6 +100,46 @@ class ComponentBoundaryTests(unittest.TestCase):
             for path in app.rglob("*.py")
             if path.name != "checksum.py"
             and "hashlib.sha256" in path.read_text(encoding="utf-8")
+        ]
+        self.assertEqual(offenders, [])
+
+    def test_flux_geometry_rules_have_one_canonical_definition(self):
+        """HFE and SCP drifted apart once; the shared module is what prevents it."""
+        app = Path(__file__).parents[1] / "app"
+        offenders = [
+            path.relative_to(app).as_posix()
+            for path in app.rglob("*.py")
+            if path.name != "flux_containers.py"
+            and any(
+                layout in path.read_text(encoding="utf-8")
+                for layout in ("ACORN_ADFS_160K", "ACORN_ADFM_320K", "ACORN_ADFL_640K")
+            )
+        ]
+        self.assertEqual(offenders, [])
+
+    def test_both_flux_containers_share_one_save_implementation(self):
+        self.assertIsNot(
+            DiskService._prepare_hfe_download,
+            DiskService._prepare_scp_download,
+        )
+        for container in ("hfe", "scp"):
+            with self.subTest(container=container):
+                source = inspect.getsource(
+                    getattr(DiskService, f"_prepare_{container}_download")
+                )
+                self.assertIn("_prepare_flux_download", source)
+
+    def test_the_hxcfe_conversion_plugins_are_declared_once(self):
+        self.assertEqual(
+            {identifier: container.plugin for identifier, container in FLUX_CONTAINERS.items()},
+            {"hfe": "HXC_HFE", "scp": "SCP_FLUX_STREAM"},
+        )
+        app = Path(__file__).parents[1] / "app"
+        offenders = [
+            path.relative_to(app).as_posix()
+            for path in app.rglob("*.py")
+            if path.name != "flux_containers.py"
+            and "SCP_FLUX_STREAM" in path.read_text(encoding="utf-8")
         ]
         self.assertEqual(offenders, [])
 

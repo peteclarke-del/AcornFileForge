@@ -64,3 +64,21 @@ Use generated media and a disposable working volume. Do not test against
 systems or data you do not own. Avoid publishing an exploit before a fix and
 coordinated disclosure are available. The project does not currently operate a
 bug bounty or promise payment for reports.
+
+## Outbound network policy
+
+The online library and metadata lookup are the only features that make outbound
+requests. Requests are restricted to `http` and `https`, and to publicly
+routable addresses. A catalogue source that resolves to a loopback, private,
+link-local, reserved or multicast address is refused before any connection is
+made, so an editable source list cannot be used to reach services that only the
+host can see.
+
+The check runs immediately before each request rather than when a source is
+saved, because a destination that was acceptable when configured may not be
+when it is used. It narrows the reachable target set; it does not defeat a name
+that resolves differently between the check and the connection.
+
+Set `ACORN_ALLOW_PRIVATE_SOURCES=1` to permit a local archive mirror on a
+trusted network. It is off by default so the safe behaviour does not depend on
+the operator noticing.

@@ -15,7 +15,7 @@ the independent ARM64, ARMv7 or physical-hardware rows below.
 Record the intended version before starting:
 
 ```bash
-export RELEASE_VERSION=1.0.2
+export RELEASE_VERSION=1.1.0
 test "$(cat VERSION)" = "$RELEASE_VERSION"
 ```
 

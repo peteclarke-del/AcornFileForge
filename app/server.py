@@ -27,6 +27,25 @@ ROOT = Path(__file__).resolve().parent
 WORK_DIR = Path(os.environ.get("ACORN_FILE_FORGE_WORK_DIR", ROOT.parent / "work"))
 MENU_TEMPLATE_DIR = ROOT / "assets" / "menu_templates"
 
+# These controls apply equally to the browser and the private desktop WebKit
+# host, and are asserted identical for both by the platform contract tests. The
+# noVNC viewer is the only intentional cross-origin frame: it uses the current
+# host on its dedicated port 8668.
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "SAMEORIGIN",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "camera=(), geolocation=(), microphone=()",
+    "Content-Security-Policy": (
+        "default-src 'self'; base-uri 'self'; object-src 'none'; "
+        "frame-ancestors 'self'; form-action 'self'; script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+        "font-src 'self' data:; connect-src 'self' ws: wss:; "
+        "frame-src 'self' http://*:8668 https://*:8668; "
+        "worker-src 'self' blob:"
+    ),
+}
+
 
 def create_app(
     *,
@@ -144,39 +163,37 @@ def create_app(
         return jsonify(error=f"The image exceeds the {max_upload_gib} GiB upload limit."), 413
 
     @application.after_request
-    def prevent_stale_frontend_assets(response):
+    def finalise_image_checkpoint(response):
+        """Keep the undo point a successful request created, discard a failed one."""
         checkpoint_session = getattr(g, "undo_checkpoint_session", None)
         checkpoint_token = getattr(g, "undo_checkpoint_token", None)
-        if checkpoint_session is not None and checkpoint_token is not None:
-            try:
-                if response.status_code >= 400:
-                    service.rollback_automatic_checkpoint(checkpoint_session, checkpoint_token)
-                else:
-                    service.finish_automatic_checkpoint(checkpoint_session, checkpoint_token)
-            except Exception:
-                application.logger.exception("Could not finalise the automatic image checkpoint")
+        if checkpoint_session is None or checkpoint_token is None:
+            return response
+        try:
+            if response.status_code >= 400:
+                service.rollback_automatic_checkpoint(checkpoint_session, checkpoint_token)
+            else:
+                service.finish_automatic_checkpoint(checkpoint_session, checkpoint_token)
+        except Exception:
+            # Deliberately broad. This runs after the response is decided, so a
+            # bookkeeping failure here must never replace a result the user has
+            # already earned with a 500. Undo housekeeping is recoverable; the
+            # response is not. Failures are logged rather than surfaced.
+            application.logger.exception("Could not finalise the automatic image checkpoint")
+        return response
+
+    @application.after_request
+    def apply_security_headers(response):
+        for header, value in SECURITY_HEADERS.items():
+            response.headers.setdefault(header, value)
+        return response
+
+    @application.after_request
+    def identify_session_owner(response):
+        """Echo the private owner identity and refresh its cookies when it changes."""
         owner_id = getattr(g, "session_owner_id", "")
         if owner_id:
             response.headers["X-Acorn-Session-Owner"] = owner_id
-        # These controls apply equally to the browser and the private desktop
-        # WebKit host. The noVNC viewer is the only intentional cross-origin
-        # frame: it uses the current host on its dedicated port 8668.
-        response.headers.setdefault("X-Content-Type-Options", "nosniff")
-        response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
-        response.headers.setdefault("Referrer-Policy", "no-referrer")
-        response.headers.setdefault(
-            "Permissions-Policy",
-            "camera=(), geolocation=(), microphone=()",
-        )
-        response.headers.setdefault(
-            "Content-Security-Policy",
-            "default-src 'self'; base-uri 'self'; object-src 'none'; "
-            "frame-ancestors 'self'; form-action 'self'; script-src 'self'; "
-            "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
-            "font-src 'self' data:; connect-src 'self' ws: wss:; "
-            "frame-src 'self' http://*:8668 https://*:8668; "
-            "worker-src 'self' blob:",
-        )
         if owner_id and getattr(g, "set_owner_cookie", False):
             response.set_cookie(
                 "acorn_file_forge_owner",
@@ -194,6 +211,11 @@ def create_app(
                 samesite="Strict",
                 secure=request.is_secure,
             )
+        return response
+
+    @application.after_request
+    def prevent_stale_frontend_assets(response):
+        """Stop a cached client from outliving an upgraded service."""
         if request.path == "/" or request.path.endswith((".js", ".css")):
             response.headers["Cache-Control"] = "no-store, max-age=0"
             response.headers["Pragma"] = "no-cache"

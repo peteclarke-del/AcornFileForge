@@ -306,10 +306,6 @@ def read_archive_member_details(data: bytes, filename: str, member_name: str) ->
     }
 
 
-def read_archive_member(data: bytes, filename: str, member_name: str) -> bytes:
-    return read_archive_member_details(data, filename, member_name)[0]
-
-
 def archive_member_editable(data: bytes, filename: str, member_name: str | None = None) -> bool:
     """Return whether a container can be rebuilt without changing its semantics."""
     kind = _archive_kind(data, filename)

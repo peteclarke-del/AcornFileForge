@@ -4,6 +4,7 @@ from typing import Callable
 
 from .errors import DiskError
 from .image_session import ImageSession
+from .oaknut_internals import file_copy_item, write_copy_item
 
 
 class ADFSInstallMixin:
@@ -32,16 +33,12 @@ class ADFSInstallMixin:
     def _repair_copied_adfs_loaders(
         self, target: ImageSession, directory: str
     ) -> tuple[list[str], list[str]]:
-        try:
-            from oaknut.disc.cli import _file_item, _write_copy_item
-        except ImportError as exc:
-            raise DiskError("The Oaknut loader-repair API is unavailable.") from exc
         with self.adfs_mount(target) as mount:
-            items = self._adfs_directory_items(mount, directory, _file_item)
+            items = self._adfs_directory_items(mount, directory, file_copy_item)
             repairs, warnings = self._repair_adfs_loader_items(items)
             for item in items:
                 if item.get("loaderRepairs"):
-                    _write_copy_item(mount, str(item["dst"]), item, True)
+                    write_copy_item(mount, str(item["dst"]), item, True)
         if repairs:
             target.dirty = True
         return repairs, warnings
@@ -73,10 +70,6 @@ class ADFSInstallMixin:
         if session.kind != "adfs" or not self.summary(session)["hardDisk"]:
             raise DiskError("Installed disk auditing is available only for ADFS HDD images.")
         report = progress or (lambda _message, _current=None, _total=None: None)
-        try:
-            from oaknut.disc.cli import _file_item
-        except ImportError as exc:
-            raise DiskError("The Oaknut ADFS audit API is unavailable.") from exc
         with self.adfs_mount(session) as mount:
             if not mount.exists(root):
                 raise DiskError(f"Path not found: {root}")
@@ -95,7 +88,7 @@ class ADFSInstallMixin:
             findings = []
             for offset, directory in enumerate(roots):
                 report(f"Checking installed software in {directory}", offset, len(roots))
-                files = self._adfs_directory_items(mount, directory, _file_item)
+                files = self._adfs_directory_items(mount, directory, file_copy_item)
                 proposed = [dict(item) for item in files]
                 repairs, warnings = self._repair_adfs_loader_items(proposed)
                 findings.append({
@@ -135,18 +128,14 @@ class ADFSInstallMixin:
             )
         report = progress or (lambda _message, _current=None, _total=None: None)
         repaired = []
-        try:
-            from oaknut.disc.cli import _file_item, _write_copy_item
-        except ImportError as exc:
-            raise DiskError("The Oaknut loader-repair API is unavailable.") from exc
         with self.adfs_mount(session) as mount:
             for offset, directory in enumerate(unique):
                 report(f"Repairing installed software in {directory}", offset, len(unique))
-                items = self._adfs_directory_items(mount, directory, _file_item)
+                items = self._adfs_directory_items(mount, directory, file_copy_item)
                 repairs, warnings = self._repair_adfs_loader_items(items)
                 for item in items:
                     if item.get("loaderRepairs"):
-                        _write_copy_item(mount, str(item["dst"]), item, True)
+                        write_copy_item(mount, str(item["dst"]), item, True)
                 for repair in repairs:
                     self._append_warning(session, f"{directory}: ADFS compatibility change made: {repair}.")
                 for warning in warnings:

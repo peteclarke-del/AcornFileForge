@@ -208,6 +208,48 @@ test("pane presentation formats images and capacity through one component", () =
   assert.match(view.crumbs("$.Games"), /data-path="\$"/);
 });
 
+test("the pane export control follows the formats the service offers", () => {
+  const view = paneView.create({ esc: value => String(value), humanSize: value => `${value} B` });
+
+  const exportable = view.exportAvailability({
+    name: "demo.adl",
+    exportFormats: [
+      { format: "native", extension: "adl", label: "Native sector image (.adl)" },
+      { format: "hfe", extension: "hfe", label: "HxC HFE flux image (.hfe)" },
+      { format: "scp", extension: "scp", label: "SuperCard Pro flux image (.scp)" },
+    ],
+  });
+  assert.equal(exportable.available, true);
+  assert.match(exportable.label, /demo\.adl/);
+
+  // A BeebSCSI pair carries geometry a flux or sector container cannot hold,
+  // so the control is disabled and says which limitation applies.
+  const beebscsi = view.exportAvailability({
+    name: "scsi0.dat",
+    hasDescriptor: true,
+    exportFormats: [],
+  });
+  assert.equal(beebscsi.available, false);
+  assert.match(beebscsi.label, /BeebSCSI DAT and DSC pair/);
+
+  // Anything else with no compatible target gets the general reason.
+  const unsupported = view.exportAvailability({ name: "bank.rom", exportFormats: [] });
+  assert.equal(unsupported.available, false);
+  assert.match(unsupported.label, /no compatible format/);
+
+  // A missing field must read as unavailable, never as an enabled control.
+  assert.equal(view.exportAvailability({ name: "old.ssd" }).available, false);
+});
+
+test("the pane export icon matches the other header controls", () => {
+  const icons = visuals.PANE_ICONS;
+  assert.ok(icons.exportImage, "the export control needs an icon");
+  for (const [name, markup] of Object.entries(icons)) {
+    assert.match(markup, /^<svg viewBox="0 0 24 24" aria-hidden="true">/, `${name} shares the icon frame`);
+    assert.match(markup, /<\/svg>$/, `${name} is a complete element`);
+  }
+});
+
 test("folder transfer planning preserves ADFS trees and resolves collisions", () => {
   const planning = transferPlanning.create({
     targetNameRule: (_pane, name) => ({ suggested: name.slice(0, 10), limit: 10 }),

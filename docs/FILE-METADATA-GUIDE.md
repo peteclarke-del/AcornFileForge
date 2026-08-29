@@ -54,6 +54,24 @@ specific warning. Prefer the original catalogue values, the original archive's
 SparkFS fields or a trusted metadata sidecar. Use a filetype-aware operation
 when the intention is to change only a RISC OS filetype.
 
+## Address notation
+
+Acorn writes addresses in hexadecimal, so every place the application accepts a
+typed address reads `1900`, `&1900` and `0x1900` as the same value, &1900. That
+covers the catalogue address editor, the file-import review, **New file**, the
+file properties dialog and the `--load` and `--exec` options of the headless
+command line. An address is one to eight hexadecimal digits, so a complete
+sign-extended DFS word such as `&FFFF1900` is entered exactly as it is written.
+
+Values that are not addresses are refused before anything is written, naming
+the text that was rejected.
+
+Menu PAGE fields are a separate convention and are not address fields. The
+Universal Menu database stores PAGE as its high byte, so `19` there means
+&1900, and the application converts between the two automatically. In an
+address field `19` means &0019. See the
+[main handbook](../README.md) for the menu tools.
+
 ## Editing an address
 
 1. Open the disk or data ROM and navigate to the file.

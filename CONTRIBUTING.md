@@ -42,7 +42,14 @@ ownership are defined in [GOVERNANCE.md](GOVERNANCE.md).
 - Reject unsupported media explicitly. Do not guess geometry or silently
   discard metadata to make a file appear to work.
 - Keep one authoritative implementation for checksums, MMB offsets, catalogue
-  metadata, menu codecs, archive bounds and filesystem mutations.
+  metadata, menu codecs, archive bounds, flux-container policy and filesystem
+  mutations. Flux geometry, encode and verify rules belong in
+  `app/flux_containers.py` so HFE and SCP cannot drift apart; they previously
+  did, and only the HFE save path repaired an omitted trailing sector.
+- Reach into Oaknut's private API only through `app/oaknut_internals.py`. That
+  module names every borrowed underscore-prefixed symbol in one reviewed place,
+  so an Oaknut upgrade has a single file to check.
+  `tests/test_oaknut_internals.py` enforces both halves of this.
 - Bound archive expansion, content scanning, uploads, subprocess execution and
   long-running operations. Treat image contents and filenames as untrusted.
 - Do not use shell interpolation for user-controlled values. Use argument
@@ -55,6 +62,19 @@ ownership are defined in [GOVERNANCE.md](GOVERNANCE.md).
 - Avoid compatibility layers for behaviour that has never been released. This
   project values a clear current implementation over dormant branches.
 
+## Lint
+
+The correctness lint runs first in CI and takes seconds:
+
+```bash
+pipx run ruff==0.16.4 check .
+```
+
+`ruff.toml` deliberately enforces a narrow set: undefined names, unused
+imports, broken f-strings, syntax errors and pylint errors. It does not enforce
+formatting. Keep it green; widen it one rule family at a time, with the
+resulting fixes in the same change.
+
 ## Tests
 
 Run the Python suite from an environment containing the application runtime
@@ -63,6 +83,34 @@ dependencies:
 ```bash
 python3 -m unittest discover -s tests -v
 ```
+
+### A complete local environment
+
+Most of the suite runs on the host once the pinned runtime packages are
+installed, which is considerably faster than rebuilding the container between
+edits:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+PATH="$PWD/.venv/bin:$PATH" .venv/bin/python -m pytest tests -q
+```
+
+The `disc` engine is installed into `.venv/bin` by the Oaknut packages, so it
+must be on `PATH` for the subprocess calls to find it.
+
+HFE and SCP tests additionally need the `hxcfe` binary, which is not on PyPI.
+Build the pinned revision once and put it on `PATH`:
+
+```bash
+tools/build-hxc-runtime.sh /tmp/hxc
+PATH="/tmp/hxc/bin:$PWD/.venv/bin:$PATH" LD_LIBRARY_PATH=/tmp/hxc/lib \
+  .venv/bin/python -m pytest tests -q
+```
+
+The managed emulator tests are the only ones that then remain unrunnable on a
+plain host, because they execute the b-em, Elkulator and MAME binaries that the
+container builds. Run those in the image, as below.
 
 Run the JavaScript unit and syntax checks:
 

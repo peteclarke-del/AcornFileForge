@@ -123,6 +123,7 @@ RUN ldconfig
 
 COPY VERSION ./VERSION
 COPY app ./app
+COPY acorn_floppy ./acorn_floppy
 COPY acorn_greaseweazle ./acorn_greaseweazle
 
 RUN mkdir -p /app/work

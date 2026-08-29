@@ -40,6 +40,15 @@ class ProbeResult:
 
 
 @dataclass(frozen=True)
+class ReadResult:
+    drive: str
+    image: str
+    tracks_read: int
+    size: int
+    output_tail: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class WriteResult:
     drive: str
     image: str
@@ -57,11 +66,12 @@ IMAGE_FORMATS = {
     ".adm": ImageFormat(".adm", "ADFS medium disk", True),
     ".adl": ImageFormat(".adl", "ADFS large disk", True),
     ".hfe": ImageFormat(".hfe", "HFE flux-level disk", False),
+    ".scp": ImageFormat(".scp", "SuperCard Pro flux capture", False),
 }
 DRIVE_CHOICES = ("A", "B", "0", "1", "2", "3")
 _DRIVE_PATTERN = re.compile(r"[A-Za-z0-9]+")
 _TRACK_PATTERN = re.compile(r"^\s*T(\d+)\.(\d+):")
-_GEOMETRY_PATTERN = re.compile(r"Writing c=(\d+)-(\d+):h=(\d+)-(\d+)", re.I)
+_GEOMETRY_PATTERN = re.compile(r"(?:Writing|Reading) c=(\d+)-(\d+):h=(\d+)-(\d+)", re.I)
 
 
 def image_format(path_or_name: str | Path) -> ImageFormat:
@@ -154,21 +164,20 @@ class GreaseweazleClient:
             raise GreaseweazleError("Choose Greaseweazle drive A, B, 0, 1, 2 or 3.")
         return drive
 
-    def write(
+    def _stream(
         self,
-        image: str | Path,
-        drive: str,
-        progress: Callable[[str, int | None, int | None], None] | None = None,
-    ) -> WriteResult:
-        path = Path(image)
-        image_type = image_format(path)
-        selected_drive = self._drive(drive)
-        probe = self.probe()
-        if not probe.available or not probe.command:
-            raise GreaseweazleError(probe.detail)
-        report = progress or (lambda _message, _current=None, _total=None: None)
-        command = [probe.command, "write", f"--drive={selected_drive}", str(path)]
-        report(f"Starting physical write on drive {selected_drive}", 0, None)
+        command: list[str],
+        report,
+        *,
+        activity: str,
+        limit_message: str,
+    ) -> tuple[int, list[str], set[tuple[int, int]], int | None]:
+        """Run one gw command, following its per-track progress as it goes.
+
+        Reading and writing differ only in the command and how the result is
+        judged, so the process handling, cancellation boundary, timeout and
+        track accounting live here once.
+        """
         try:
             process = subprocess.Popen(
                 command,
@@ -202,14 +211,12 @@ class GreaseweazleClient:
             finished_output = False
             while not finished_output:
                 if time.monotonic() >= deadline:
-                    raise GreaseweazleError(
-                        "Greaseweazle exceeded the 30 minute write limit. The physical disk may be incomplete."
-                    )
+                    raise GreaseweazleError(limit_message)
                 try:
                     line = lines.get(timeout=0.25)
                 except queue.Empty:
                     # Calling progress is also the cooperative cancellation boundary.
-                    report("Writing physical floppy", len(tracks), total)
+                    report(activity, len(tracks), total)
                     continue
                 if line is None:
                     finished_output = True
@@ -223,7 +230,7 @@ class GreaseweazleClient:
                 track = _TRACK_PATTERN.match(line)
                 if track:
                     tracks.add((int(track.group(1)), int(track.group(2))))
-                report(line or "Writing physical floppy", len(tracks), total)
+                report(line or activity, len(tracks), total)
             return_code = process.wait(timeout=5)
         except BaseException:
             process.terminate()
@@ -237,7 +244,96 @@ class GreaseweazleClient:
             if process.stdout is not None:
                 process.stdout.close()
             reader.join(timeout=1)
+        return return_code, output, tracks, total
 
+    def _ready_command(self) -> str:
+        probe = self.probe()
+        if not probe.available or not probe.command:
+            raise GreaseweazleError(probe.detail)
+        return probe.command
+
+    def read(
+        self,
+        destination: str | Path,
+        drive: str,
+        progress: Callable[[str, int | None, int | None], None] | None = None,
+        *,
+        revolutions: int | None = None,
+    ) -> ReadResult:
+        """Capture a physical disk into an image file.
+
+        The destination suffix selects what gw produces, so an ``.scp`` target
+        captures flux and a sector suffix such as ``.ssd`` or ``.adf`` decodes
+        as it reads. The file is only returned once gw has exited cleanly and
+        left a non-empty image behind.
+        """
+        path = Path(destination)
+        image_type = image_format(path)
+        selected_drive = self._drive(drive)
+        command = self._ready_command()
+        report = progress or (lambda _message, _current=None, _total=None: None)
+        arguments = [command, "read", f"--drive={selected_drive}"]
+        if revolutions is not None:
+            if not 1 <= int(revolutions) <= 10:
+                raise GreaseweazleError("Choose between 1 and 10 revolutions per track.")
+            arguments.append(f"--revs={int(revolutions)}")
+        arguments.append(str(path))
+        report(f"Starting physical read on drive {selected_drive}", 0, None)
+        return_code, output, tracks, total = self._stream(
+            arguments,
+            report,
+            activity="Reading physical floppy",
+            limit_message=(
+                "Greaseweazle exceeded the 30 minute read limit. The capture was abandoned."
+            ),
+        )
+        if return_code:
+            tail = "\n".join(output[-12:])
+            path.unlink(missing_ok=True)
+            raise GreaseweazleError(
+                "Greaseweazle could not read the physical disk."
+                + (f"\n\n{tail}" if tail else "")
+            )
+        if not path.is_file() or not path.stat().st_size:
+            raise GreaseweazleError(
+                "Greaseweazle finished without producing an image. Check that a disk is inserted "
+                "and that the drive is selected correctly."
+            )
+        size = path.stat().st_size
+        report(
+            f"Physical disk captured as {image_type.label}",
+            total or len(tracks),
+            total or len(tracks),
+        )
+        return ReadResult(
+            drive=selected_drive,
+            image=path.name,
+            tracks_read=len(tracks),
+            size=size,
+            output_tail=tuple(output[-12:]),
+        )
+
+    def write(
+        self,
+        image: str | Path,
+        drive: str,
+        progress: Callable[[str, int | None, int | None], None] | None = None,
+    ) -> WriteResult:
+        path = Path(image)
+        image_type = image_format(path)
+        selected_drive = self._drive(drive)
+        command = self._ready_command()
+        report = progress or (lambda _message, _current=None, _total=None: None)
+        report(f"Starting physical write on drive {selected_drive}", 0, None)
+        return_code, output, tracks, total = self._stream(
+            [command, "write", f"--drive={selected_drive}", str(path)],
+            report,
+            activity="Writing physical floppy",
+            limit_message=(
+                "Greaseweazle exceeded the 30 minute write limit. "
+                "The physical disk may be incomplete."
+            ),
+        )
         transcript = "\n".join(output)
         folded_transcript = transcript.casefold()
         if return_code:

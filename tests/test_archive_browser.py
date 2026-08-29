@@ -13,7 +13,6 @@ from app.archive_browser import (
     archive_member_editable,
     list_archive,
     preview_archive_member_replacement,
-    read_archive_member,
     read_archive_member_details,
     replace_archive_member,
 )
@@ -29,6 +28,11 @@ try:
     from app.routes.tools import create_tools_blueprint
 except ModuleNotFoundError:  # Flask is installed in the production image.
     Flask = None
+
+
+def read_archive_member(data: bytes, filename: str, member_name: str) -> bytes:
+    """Read one member's bytes, discarding the metadata the tests do not assert."""
+    return read_archive_member_details(data, filename, member_name)[0]
 
 
 class ArchiveBrowserTests(unittest.TestCase):
@@ -268,7 +272,9 @@ class ArchiveBrowserTests(unittest.TestCase):
         })
         self.assertEqual(created.status_code, 200)
         self.assertEqual(created.get_json()["path"], "$.Games.NEWFILE")
-        self.assertEqual(service.written[:5], ("$.Games.NEWFILE", b"", "00000000", "00000000", None))
+        # Addresses typed by a person are normalised to the engine's explicit
+        # hexadecimal form, so no unprefixed value can be read as decimal.
+        self.assertEqual(service.written[:5], ("$.Games.NEWFILE", b"", "0x0", "0x0", None))
 
 
 if __name__ == "__main__":

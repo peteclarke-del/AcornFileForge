@@ -2,6 +2,7 @@ window.AcornPaneView = (() => {
   function create({ esc, humanSize }) {
     const paneFormat = image => {
       if (image.containerFormat === "hfe") return "HFE";
+      if (image.containerFormat === "scp") return "SCP";
       if (image.kind === "mmb") return "MMB";
       if (image.kind === "tape") return "UEF";
       if (image.kind === "rom") return "ROM";
@@ -48,7 +49,23 @@ window.AcornPaneView = (() => {
       return `<button class="crumb archive-exit" title="Return to the containing filing system">${esc(pane.archiveName || "Archive")}</button>${children}`;
     };
 
-    return { archiveCrumbs, capacityMarkup, crumbs, paneFormat };
+    // Whether this image's sectors can be converted to another container, and
+    // the wording for the header control either way. The button stays visible
+    // when unavailable so the capability is discoverable, and says why.
+    const exportAvailability = image => {
+      const formats = image.exportFormats || [];
+      if (formats.length) {
+        return { available: true, label: `Export ${image.name} as another format` };
+      }
+      return {
+        available: false,
+        label: image.hasDescriptor
+          ? "Export as… · a BeebSCSI DAT and DSC pair cannot be converted"
+          : "Export as… · no compatible format for this media",
+      };
+    };
+
+    return { archiveCrumbs, capacityMarkup, crumbs, exportAvailability, paneFormat };
   }
 
   return { create };

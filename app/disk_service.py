@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import json
 import os
 import re
 import shutil
@@ -37,7 +36,7 @@ from .image_session import (
     ImageSession as ImageSession,
     SESSION_OWNER as SESSION_OWNER,
 )
-from .formats import ADFS_EXTENSIONS, DFS_EXTENSIONS, HFE_EXTENSIONS, MMB_EXTENSIONS, ROM_EXTENSIONS, TAPE_EXTENSIONS
+from .formats import ADFS_EXTENSIONS, DFS_EXTENSIONS, HFE_EXTENSIONS, MMB_EXTENSIONS, ROM_EXTENSIONS, SCP_EXTENSIONS, TAPE_EXTENSIONS
 from .filename_policy import session_name_policy
 from .filesystem_disk_service import FilesystemDiskMixin
 from .mmb_layout import (
@@ -51,6 +50,15 @@ from .mmb_layout import (
     slot_offset as mmb_slot_offset,
 )
 from .mmb_disk_service import MmbCatalogueMixin
+from .oaknut_internals import (
+    collect_copy_items,
+    ensure_directory_chain,
+    file_copy_item,
+    in_storage_order,
+    natural_name_key,
+    walk_post_order,
+    write_copy_item,
+)
 from .rom_disk_service import RomDiskMixin
 from .session_disk_service import SessionDiskMixin
 from .tape_disk_service import TapeDiskMixin
@@ -67,10 +75,20 @@ from .rom import (
     validate_platform,
 )
 from .dfs_compat import repair_dfs_basic_wildcards
+from .flux_containers import (
+    BROWSEABLE_KINDS,
+    FLUX_CONTAINERS,
+    HFE,
+    SCP,
+    FluxContainer,
+    FluxEngine,
+    flux_layout_for,
+    is_flux_encodable,
+    restore_omitted_tail_sector,
+    sector_image_suffix,
+)
 from .hfe import HFEError, HFEHeader, parse_hfe_header
 from .uef import (
-    TapeFile,
-    UEFContents,
     UEFError,
     basic_unopened_channel_io,
     is_tokenized_basic,
@@ -131,6 +149,8 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
             return "tape"
         if ext in HFE_EXTENSIONS:
             return "hfe"
+        if ext in SCP_EXTENSIONS:
+            return "scp"
         if ext in ROM_EXTENSIONS:
             return "rom"
         return "unknown"
@@ -198,6 +218,11 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
         if session.hfe_read_only:
             raise DiskError(
                 "This HFE uses advanced track features or contains unreadable sectors. "
+                "It can be browsed and copied from, but cannot be rewritten safely."
+            )
+        if session.scp_read_only:
+            raise DiskError(
+                "This SCP flux capture could not be re-encoded and decoded back to identical sectors. "
                 "It can be browsed and copied from, but cannot be rewritten safely."
             )
         if session.kind == "romfs":
@@ -351,13 +376,18 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
         rom_options: dict | None = None,
     ) -> ImageSession:
         if kind == "hfe":
-            path, kind, hfe_original, hfe_header, hfe_read_only, hfe_layout, hfe_warnings = self._open_hfe(path)
+            path, kind, hfe_original, hfe_header, hfe_read_only, hfe_warnings = self._open_hfe(path)
         else:
             hfe_original = None
             hfe_header = None
             hfe_read_only = False
             hfe_warnings = []
-            hfe_layout = None
+        if kind == "scp":
+            path, kind, scp_original, scp_read_only, scp_warnings = self._open_scp(path)
+        else:
+            scp_original = None
+            scp_read_only = False
+            scp_warnings = []
         # BIN is also used for ADFS images.  Prefer ROM only when the contents
         # carry a structurally valid sideways-ROM header; .rom is explicit.
         if kind == "adfs" and path.suffix.lower() == ".bin":
@@ -384,8 +414,9 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
             hfe_original_path=hfe_original,
             hfe_version=hfe_header.version if hfe_header else None,
             hfe_read_only=hfe_read_only,
-            hfe_layout=hfe_layout,
-            warnings=hfe_warnings,
+            scp_original_path=scp_original,
+            scp_read_only=scp_read_only,
+            warnings=hfe_warnings + scp_warnings,
         )
         if kind == "adfs":
             self.refresh_adfs_capabilities(session)
@@ -431,47 +462,68 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
         self._persist_session(session)
         return session
 
-    @staticmethod
-    def _hfe_working_suffix(kind: str, size: int, sides: int) -> str:
-        if kind == "dfs":
-            return ".dsd" if sides == 2 or size > MMB_SLOT_SIZE else ".ssd"
-        return {163840: ".ads", 327680: ".adm", 655360: ".adl"}.get(size, ".adf")
+    # Flux geometry policy is shared with the SCP container and unit tested
+    # without HxCFE; see app/flux_containers.py.
+    _hfe_working_suffix = staticmethod(sector_image_suffix)
+    _flux_layout_for = staticmethod(flux_layout_for)
+    _normalise_decoded_flux_size = staticmethod(restore_omitted_tail_sector)
 
-    def _open_hfe(self, original: Path) -> tuple[Path, str, Path, HFEHeader, bool, str | None, list[str]]:
+    @property
+    def _flux(self) -> FluxEngine:
+        return FluxEngine(self._run_hxcfe)
+
+    def _decode_flux_to_sectors(
+        self,
+        original: Path,
+        container: FluxContainer,
+        *,
+        sides: int = 1,
+    ) -> tuple[Path, str, bool, str]:
+        """Decode a flux container and place its sectors under a working name.
+
+        Shared by both containers: decode, refuse an empty or non-Acorn result,
+        repair a single omitted tail sector, then rename to the extension that
+        matches the recovered geometry so the rest of the workbench sees an
+        ordinary sector image.
+
+        Returns the working path, the filesystem kind, whether a tail sector was
+        restored, and HxCFE's decode output.
+        """
+        raw = original.parent / f"{container.identifier}-decoded.img"
+        decode_info = self._flux.decode_to_sectors(original, raw)
+        if not raw.is_file() or not raw.stat().st_size:
+            raise DiskError(
+                f"The {container.noun} did not contain a usable sector filesystem."
+            )
+        try:
+            kind = self.identify_kind(raw)
+        except DiskError as exc:
+            raise DiskError(
+                f"HxCFE decoded the {container.noun}, but the resulting sectors do not "
+                "contain a supported DFS or ADFS filesystem. The "
+                f"{container.display} container is valid, but its contents cannot be "
+                "browsed as an Acorn disk image."
+            ) from exc
+        if kind not in BROWSEABLE_KINDS:
+            raise DiskError(
+                f"HxCFE decoded the {container.noun} as {kind.upper()}, but only "
+                f"DFS- and ADFS-formatted {container.display} images are browseable."
+            )
+        padded_tail = restore_omitted_tail_sector(raw, kind)
+        working = raw.with_suffix(sector_image_suffix(kind, raw.stat().st_size, sides))
+        raw.replace(working)
+        return working, kind, padded_tail, decode_info
+
+    def _open_hfe(self, original: Path) -> tuple[Path, str, Path, HFEHeader, bool, list[str]]:
         try:
             with original.open("rb") as source:
                 header = parse_hfe_header(source.read(512))
         except (OSError, HFEError) as exc:
             raise DiskError(str(exc)) from exc
-        raw = original.parent / "hfe-decoded.img"
-        info = self._run_hxcfe([f"-finput:{original}", "-infos"])
-        self._run_hxcfe([
-            f"-finput:{original}",
-            "-conv:RAW_LOADER",
-            f"-foutput:{raw}",
-        ])
-        if not raw.is_file() or not raw.stat().st_size:
-            raise DiskError("The HFE image did not contain a usable sector filesystem.")
-        try:
-            kind = self.identify_kind(raw)
-        except DiskError as exc:
-            raise DiskError(
-                "HxCFE decoded the HFE track data, but the resulting sectors do not "
-                "contain a supported DFS or ADFS filesystem. The HFE container is "
-                "valid, but its contents cannot be browsed as an Acorn disk image."
-            ) from exc
-        if kind not in {"dfs", "adfs"}:
-            raise DiskError(
-                f"HxCFE decoded the HFE track data as {kind.upper()}, but only "
-                "DFS- and ADFS-formatted HFE floppy images are browseable."
-            )
-        hfe_layout = (
-            {163840: "ACORN_ADFS_160K", 327680: "ACORN_ADFM_320K", 655360: "ACORN_ADFL_640K"}.get(raw.stat().st_size)
-            if kind == "adfs"
-            else None
+        info = self._flux.container_info(original)
+        working, kind, _padded_tail, _decode_info = self._decode_flux_to_sectors(
+            original, HFE, sides=header.sides
         )
-        working = raw.with_suffix(self._hfe_working_suffix(kind, raw.stat().st_size, header.sides))
-        raw.replace(working)
         bad_match = re.search(r"Number of bad sectors\s*:\s*(\d+)", info, re.IGNORECASE)
         bad_sectors = int(bad_match.group(1)) if bad_match else 0
         read_only = header.advanced or bad_sectors > 0
@@ -484,7 +536,64 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
             warnings.append(
                 f"This HFE contains {reason}. It is read-only to preserve data that a sector editor cannot represent."
             )
-        return working, kind, original, header, read_only, hfe_layout, warnings
+        return working, kind, original, header, read_only, warnings
+
+    def _open_scp(self, original: Path) -> tuple[Path, str, Path, bool, list[str]]:
+        try:
+            with original.open("rb") as source:
+                signature = source.read(3)
+        except OSError as exc:
+            raise DiskError(f"The SCP flux capture could not be read: {exc}") from exc
+        if signature != b"SCP":
+            raise DiskError("The selected file does not have a valid SuperCard Pro SCP signature.")
+        working, kind, padded_tail, decode_info = self._decode_flux_to_sectors(original, SCP)
+        try:
+            self._run(["validate", str(working)])
+        except DiskError as exc:
+            raise DiskError(
+                "The SCP capture contains missing or inconsistent filesystem sectors. "
+                "HxCFE recovered an Acorn filesystem header, but the complete directory "
+                f"tree is not safe to browse: {exc}"
+            ) from exc
+        read_only = not self._scp_round_trips(working, original, kind)
+        warnings = [
+            f"Opened SCP flux capture: HxCFE decoded an {kind.upper()} sector filesystem "
+            f"({working.stat().st_size:,} bytes)."
+        ]
+        if padded_tail:
+            warnings.append(
+                "HxCFE omitted the blank final 256-byte sector from the capture. "
+                "Acorn File Forge restored the declared floppy geometry before validation."
+            )
+        if "Invalid rpm or tracklen" in decode_info:
+            warnings.append(
+                "The capture contains non-standard index timing reported by HxCFE. "
+                "The recovered sectors passed full filesystem validation."
+            )
+        if read_only:
+            warnings.append(
+                "This SCP capture could not be re-encoded and decoded back to identical sectors, so it is "
+                "read-only. It can be browsed and copied from, but not rewritten safely."
+            )
+        return working, kind, original, read_only, warnings
+
+    def _scp_round_trips(self, working: Path, original: Path, kind: str) -> bool:
+        """Confirm HxCFE can re-encode these sectors before allowing edits.
+
+        An SCP capture that cannot be rebuilt from its own decoded sectors is
+        opened read-only rather than risking a save the user cannot verify.
+        """
+        probe = working.parent / "scp-open-check.scp"
+        probe.unlink(missing_ok=True)
+        try:
+            self._flux.encode_from_sectors(
+                working, SCP, probe, kind=kind, reference=original
+            )
+            return self._flux.decodes_back_to(probe, working, kind)
+        except DiskError:
+            return False
+        finally:
+            probe.unlink(missing_ok=True)
 
     @staticmethod
     def _target_hardware(value: str | None) -> str:
@@ -867,41 +976,111 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
             output = self._prepare_hfe_download(session)
             report("The hardware-ready image is prepared", total, total)
             return output
+        if session.scp_original_path:
+            report("Encoding and verifying the SCP flux image", 1, total)
+            output = self._prepare_scp_download(session)
+            report("The hardware-ready image is prepared", total, total)
+            return output
         if not is_beebscsi:
             report("The hardware-ready image is prepared", total, total)
         return session.path
 
     def _prepare_hfe_download(self, session: ImageSession) -> Path:
+        return self._prepare_flux_download(session, HFE)
+
+    def _prepare_scp_download(self, session: ImageSession) -> Path:
+        return self._prepare_flux_download(session, SCP)
+
+    def _prepare_flux_download(
+        self,
+        session: ImageSession,
+        container: FluxContainer,
+    ) -> Path:
+        """Re-encode an edited flux image, or hand back the untouched original.
+
+        Both containers follow the same rule: an unedited session downloads the
+        bytes it was opened from, and an edited one is only released after the
+        new container decodes back to exactly the sectors on screen.
+        """
+        original = getattr(session, f"{container.identifier}_original_path")
+        export_attribute = f"{container.identifier}_export_path"
         if not session.dirty:
-            if session.hfe_export_path and session.hfe_export_path.is_file():
-                return session.hfe_export_path
-            return session.hfe_original_path
+            existing = getattr(session, export_attribute)
+            if existing and existing.is_file():
+                return existing
+            return original
         self.require_writable_geometry(session)
-        output = session.path.parent / f"{Path(session.name).stem}-edited.hfe"
-        verification = session.path.parent / "hfe-save-check.img"
-        output.unlink(missing_ok=True)
-        verification.unlink(missing_ok=True)
-        self._run_hxcfe([
-            f"-finput:{session.path}",
-            *([f"-uselayout:{session.hfe_layout}"] if session.hfe_layout else []),
-            "-conv:HXC_HFE",
-            f"-foutput:{output}",
-            f"-reffile:{session.hfe_original_path}",
-        ])
-        self._run_hxcfe([
-            f"-finput:{output}",
-            "-conv:RAW_LOADER",
-            f"-foutput:{verification}",
-        ])
-        try:
-            if verification.read_bytes() != session.path.read_bytes():
-                raise DiskError(
-                    "The edited sectors did not survive HFE encoding exactly, so the original HFE was left unchanged."
-                )
-        finally:
-            verification.unlink(missing_ok=True)
-        session.hfe_export_path = output
+        output = session.path.parent / (
+            f"{Path(session.name).stem}-edited{container.extension}"
+        )
+        self._flux.encode_and_verify(
+            session.path,
+            container,
+            output,
+            kind=session.kind,
+            reference=original,
+            failure_message=(
+                f"The edited sectors did not survive {container.display} encoding "
+                f"exactly, so the original {container.display} was left unchanged."
+            ),
+        )
+        setattr(session, export_attribute, output)
         return output
+
+    def export_formats(self, session: ImageSession) -> list[dict]:
+        """List container formats this image's decoded sectors can be exported as.
+
+        Export is independent of how the image was opened: a DFS/ADFS image
+        can always be exported back to its canonical raw sector extension, and
+        additionally wrapped as HFE or SCP flux when HxCFE has a known blank
+        layout for its geometry (DFS of any size, or ADFS S/M/L).
+        """
+        if session.kind not in BROWSEABLE_KINDS or session.descriptor_path is not None:
+            return []
+        size = session.path.stat().st_size
+        native_extension = sector_image_suffix(session.kind, size).lstrip(".")
+        formats = [{
+            "format": "native",
+            "extension": native_extension,
+            "label": f"Native sector image (.{native_extension})",
+        }]
+        if is_flux_encodable(session.kind, size):
+            formats.extend(
+                {
+                    "format": container.identifier,
+                    "extension": container.extension.lstrip("."),
+                    "label": container.label,
+                }
+                for container in FLUX_CONTAINERS.values()
+            )
+        return formats
+
+    def export_image(self, session: ImageSession, target_format: str) -> tuple[Path, str]:
+        """Convert this image's current decoded sectors to another compatible container."""
+        with session.lock:
+            available = {entry["format"] for entry in self.export_formats(session)}
+            if target_format not in available:
+                raise DiskError(f"“{target_format}” is not an available export format for this image.")
+            stem = self.safe_filename(Path(session.name).stem) or "image"
+            size = session.path.stat().st_size
+            if target_format == "native":
+                extension = sector_image_suffix(session.kind, size).lstrip(".")
+                output = session.path.parent / f"{stem}-export.{extension}"
+                shutil.copyfile(session.path, output)
+                return output, output.name
+            container = FLUX_CONTAINERS[target_format]
+            output = session.path.parent / f"{stem}-export{container.extension}"
+            self._flux.encode_and_verify(
+                session.path,
+                container,
+                output,
+                kind=session.kind,
+                failure_message=(
+                    f"The exported {container.display} image did not decode back to "
+                    "identical sectors, so the export was discarded."
+                ),
+            )
+            return output, output.name
 
     def mark_saved(self, session: ImageSession) -> None:
         """Record that the current working bytes have been prepared for download."""
@@ -1305,22 +1484,15 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
                     self._optimise_sparse_file(session.path)
                 if format_name in hfe_formats:
                     original = folder / f"{self.safe_filename(title) or 'blank'}.hfe"
-                    hfe_layout = {
-                        "hfe-adfs-s": "ACORN_ADFS_160K",
-                        "hfe-adfs-m": "ACORN_ADFM_320K",
-                        "hfe-adfs-l": "ACORN_ADFL_640K",
-                    }.get(format_name)
-                    self._run_hxcfe([
-                        f"-finput:{path}",
-                        *([f"-uselayout:{hfe_layout}"] if hfe_layout else []),
-                        "-conv:HXC_HFE",
-                        f"-foutput:{original}",
-                    ])
+                    # The flux layout follows from the blank image's geometry,
+                    # so creation uses the same rule as opening and saving.
+                    self._flux.encode_from_sectors(
+                        path, HFE, original, kind=session.kind
+                    )
                     header = parse_hfe_header(original.read_bytes()[:512])
                     session.name = original.name
                     session.hfe_original_path = original
                     session.hfe_version = header.version
-                    session.hfe_layout = hfe_layout
                     session.warnings.append(
                         f"Created an editable HFE {header.version} container around {path.suffix[1:].upper()}."
                     )
@@ -1896,7 +2068,6 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
     def _list_adfs_mount(self, mount, inner: str, session: ImageSession) -> dict:
         """Return the same stable row schema as ``disc ls --as json``."""
         try:
-            from oaknut.disc.cli import _natural_name_key
             from oaknut.file import format_access_text
             from oaknut.filesystem import AcornMetadata, Datestamped, Filetyped
         except ImportError as exc:
@@ -1909,7 +2080,7 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
             raise DiskError(f"{target} is not a directory.")
 
         rows: list[dict] = []
-        for child in sorted(mount.iter_entries(target), key=lambda entry: _natural_name_key(entry.name)):
+        for child in sorted(mount.iter_entries(target), key=lambda entry: natural_name_key(entry.name)):
             if child.is_dir:
                 rows.append({
                     "name": child.name,
@@ -2572,15 +2743,7 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
             from oaknut.filesystem import AcornMetadata
         except ImportError as exc:
             raise DiskError("The Oaknut catalogue metadata API is unavailable.") from exc
-        try:
-            parsed_load = parse_catalogue_address(load)
-            parsed_execute = parse_catalogue_address(execute)
-        except (TypeError, ValueError) as exc:
-            raise DiskError(
-                "Load and execution addresses must each contain one to eight hexadecimal digits."
-            ) from exc
-        if not 0 <= parsed_load <= 0xFFFFFFFF or not 0 <= parsed_execute <= 0xFFFFFFFF:
-            raise DiskError("Catalogue addresses must fit in an unsigned 32-bit word.")
+        parsed_load, parsed_execute = self._catalogue_addresses(load, execute, allow_empty=False)
 
         def update(mount, target: str) -> dict:
             if not isinstance(mount, AcornMetadata):
@@ -2627,6 +2790,35 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
                     metadata = update(resolved.mount, self.inner_for(session, path, side))
             self._mark_mutated(session, slot)
         return metadata
+
+    @staticmethod
+    def _catalogue_addresses(
+        load: object,
+        execute: object,
+        *,
+        allow_empty: bool = True,
+    ) -> tuple[int, int]:
+        """Parse a pair of user-supplied catalogue addresses.
+
+        One rule for every path that accepts an address from a person: Acorn
+        hexadecimal, with an optional ``&`` or ``0x`` prefix.
+
+        Importing a file without an address is ordinary, and an absent word is
+        zero. Editing the addresses of an existing file is not: an empty box
+        there means the form was mis-filled, and silently writing zero would
+        destroy the very metadata the editor exists to preserve. That case
+        passes ``allow_empty=False`` and is rejected.
+        """
+        try:
+            parsed_load = parse_catalogue_address(load) if load or not allow_empty else 0
+            parsed_execute = parse_catalogue_address(execute) if execute or not allow_empty else 0
+        except (TypeError, ValueError) as exc:
+            raise DiskError(
+                "Load and execution addresses must each contain one to eight hexadecimal digits."
+            ) from exc
+        if not 0 <= parsed_load <= 0xFFFFFFFF or not 0 <= parsed_execute <= 0xFFFFFFFF:
+            raise DiskError("Catalogue addresses must fit in an unsigned 32-bit word.")
+        return parsed_load, parsed_execute
 
     def put(
         self,
@@ -3073,17 +3265,7 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
                 total,
             )
 
-        try:
-            from oaknut.disc.cli import (
-                _ensure_dir_chain,
-                _file_item,
-                _in_global_storage_order,
-                _walk_post_order_mount,
-                _write_copy_item,
-            )
-            from oaknut.disc.mount import resolve_mount
-        except ImportError as exc:
-            raise DiskError("The Oaknut bulk-copy API is unavailable.") from exc
+        from oaknut.disc.mount import resolve_mount
 
         with self._locked_sessions(source, target):
             with self.adfs_mount(target) as target_mount:
@@ -3129,7 +3311,7 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
                                 offset,
                                 total,
                             )
-                            for path in _walk_post_order_mount(target_mount, destination):
+                            for path in walk_post_order(target_mount, destination):
                                 target_mount.remove(path, force=True)
                             target.dirty = True
                         elif stop_on_conflict:
@@ -3146,9 +3328,9 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
                             copy_items = self._collect_dfs_catalogue_items(
                                 source_resolved.mount,
                                 destination,
-                                _file_item,
+                                file_copy_item,
                             )
-                            copy_items = _in_global_storage_order(
+                            copy_items = in_storage_order(
                                 source_resolved.mount,
                                 copy_items,
                             )
@@ -3182,7 +3364,7 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
                                     offset,
                                 )
                                 continue
-                            _ensure_dir_chain(target_mount, destination)
+                            ensure_directory_chain(target_mount, destination)
                             self._set_adfs_directory_title(
                                 target_mount,
                                 destination,
@@ -3191,7 +3373,7 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
                             file_number = 0
                             for copy_item in copy_items:
                                 if copy_item["kind"] == "mkdir":
-                                    _ensure_dir_chain(target_mount, copy_item["dst"])
+                                    ensure_directory_chain(target_mount, copy_item["dst"])
                                     continue
                                 file_number += 1
                                 report(
@@ -3205,7 +3387,7 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
                                     target_mount,
                                     copy_item["dst"],
                                     copy_item,
-                                    _write_copy_item,
+                                    write_copy_item,
                                 )
                             candidates = [
                                 {
@@ -3247,7 +3429,7 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
                         else:
                             if target_mount.exists(destination):
                                 try:
-                                    for path in _walk_post_order_mount(target_mount, destination):
+                                    for path in walk_post_order(target_mount, destination):
                                         target_mount.remove(path, force=True)
                                 except Exception:
                                     pass
@@ -3884,17 +4066,8 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
         destination_slash: bool,
     ) -> None:
         """Copy between mounted ADFS images while preserving Acorn metadata."""
-        try:
-            from oaknut.disc.cli import (
-                _collect_copy_items,
-                _ensure_dir_chain,
-                _in_global_storage_order,
-                _write_copy_item,
-            )
-        except ImportError as exc:
-            raise DiskError("The Oaknut direct-copy API is unavailable.") from exc
 
-        items = _collect_copy_items(
+        items = collect_copy_items(
             source_mount,
             source_inner,
             dst_mount=target_mount,
@@ -3903,15 +4076,15 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
             recursive=recursive,
             wildcards=False,
         )
-        for item in _in_global_storage_order(source_mount, items):
+        for item in in_storage_order(source_mount, items):
             if item["kind"] == "mkdir":
-                _ensure_dir_chain(target_mount, item["dst"])
+                ensure_directory_chain(target_mount, item["dst"])
             else:
                 self._write_adfs_copy_item(
                     target_mount,
                     str(item["dst"]),
                     item,
-                    _write_copy_item,
+                    write_copy_item,
                 )
 
     @staticmethod
@@ -4267,35 +4440,26 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
         source_path = self.resolve(source, source_slot)
         report("Copying the complete disk catalogue in one batch", 0, len(rows))
         if target.kind == "adfs" and source.kind in {"dfs", "mmb"}:
-            try:
-                from oaknut.disc.cli import (
-                    _ensure_dir_chain,
-                    _file_item,
-                    _in_global_storage_order,
-                    _write_copy_item,
-                )
-                from oaknut.disc.mount import resolve_mount
-            except ImportError as exc:
-                raise DiskError("The Oaknut direct-copy API is unavailable.") from exc
+            from oaknut.disc.mount import resolve_mount
             source_root = self.inner_for(source, "$", source_side)
             with self._locked_sessions(source, target):
                 with resolve_mount(self.compound(source_path, source_root)) as source_resolved:
                     copy_items = self._collect_dfs_catalogue_items(
                         source_resolved.mount,
                         target_directory,
-                        _file_item,
+                        file_copy_item,
                     )
-                    copy_items = _in_global_storage_order(source_resolved.mount, copy_items)
+                    copy_items = in_storage_order(source_resolved.mount, copy_items)
                 with self.adfs_mount(target) as target_mount:
                     for item in copy_items:
                         if item["kind"] == "mkdir":
-                            _ensure_dir_chain(target_mount, item["dst"])
+                            ensure_directory_chain(target_mount, item["dst"])
                         else:
                             self._write_adfs_copy_item(
                                 target_mount,
                                 str(item["dst"]),
                                 item,
-                                _write_copy_item,
+                                write_copy_item,
                             )
             target.dirty = True
             target.hfe_export_path = None

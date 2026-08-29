@@ -29,7 +29,7 @@ from ..disk_service import (
     DiskService,
     EmptyDiskError,
 )
-from ..formats import ADFS_EXTENSIONS, DFS_EXTENSIONS, HFE_EXTENSIONS, MMB_EXTENSIONS, TAPE_EXTENSIONS
+from ..formats import ADFS_EXTENSIONS, DFS_EXTENSIONS, HFE_EXTENSIONS, MMB_EXTENSIONS, SCP_EXTENSIONS, TAPE_EXTENSIONS
 from ..file_editor import (
     MAX_DISASSEMBLY_FILE,
     disassemble_file_data,
@@ -51,7 +51,7 @@ from ..menu.mmb import (
     mmb_metadata_for_adfs,
 )
 from ..operations import OperationCancelled, OperationRegistry
-from .common import optional_int, payload
+from .common import catalogue_address, optional_int, payload
 
 
 def _metadata_for_directory(
@@ -590,8 +590,8 @@ def create_files_blueprint(
         try:
             service.put(
                 session, slot, destination, temp_path,
-                str(data.get("load") or "") or None,
-                str(data.get("execute") or "") or None,
+                catalogue_address(data.get("load")),
+                catalogue_address(data.get("execute")),
                 str(data.get("filetype") or "") or None,
                 side,
             )
@@ -664,8 +664,8 @@ def create_files_blueprint(
                 slot,
                 destination,
                 temp_path,
-                request.form.get("load"),
-                request.form.get("execute"),
+                catalogue_address(request.form.get("load")),
+                catalogue_address(request.form.get("execute")),
                 request.form.get("filetype"),
                 optional_int(request.form.get("side")),
             )
@@ -995,7 +995,7 @@ def create_files_blueprint(
         operation_id = request.form.get("operationId")
         create_directory = request.form.get("createDirectory", "yes") != "no"
         extensions = (
-            DFS_EXTENSIONS | MMB_EXTENSIONS | TAPE_EXTENSIONS | ADFS_EXTENSIONS | HFE_EXTENSIONS
+            DFS_EXTENSIONS | MMB_EXTENSIONS | TAPE_EXTENSIONS | ADFS_EXTENSIONS | HFE_EXTENSIONS | SCP_EXTENSIONS
         )
         with open_single_upload_image(upload, extensions) as image:
             source = service.create_from_stream(image.filename, image.stream)

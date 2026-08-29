@@ -18,7 +18,7 @@ ITCH_SEARCH = "https://itch.io/search"
 
 _DISTRIBUTION_SUFFIXES = {
     ".zip", ".ssd", ".dsd", ".uef", ".mmb", ".adf", ".adl", ".adm",
-    ".ads", ".dat", ".dsk", ".hdd", ".hdf", ".img", ".raw", ".hfe",
+    ".ads", ".dat", ".dsk", ".hdd", ".hdf", ".img", ".raw", ".hfe", ".scp",
 }
 
 

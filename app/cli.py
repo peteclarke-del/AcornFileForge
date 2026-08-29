@@ -8,6 +8,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from .acorn_metadata import engine_address
 from .analysis_service import build_manifest, preflight_report
 from .disk_service import DiskError, DiskService
 from .headless import (
@@ -56,6 +57,25 @@ class JsonArgumentParser(argparse.ArgumentParser):
         sys.stdout.write(json.dumps(document, indent=2, sort_keys=True) + "\n")
         self.print_usage(sys.stderr)
         raise SystemExit(EXIT_USAGE)
+
+
+def _address(value) -> str | None:
+    """Normalise a command-line address the same way the interface does.
+
+    ``--load 1900`` means &1900 here, matching every address field in the
+    application. Without this the value would reach the disk engine unprefixed
+    and be read as one thousand nine hundred decimal.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return engine_address(text)
+    except ValueError as exc:
+        raise DiskError(
+            f"invalid address '{text}': give one to eight hexadecimal digits, "
+            "optionally written as &1900 or 0x1900"
+        ) from exc
 
 
 def _result(command: str, status: str, exit_code: int, result=None, *, dry_run=False) -> dict:
@@ -383,8 +403,8 @@ def _mutate(args, progress, action) -> dict:
             args.slot,
             args.destination,
             args.source,
-            args.load,
-            args.execute,
+            _address(args.load),
+            _address(args.execute),
             args.filetype,
             args.side,
         )
@@ -603,7 +623,16 @@ def _recipe_run(args, progress) -> dict:
         for action in actions:
             kind = action.get("action")
             if kind == "import-file":
-                service.put(session, action.get("slot"), action["destination"], paths[action["source"]], action.get("load"), action.get("execute"), action.get("filetype"), action.get("side"))
+                service.put(
+                    session,
+                    action.get("slot"),
+                    action["destination"],
+                    paths[action["source"]],
+                    _address(action.get("load")),
+                    _address(action.get("execute")),
+                    action.get("filetype"),
+                    action.get("side"),
+                )
             elif kind == "compact":
                 service.compact(session, action.get("slot"), action.get("order"))
             elif kind == "menu-create" and session.kind == "mmb":

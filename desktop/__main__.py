@@ -14,6 +14,7 @@ from pathlib import Path
 from app.image_opening import IMAGE_EXTENSIONS
 from app.rom_components import MAX_ROM_COMPONENTS
 
+from . import webview_host
 from .runtime import DesktopServer
 
 
@@ -113,11 +114,33 @@ def _review_open_plans(message: str) -> list[dict]:
     return reviewed
 
 
+def _run_portable_shell(args) -> int:
+    """Run the system-webview shell used on Windows and macOS."""
+    try:
+        return webview_host.WebviewHost(args.work_dir).run(list(args.images))
+    except webview_host.WebviewUnavailable as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+
 def run(argv: list[str] | None = None) -> int:
+    """Start the desktop application in whichever shell suits this platform.
+
+    Linux prefers the GTK host, which carries the native menus, file chooser,
+    drag and drop and desktop associations. Windows and macOS use the portable
+    webview host instead, because GTK 4 with WebKitGTK has no supportable form
+    there. Both shells run the same server and frontend.
+    """
     args = _arguments(list(argv if argv is not None else sys.argv[1:]))
+    if webview_host.preferred_for_platform():
+        return _run_portable_shell(args)
     try:
         Adw, Gdk, Gio, GLib, Gtk, WebKit = _desktop_libraries()
     except RuntimeError as exc:
+        # A Linux machine without the GTK stack can still use the portable
+        # shell, which is better than refusing to start at all.
+        if webview_host.available():
+            return _run_portable_shell(args)
         print(str(exc), file=sys.stderr)
         return 2
 

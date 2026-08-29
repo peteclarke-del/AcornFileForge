@@ -77,10 +77,20 @@ class SessionDiskMixin:
                 ),
                 hfe_version=metadata.get("hfeVersion"),
                 hfe_read_only=bool(metadata.get("hfeReadOnly")),
-                hfe_layout=metadata.get("hfeLayout"),
                 hfe_export_path=(
                     folder / self.safe_filename(metadata["hfeExportFile"])
                     if metadata.get("hfeExportFile")
+                    else None
+                ),
+                scp_original_path=(
+                    folder / self.safe_filename(metadata["scpOriginalFile"])
+                    if metadata.get("scpOriginalFile")
+                    else None
+                ),
+                scp_read_only=bool(metadata.get("scpReadOnly")),
+                scp_export_path=(
+                    folder / self.safe_filename(metadata["scpExportFile"])
+                    if metadata.get("scpExportFile")
                     else None
                 ),
                 rom_bank_size=validate_bank_size(int(metadata.get("romBankSize", DEFAULT_BANK_SIZE))),
@@ -121,6 +131,10 @@ class SessionDiskMixin:
                 raise ValueError
             if session.hfe_export_path and not session.hfe_export_path.is_file():
                 session.hfe_export_path = None
+            if session.scp_original_path and not session.scp_original_path.is_file():
+                raise ValueError
+            if session.scp_export_path and not session.scp_export_path.is_file():
+                session.scp_export_path = None
             if session.kind == "tape":
                 session.tape = parse_uef(path.read_bytes())
             elif session.kind == "adfs" and not session.adfs_capabilities:
@@ -245,6 +259,7 @@ class SessionDiskMixin:
                 descriptor_suffix = Path(session.descriptor_name or ".dsc").suffix or ".dsc"
                 session.descriptor_name = f"{Path(safe_name).stem}{descriptor_suffix}"
             session.hfe_export_path = None
+            session.scp_export_path = None
             self._persist_session(session)
 
     def list_checkpoints(self, session: ImageSession) -> list[dict]:
@@ -325,16 +340,7 @@ class SessionDiskMixin:
                 restored = self.checkpoints.restore(session, checkpoint_id)
             except CheckpointError as exc:
                 raise DiskError(str(exc)) from exc
-            for cached in session.slot_cache.values():
-                cached.unlink(missing_ok=True)
-            session.slot_cache.clear()
-            session.menu_slot = None
-            session.menu_type = None
-            session.menu_scanned = False
-            session.menu_entries = None
-            session.adfs_menu_roots = None
-            session.hfe_export_path = None
-            session.finalised_mtime_ns = None
+            session.invalidate_cached_views()
             if session.kind == "tape":
                 try:
                     session.tape = parse_uef(session.path.read_bytes())
@@ -386,8 +392,9 @@ class SessionDiskMixin:
             "hasDescriptor": bool(session.descriptor_path),
             "descriptorName": session.descriptor_name,
             "doubleSided": session.path.name.lower().endswith(".dsd"),
-            "containerFormat": "hfe" if session.hfe_original_path else None,
-            "readOnly": session.hfe_read_only or bool(romfs and romfs["readOnly"]),
+            "containerFormat": "hfe" if session.hfe_original_path else "scp" if session.scp_original_path else None,
+            "readOnly": session.hfe_read_only or session.scp_read_only or bool(romfs and romfs["readOnly"]),
+            "exportFormats": self.export_formats(session),
             "rom": ({
                 "bankSize": session.rom_bank_size,
                 "bankCount": bank_count(image_size, session.rom_bank_size),
