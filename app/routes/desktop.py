@@ -152,9 +152,19 @@ def _physical_media(service: DiskService, session, details: dict, progress):
             temporary.unlink(missing_ok=True)
 
 
-# Capture targets the workbench can open again. Flux keeps everything a
-# drive produced; the sector formats decode as they read.
-PHYSICAL_READ_FORMATS = frozenset({"ssd", "dsd", "adf", "ads", "adm", "adl", "hfe", "scp"})
+# Capture targets the workbench can open again, mapped to the suffix each one
+# writes. A request names the format, so the suffix is taken from this table
+# rather than from the request, keeping the caller's text out of the path.
+PHYSICAL_READ_FORMATS: dict[str, str] = {
+    "ssd": ".ssd",
+    "dsd": ".dsd",
+    "adf": ".adf",
+    "ads": ".ads",
+    "adm": ".adm",
+    "adl": ".adl",
+    "hfe": ".hfe",
+    "scp": ".scp",
+}
 
 
 # A capture is written under a fixed name inside a private scratch directory,
@@ -288,8 +298,8 @@ def create_desktop_blueprint(
         """
         data = payload()
         drive = str(data.get("drive") or "")
-        requested = str(data.get("format") or "ssd").strip().lower()
-        if requested not in PHYSICAL_READ_FORMATS:
+        suffix = PHYSICAL_READ_FORMATS.get(str(data.get("format") or "ssd").strip().lower())
+        if suffix is None:
             raise DiskError(
                 "Choose a capture format: "
                 + ", ".join(sorted(PHYSICAL_READ_FORMATS))
@@ -298,7 +308,7 @@ def create_desktop_blueprint(
         revolutions = data.get("revolutions")
         operation_id = str(data.get("operationId") or "") or None
         with tempfile.TemporaryDirectory(dir=service.work_dir, prefix="gw-read-") as folder:
-            destination = Path(folder) / f"{CAPTURE_STEM}.{requested}"
+            destination = Path(folder) / f"{CAPTURE_STEM}{suffix}"
             try:
                 with operations.tracked(
                     operation_id,
