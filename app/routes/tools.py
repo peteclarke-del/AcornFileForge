@@ -74,7 +74,7 @@ from ..menu.mmb import (
     installed_mmb_menu,
     parse_mmb_menu_data,
 )
-from .common import optional_int, payload
+from .common import catalogue_address, optional_int, payload
 
 
 def run_emulator_process(arguments: list[str], cwd: str, timeout: int):
@@ -969,8 +969,8 @@ def create_tools_blueprint(
             raise DiskError("This file's catalogue properties cannot be changed in the current image.")
         image = update_file_properties(
             service, session, path, slot, side, str(data.get("sha256") or ""),
-            load=str(data.get("load") or ""),
-            execute=str(data.get("execute") or ""),
+            load=catalogue_address(data.get("load")) or "",
+            execute=catalogue_address(data.get("execute")) or "",
             filetype=str(data.get("filetype") or ""),
             writable=bool(data.get("writable", True)),
         )

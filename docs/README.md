@@ -13,8 +13,9 @@ that match the running frontend.
 | --- | --- |
 | Install, update, back up or troubleshoot the Docker service | [Installation and operations](INSTALLATION.md) |
 | Install or develop the native Linux application | [Linux desktop application](LINUX-DESKTOP.md) |
-| Write SSD, DSD, ADFS or HFE images to a real disk | [Greaseweazle physical floppy guide](PHYSICAL-FLOPPY-GUIDE.md) |
-| Open, create, edit, verify or troubleshoot HFE images | [HFE and HxCFE guide](HFE-HXC-GUIDE.md) |
+| Build for Windows, macOS or an RPM-based Linux | [Windows, macOS and RPM builds](CROSS-PLATFORM.md) |
+| Read or write real disks with Greaseweazle or a floppy controller | [Physical floppy guide](PHYSICAL-FLOPPY-GUIDE.md) |
+| Open, create, edit, verify or troubleshoot HFE or SCP flux images, or export an image to another compatible format | [HFE, SCP and export guide](HFE-HXC-GUIDE.md) |
 | Build a checked Gotek, MMFS, BeebSCSI, Pi1MHz or RISC OS media tree | [Hardware deployment assistant](HARDWARE-DEPLOYMENT-GUIDE.md) |
 | Review the mandatory web and desktop parity rules | [Web and desktop platform contract](PLATFORM-CONTRACT.md) |
 | Understand every supported media family and normal workflow | [Main project handbook](../README.md) |
@@ -22,7 +23,7 @@ that match the running frontend.
 | Inspect, preserve or edit load and execution addresses | [Acorn file catalogue metadata](FILE-METADATA-GUIDE.md) |
 | Inspect, compare, build, patch or program ROM and ROMFS images | [ROM image handbook](ROM-GUIDE.md) |
 | Build and validate a release | [Release checklist](RELEASE-CHECKLIST.md) |
-| Review the stable 1.0.2 release | [Acorn File Forge 1.0.2 notes](releases/1.0.2.md) |
+| Review the stable 1.1.0 release | [Acorn File Forge 1.1.0 notes](releases/1.1.0.md) |
 | Contribute code or documentation | [Contribution guide](../CONTRIBUTING.md) |
 | Understand maintainership and project decisions | [Project governance](../GOVERNANCE.md) |
 | Report a vulnerability | [Security policy](../SECURITY.md) |
@@ -39,18 +40,19 @@ that match the running frontend.
 
 ## Capability map
 
-| Media or feature | Browse | Edit | Create | Transfer | Analyse and repair | Save package |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| DFS SSD and DSD | Yes | Yes, including load/execute words | Yes | Files and complete images | Catalogue, access and capacity checks | Image, metadata and README |
-| MMB banks | Yes, including empty slots | Yes | Yes | Slots, batches and open image panes | Duplicates, menus, PAGE, access and slot health | MMB and README |
-| ADFS and FileCore S/M/L/D/E/E+/F/F+/G/G+ images | Yes, including directories | Where the detected layout is writable, including load/execute words | Yes, for supported layouts | Files, directories and images | Filesystem, map, launcher and compatibility checks | Image, metadata and README |
-| BeebSCSI DAT and DSC | Yes, including deep trees | Yes, including load/execute words | Yes | Files, trees and extracted disks | Geometry, map, directory and installed-software checks | DAT, DSC and README |
-| HDF, HDD, IMG, RAW and BIN FileCore media | Yes | Where the detected layout is writable | Selected layouts | Files and directories | Geometry, map and target-profile checks | Image and README |
-| UEF tapes | Yes, as a decoded hierarchy | Same-length proven members | No | Extracted files into writable media | Physical chunks, reconstruction proof and structural comparison | Rebuilt source or converted media |
-| HFE floppy images | Yes | Clean sector HFE v1 only | Yes | Files and images | Track and sector capability checks | HFE and README |
-| ROM images | Banks, headers, commands and regions | Bytes, project data and supported structures | Yes | Banks and programmer files | Commands, help, code, data, checksums and compatibility | ROM, project JSON and README |
-| ROMFS data ROMs | Files and directories | Yes | Yes | Files and directories | Structure and capacity checks | ROM, project JSON and README |
-| ZIP and other supported archives | Yes, as a hierarchy | Extract, inspect and edit supported members | No | Members into writable media | Type and metadata inspection | Exported member or destination image |
+| Media or feature | Browse | Edit | Create | Transfer | Analyse and repair | Export as | Save package |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| DFS SSD and DSD | Yes | Yes, including load/execute words | Yes | Files and complete images | Catalogue, access and capacity checks | Sector image, HFE and SCP | Image, metadata and README |
+| MMB banks | Yes, including empty slots | Yes | Yes | Slots, batches and open image panes | Duplicates, menus, PAGE, access and slot health | No | MMB and README |
+| ADFS and FileCore S/M/L/D/E/E+/F/F+/G/G+ images | Yes, including directories | Where the detected layout is writable, including load/execute words | Yes, for supported layouts | Files, directories and images | Filesystem, map, launcher and compatibility checks | Sector image; HFE and SCP for S, M and L | Image, metadata and README |
+| BeebSCSI DAT and DSC | Yes, including deep trees | Yes, including load/execute words | Yes | Files, trees and extracted disks | Geometry, map, directory and installed-software checks | No, the DAT and DSC geometry has no single-file equivalent | DAT, DSC and README |
+| HDF, HDD, IMG, RAW and BIN FileCore media | Yes | Where the detected layout is writable | Selected layouts | Files and directories | Geometry, map and target-profile checks | No | Image and README |
+| UEF tapes | Yes, as a decoded hierarchy | Same-length proven members | No | Extracted files into writable media | Physical chunks, reconstruction proof and structural comparison | No | Rebuilt source or converted media |
+| HFE floppy images | Yes | Clean sector HFE v1 only | Yes | Files and images | Track and sector capability checks | Sector image, HFE and SCP | HFE and README |
+| SCP flux captures | Yes, when HxCFE decodes a DFS or ADFS filesystem | Where the capture re-encodes byte-for-byte | No | Files and images | Round-trip re-encode verification | Sector image, HFE and SCP | SCP and README |
+| ROM images | Banks, headers, commands and regions | Bytes, project data and supported structures | Yes | Banks and programmer files | Commands, help, code, data, checksums and compatibility | No | ROM, project JSON and README |
+| ROMFS data ROMs | Files and directories | Yes | Yes | Files and directories | Structure and capacity checks | No | ROM, project JSON and README |
+| ZIP and other supported archives | Yes, as a hierarchy | Extract, inspect and edit supported members | No | Members into writable media | Type and metadata inspection | No | Exported member or destination image |
 
 The table is a navigation aid, not a replacement for format restrictions.
 Acorn File Forge rejects geometry, track and filesystem variants it cannot

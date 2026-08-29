@@ -8,7 +8,7 @@ from flask import Blueprint, jsonify, request, send_file
 
 from ..archive_utils import iter_upload_images, open_single_upload_image
 from ..disk_service import DiskError, DiskService
-from ..formats import DFS_EXTENSIONS, HFE_EXTENSIONS
+from ..formats import DFS_EXTENSIONS, HFE_EXTENSIONS, SCP_EXTENSIONS
 from ..menu.analysis import analyse_disk, best_distribution_filename, enrich_if_ambiguous
 from ..menu.mmb import (
     eject_mmb_slots,
@@ -93,13 +93,14 @@ def create_mmb_blueprint(service: DiskService) -> Blueprint:
         session = service.get(image_id)
         upload = request.files.get("image")
         if not upload or not upload.filename:
-            raise DiskError("Choose an SSD/DSD image or a ZIP containing one.")
-        with open_single_upload_image(upload, DFS_EXTENSIONS | HFE_EXTENSIONS) as item:
-            if Path(item.filename).suffix.lower() in HFE_EXTENSIONS:
+            raise DiskError("Choose an SSD, DSD, HFE or SCP image, or a ZIP containing one.")
+        with open_single_upload_image(upload, DFS_EXTENSIONS | HFE_EXTENSIONS | SCP_EXTENSIONS) as item:
+            item_suffix = Path(item.filename).suffix.lower()
+            if item_suffix in HFE_EXTENSIONS or item_suffix in SCP_EXTENSIONS:
                 source = service.create_from_stream(item.filename, item.stream)
                 try:
                     if source.kind != "dfs":
-                        raise DiskError("Only a DFS-formatted HFE can be inserted into an MMB.")
+                        raise DiskError("Only a DFS-formatted HFE or SCP capture can be inserted into an MMB.")
                     inserted = service.insert_slot_from_session(
                         session, int(request.form["slot"]), source, None
                     )
@@ -134,13 +135,14 @@ def create_mmb_blueprint(service: DiskService) -> Blueprint:
         ambiguous = []
         has_menu = find_menu_slot(service, session) is not None
         slots = service.list_slots(session)
-        for upload in iter_upload_images(uploads, DFS_EXTENSIONS | HFE_EXTENSIONS):
+        for upload in iter_upload_images(uploads, DFS_EXTENSIONS | HFE_EXTENSIONS | SCP_EXTENSIONS):
             source = None
-            if Path(upload.filename).suffix.lower() in HFE_EXTENSIONS:
+            upload_suffix = Path(upload.filename).suffix.lower()
+            if upload_suffix in HFE_EXTENSIONS or upload_suffix in SCP_EXTENSIONS:
                 source = service.create_from_stream(upload.filename, upload.stream)
                 if source.kind != "dfs":
                     service.discard_session(source)
-                    items.append({"filename": upload.filename, "slots": [], "error": "Only a DFS-formatted HFE can be inserted into an MMB."})
+                    items.append({"filename": upload.filename, "slots": [], "error": "Only a DFS-formatted HFE or SCP capture can be inserted into an MMB."})
                     continue
                 needed = 2 if source.path.suffix.lower() == ".dsd" else 1
             else:

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 
 PLATFORM_CONTRACT_FORMAT = "acorn-file-forge-platform-contract"
-PLATFORM_CONTRACT_VERSION = 5
+PLATFORM_CONTRACT_VERSION = 7
 PLATFORM_KINDS = frozenset({"web", "desktop"})
 
 # A capability belongs here only when both hosts expose the same implementation
@@ -36,6 +36,8 @@ HOST_CAPABILITIES = {
         "desktop-file-associations",
         "native-emulator-window",
         "physical-floppy-write",
+        "physical-floppy-read",
+        "floppy-controller",
     ),
 }
 
@@ -49,6 +51,10 @@ HOST_EXCLUSIVE_ENDPOINTS = {
         "desktop.put_client_state",
         "desktop.physical_floppy_status",
         "desktop.write_physical_floppy",
+        "desktop.read_physical_floppy",
+        "desktop.floppy_drive_status",
+        "desktop.read_floppy_drive",
+        "desktop.write_floppy_drive",
     }),
 }
 

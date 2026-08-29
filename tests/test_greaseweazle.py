@@ -11,6 +11,7 @@ from acorn_greaseweazle import (
     GreaseweazleClient,
     GreaseweazleError,
     ProbeResult,
+    ReadResult,
     WriteResult,
     image_format,
     stable_snapshot,
@@ -46,6 +47,7 @@ class GreaseweazleTests(unittest.TestCase):
         self.assertTrue(image_format("game.ssd").automatic_verification)
         self.assertTrue(image_format("utilities.ADL").automatic_verification)
         self.assertFalse(image_format("preserved.hfe").automatic_verification)
+        self.assertFalse(image_format("greaseweazle-capture.scp").automatic_verification)
         with self.assertRaisesRegex(GreaseweazleError, "not a floppy image"):
             image_format("scsi0.dat")
 
@@ -206,5 +208,239 @@ class GreaseweazleTests(unittest.TestCase):
         self.assertFalse(written_path.exists())
 
 
+
+
+class GreaseweazleReadTests(unittest.TestCase):
+    """Capturing a physical disk, the mirror of the existing write support."""
+
+    @staticmethod
+    def _capture(output: str, produced: bytes | None, return_code: int = 0):
+        """Fake a gw run that writes ``produced`` to the requested destination."""
+        def popen(command, **_kwargs):
+            if produced is not None:
+                Path(command[-1]).write_bytes(produced)
+            return _Process(output, return_code)
+        return popen
+
+    def _client(self):
+        return GreaseweazleClient(command="gw")
+
+    @patch("acorn_greaseweazle.client.subprocess.Popen")
+    @patch("acorn_greaseweazle.client.subprocess.run")
+    def test_a_capture_reports_its_drive_geometry_and_size(self, run, popen) -> None:
+        run.return_value = subprocess.CompletedProcess(["gw", "info"], 0, "Device: Greaseweazle")
+        popen.side_effect = self._capture(
+            "Reading c=0-1:h=0-1\nT0.0: Read\nT0.1: Read\nT1.0: Read\nT1.1: Read\n",
+            bytes(204_800),
+        )
+        progress = Mock()
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "capture.ssd"
+            result = self._client().read(target, "A", progress)
+        self.assertIsInstance(result, ReadResult)
+        self.assertEqual(result.drive, "A")
+        self.assertEqual(result.image, "capture.ssd")
+        self.assertEqual(result.tracks_read, 4)
+        self.assertEqual(result.size, 204_800)
+        self.assertTrue(progress.called)
+
+    @patch("acorn_greaseweazle.client.subprocess.Popen")
+    @patch("acorn_greaseweazle.client.subprocess.run")
+    def test_a_flux_destination_is_accepted(self, run, popen) -> None:
+        run.return_value = subprocess.CompletedProcess(["gw", "info"], 0, "Device: Greaseweazle")
+        popen.side_effect = self._capture("Reading c=0-0:h=0-0\nT0.0: Read\n", b"SCP" + bytes(64))
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "capture.scp"
+            result = self._client().read(target, "0")
+        self.assertEqual(result.image, "capture.scp")
+        self.assertEqual(result.size, 67)
+
+    @patch("acorn_greaseweazle.client.subprocess.Popen")
+    @patch("acorn_greaseweazle.client.subprocess.run")
+    def test_the_requested_revolutions_reach_the_command(self, run, popen) -> None:
+        run.return_value = subprocess.CompletedProcess(["gw", "info"], 0, "Device: Greaseweazle")
+        seen = []
+
+        def record(command, **_kwargs):
+            seen.append(command)
+            Path(command[-1]).write_bytes(bytes(1024))
+            return _Process("T0.0: Read\n")
+
+        popen.side_effect = record
+        with tempfile.TemporaryDirectory() as folder:
+            self._client().read(Path(folder) / "capture.scp", "A", revolutions=3)
+        self.assertIn("--revs=3", seen[0])
+        self.assertIn("--drive=A", seen[0])
+        self.assertEqual(seen[0][1], "read")
+
+    @patch("acorn_greaseweazle.client.subprocess.run")
+    def test_an_implausible_revolution_count_is_refused(self, run) -> None:
+        run.return_value = subprocess.CompletedProcess(["gw", "info"], 0, "Device: Greaseweazle")
+        with tempfile.TemporaryDirectory() as folder:
+            for revolutions in (0, 11, -1):
+                with self.subTest(revolutions=revolutions):
+                    with self.assertRaisesRegex(GreaseweazleError, "between 1 and 10"):
+                        self._client().read(
+                            Path(folder) / "capture.scp", "A", revolutions=revolutions,
+                        )
+
+    @patch("acorn_greaseweazle.client.subprocess.Popen")
+    @patch("acorn_greaseweazle.client.subprocess.run")
+    def test_a_failed_capture_leaves_no_partial_image_behind(self, run, popen) -> None:
+        """A half-written capture must never be mistaken for a real disk."""
+        run.return_value = subprocess.CompletedProcess(["gw", "info"], 0, "Device: Greaseweazle")
+        popen.side_effect = self._capture(
+            "Reading c=0-0:h=0-0\nT0.0: Read\nERROR: no disk\n", bytes(512), return_code=1,
+        )
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "capture.ssd"
+            with self.assertRaisesRegex(GreaseweazleError, "could not read the physical disk"):
+                self._client().read(target, "A")
+            self.assertFalse(target.exists())
+
+    @patch("acorn_greaseweazle.client.subprocess.Popen")
+    @patch("acorn_greaseweazle.client.subprocess.run")
+    def test_a_capture_that_produced_nothing_is_reported(self, run, popen) -> None:
+        run.return_value = subprocess.CompletedProcess(["gw", "info"], 0, "Device: Greaseweazle")
+        popen.side_effect = self._capture("No disk detected\n", None)
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaisesRegex(GreaseweazleError, "without producing an image"):
+                self._client().read(Path(folder) / "capture.ssd", "A")
+
+    @patch("acorn_greaseweazle.client.subprocess.Popen")
+    @patch("acorn_greaseweazle.client.subprocess.run")
+    def test_an_empty_capture_file_is_rejected(self, run, popen) -> None:
+        run.return_value = subprocess.CompletedProcess(["gw", "info"], 0, "Device: Greaseweazle")
+        popen.side_effect = self._capture("T0.0: Read\n", b"")
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaisesRegex(GreaseweazleError, "without producing an image"):
+                self._client().read(Path(folder) / "capture.ssd", "A")
+
+    def test_an_unsupported_destination_suffix_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaisesRegex(GreaseweazleError, "not a floppy image"):
+                self._client().read(Path(folder) / "capture.txt", "A")
+
+    @patch("acorn_greaseweazle.client.subprocess.run")
+    def test_an_invalid_drive_is_refused_before_any_device_access(self, run) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaisesRegex(GreaseweazleError, "drive A, B, 0, 1, 2 or 3"):
+                self._client().read(Path(folder) / "capture.ssd", "Z")
+        run.assert_not_called()
+
+    @patch("acorn_greaseweazle.client.shutil.which", return_value=None)
+    def test_a_missing_gw_installation_is_reported(self, _which) -> None:
+        """An absent command is explained, not attempted."""
+        client = GreaseweazleClient()
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaisesRegex(GreaseweazleError, "gw command is not installed"):
+                client.read(Path(folder) / "capture.ssd", "A")
+
+
+class GreaseweazleSharedStreamTests(unittest.TestCase):
+    """Both directions share one process, progress and cancellation path."""
+
+    def test_read_and_write_use_the_same_streaming_implementation(self) -> None:
+        import inspect
+
+        from acorn_greaseweazle.client import GreaseweazleClient as Client
+
+        for direction in ("read", "write"):
+            with self.subTest(direction=direction):
+                source = inspect.getsource(getattr(Client, direction))
+                self.assertIn("self._stream(", source)
+                self.assertNotIn("subprocess.Popen", source)
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(Flask is None, "Flask is installed in the production image")
+class PhysicalReadRouteTests(unittest.TestCase):
+    """The desktop endpoint that turns a physical disk into a working image."""
+
+    def setUp(self) -> None:
+        from app.operations import OperationRegistry
+        from app.routes.desktop import create_desktop_blueprint
+
+        self.temporary = tempfile.TemporaryDirectory()
+        self.service = Mock()
+        self.service.work_dir = Path(self.temporary.name)
+        self.service.safe_filename = staticmethod(lambda value: value)
+        self.session = Mock()
+        self.service.create_from_path.return_value = self.session
+        self.service.summary.return_value = {"id": "a" * 32, "kind": "dfs"}
+        app = Flask(__name__)
+        app.register_blueprint(
+            create_desktop_blueprint(self.service, OperationRegistry(), Mock())
+        )
+
+        @app.errorhandler(DiskError)
+        def _disk_error(error):
+            return jsonify(error=str(error)), 400
+
+        self.client = app.test_client()
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def _read_result(self, name="capture.ssd"):
+        return ReadResult(drive="A", image=name, tracks_read=80, size=204_800, output_tail=())
+
+    def test_a_capture_is_opened_as_a_new_image(self) -> None:
+        with patch("app.routes.desktop.GreaseweazleClient") as client:
+            client.return_value.read.return_value = self._read_result()
+            response = self.client.post(
+                "/api/desktop/physical-floppy/read",
+                json={"drive": "A", "format": "ssd", "name": "capture"},
+            )
+        self.assertEqual(response.status_code, 200)
+        body = response.get_json()
+        self.assertEqual(body["result"]["tracksRead" if "tracksRead" in body["result"] else "tracks_read"], 80)
+        self.service.create_from_path.assert_called_once()
+        self.service.summary.assert_called_once_with(self.session)
+
+    def test_the_requested_capture_format_selects_the_destination_suffix(self) -> None:
+        for requested, suffix in (("scp", ".scp"), ("adl", ".adl"), ("hfe", ".hfe")):
+            with self.subTest(format=requested):
+                self.service.create_from_path.reset_mock()
+                with patch("app.routes.desktop.GreaseweazleClient") as client:
+                    client.return_value.read.return_value = self._read_result(f"capture{suffix}")
+                    response = self.client.post(
+                        "/api/desktop/physical-floppy/read",
+                        json={"drive": "A", "format": requested},
+                    )
+                self.assertEqual(response.status_code, 200)
+                destination = client.return_value.read.call_args[0][0]
+                self.assertEqual(Path(destination).suffix, suffix)
+
+    def test_an_unsupported_capture_format_is_refused(self) -> None:
+        response = self.client.post(
+            "/api/desktop/physical-floppy/read",
+            json={"drive": "A", "format": "exe"},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Choose a capture format", response.get_json()["error"])
+        self.service.create_from_path.assert_not_called()
+
+    def test_a_hardware_failure_is_reported_and_opens_nothing(self) -> None:
+        with patch("app.routes.desktop.GreaseweazleClient") as client:
+            client.return_value.read.side_effect = GreaseweazleError("No disk in drive A.")
+            response = self.client.post(
+                "/api/desktop/physical-floppy/read",
+                json={"drive": "A", "format": "ssd"},
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("No disk in drive A.", response.get_json()["error"])
+        self.service.create_from_path.assert_not_called()
+
+    def test_the_capture_scratch_directory_does_not_outlive_the_request(self) -> None:
+        with patch("app.routes.desktop.GreaseweazleClient") as client:
+            client.return_value.read.return_value = self._read_result()
+            self.client.post(
+                "/api/desktop/physical-floppy/read",
+                json={"drive": "A", "format": "ssd"},
+            )
+        leftovers = list(Path(self.temporary.name).glob("gw-read-*"))
+        self.assertEqual(leftovers, [], "the capture scratch directory must be removed")

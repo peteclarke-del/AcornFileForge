@@ -127,13 +127,25 @@ this same report under `result.compatibility`.
 ```bash
 python -m app.cli import-file /media/work.ssd /media/PROGRAM \
   --destination '$.PROGRAM' \
-  --load 1900 --execute 1900 \
+  --load '&1900' --execute '&1900' \
   --output /media/work-with-program.ssd
 ```
 
 Use `--slot` for a disk inside an MMB and `--side` for a DSD side. Load and
-execution addresses use the same hexadecimal notation accepted by the web
-application. `--filetype` is for appropriate RISC OS targets and cannot be
+execution addresses use the same hexadecimal notation as every address field in
+the application: `--load 1900`, `--load '&1900'` and `--load 0x1900` all mean
+&1900, and a complete sign-extended word is written `--load '&FFFF1900'`. Quote
+any value containing `&` so the shell does not treat it as a job-control
+character. An address that is not one to eight hexadecimal digits is rejected
+before the image is opened.
+
+Before this rule was applied consistently, an unprefixed `--load 1900` reached
+the disk engine as decimal 1900, which is &76C. A stored recipe recorded with
+an unprefixed address therefore now replays as hexadecimal. Re-record any
+recipe whose output hash no longer matches, or write its addresses with an
+explicit `0x` prefix.
+
+`--filetype` is for appropriate RISC OS targets and cannot be
 combined with load or execution addresses where the filesystem model forbids
 that combination. Filename, directory and metadata restrictions are enforced
 by the destination filesystem service.
@@ -291,7 +303,7 @@ be proved lossless.
 
 HFE operations use the same bundled HxCFloppyEmulator command-line converter
 (`hxcfe`) as the graphical workbench. Docker and native release packages carry
-the executable and its libraries. See the [HFE and HxCFE guide](HFE-HXC-GUIDE.md)
+the executable and its libraries. See the [HFE, SCP and HxCFE guide](HFE-HXC-GUIDE.md)
 for supported layouts and the encode, decode and byte-comparison save gate.
 
 ## Safety notes

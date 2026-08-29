@@ -71,7 +71,7 @@ Release builds also provide a native-architecture Debian package. Install it
 on the Debian or Ubuntu release for which it was built:
 
 ```bash
-sudo apt install ./acorn-file-forge_1.0.2-1~deb13_amd64.deb
+sudo apt install ./acorn-file-forge_1.1.0-1~deb13_amd64.deb
 acorn-file-forge
 ```
 
@@ -133,7 +133,7 @@ they will not be committed or packaged.
 
 ## Current status
 
-The current stable release is `1.0.2`. It provides the editing and
+The current stable release is `1.1.0`. It provides the editing and
 transfer workflows described in this guide, including movable, resizable and
 stackable panes, undo and named checkpoints, owner-isolated recovery,
 background job tracking, MMB and ADFS menu maintenance, HFE handling, an Online
@@ -1419,6 +1419,7 @@ unrecognised filesystem is rejected with that distinction made clear.
 | Raw drive dump | IMG, RAW, BIN, extensionless images | Identify the filesystem from its contents, then open it as DFS or ADFS |
 | Acorn cassette | UEF and compressed UEF | Reconstruct ordinary tape files, export them, drag them to disks, or convert them to SSD or DSD |
 | HxC floppy container | HFE v1, v2 and v3 | Decode DFS or ADFS sectors for browsing and extraction; safely edit ordinary HFE v1 disks and save them back with their original track layout |
+| SuperCard Pro flux capture | SCP | Decode DFS or ADFS sectors for browsing and extraction; edit captures that HxCFE can re-encode byte-for-byte, otherwise browse and copy read-only |
 | Acorn ROM | ROM, ROM0-ROM7, recognised BIN | Inspect BBC-family headers, browse and rearrange banks, edit bytes and titles, build custom images, and combine or split byte-wide chip sets |
 | Acorn ROMFS data ROM | ROM identified by its catalogue | Browse, create, add, export, rename and delete files; retain load/execute metadata; set run-only protection; edit ROM identity; validate every block CRC |
 
@@ -1791,8 +1792,42 @@ has been produced. This matters because an apparently normal catalogue can
 coexist with non-sector protection data that a filesystem editor cannot
 represent.
 
-See the [HFE and HxCFE guide](docs/HFE-HXC-GUIDE.md) for the complete opening,
+See the [HFE, SCP and HxCFE guide](docs/HFE-HXC-GUIDE.md) for the complete opening,
 creation, guarded-save, package-layout and troubleshooting procedures.
+
+## SCP flux captures and exporting to another format
+
+An `.scp` file is a SuperCard Pro track and bit-cell capture. Opening one does
+not require connected capture hardware: Acorn File Forge handles an existing
+SCP the same way it handles an HFE, and HxCFE decodes it to a
+private working sector image, the result is identified as DFS or ADFS, and it
+is browsed through the normal file list. HxCFE then re-encodes the decoded
+sectors and decodes that result again; a capture only remains editable if that
+round trip is byte-identical, otherwise it opens in a read-only safe view.
+The recovered filesystem must also pass a complete structural validation. A
+known HxCFE edge case can omit the blank final sector of an otherwise complete
+ADFS-L decode; the app restores only that exact one-sector-short geometry before
+validation, producing the canonical 655,360-byte `.adl` export.
+The native Linux edition can separately send the original SCP to a connected
+Greaseweazle drive. Flux-level writes cannot use the sector read-back verifier,
+so they remain explicitly unverified and must be tested on target hardware.
+
+**File → Export as…**, or the **Export** control in the pane header, converts
+an open image's current decoded sectors into another compatible container
+without touching the working image or the usual timestamped Save ZIP. The
+header control is greyed out, with an explanatory tooltip, whenever the open
+media has no compatible target:
+
+- Every DFS or ADFS image can export its plain sector image under the correct
+  canonical extension, useful for turning an HFE- or SCP-opened image into an
+  ordinary SSD/DSD/ADF/ADL/ADM/ADS file for an emulator.
+- DFS images of any size, and ADFS S/M/L images, can also export as HFE or SCP,
+  verified with the same encode-decode-compare check used for saving an edited
+  HFE or SCP.
+
+Other ADFS geometries and BeebSCSI DAT/DSC pairs only offer the native sector
+export, since HxCFE has no blank flux layout for those geometries. See the
+[HFE, SCP and export guide](docs/HFE-HXC-GUIDE.md) for the complete procedure.
 
 ## Working with ROM images
 
@@ -2842,7 +2877,7 @@ curl http://localhost:8666/api/health
 A healthy response looks like:
 
 ```json
-{"engine":"oaknut","status":"ok","version":"1.0.2"}
+{"engine":"oaknut","status":"ok","version":"1.1.0"}
 ```
 
 ## Main dependencies

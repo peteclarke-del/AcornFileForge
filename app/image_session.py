@@ -46,8 +46,10 @@ class ImageSession:
     hfe_original_path: Path | None = None
     hfe_version: str | None = None
     hfe_read_only: bool = False
-    hfe_layout: str | None = None
     hfe_export_path: Path | None = None
+    scp_original_path: Path | None = None
+    scp_read_only: bool = False
+    scp_export_path: Path | None = None
     rom_bank_size: int = DEFAULT_BANK_SIZE
     rom_erase_byte: int = 0xFF
     rom_platform: str = "bbc-master-electron"
@@ -59,6 +61,31 @@ class ImageSession:
     content_kind_cache: dict[tuple, str] = field(default_factory=dict)
     owner_id: str | None = field(default_factory=lambda: SESSION_OWNER.get())
     lock: threading.RLock = field(default_factory=threading.RLock)
+
+    def invalidate_cached_views(self) -> None:
+        """Drop everything derived from the image bytes.
+
+        Anything the workbench inferred from the previous contents, extracted
+        slots, discovered menus and prepared container exports, describes bytes
+        that no longer exist once the image is rewritten wholesale. Callers that
+        replace image data must invalidate together or a later read will mix
+        old conclusions with new bytes.
+
+        Tape state and the dirty flag are deliberately left to the caller: a
+        restored checkpoint reparses its tape and stays clean, while a raw
+        write clears the tape and marks the image changed.
+        """
+        for cached in self.slot_cache.values():
+            cached.unlink(missing_ok=True)
+        self.slot_cache.clear()
+        self.menu_slot = None
+        self.menu_type = None
+        self.menu_scanned = False
+        self.menu_entries = None
+        self.adfs_menu_roots = None
+        self.hfe_export_path = None
+        self.scp_export_path = None
+        self.finalised_mtime_ns = None
 
 
 __all__ = ["ImageSession", "SESSION_OWNER"]

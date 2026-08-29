@@ -1,4 +1,4 @@
-# HFE and HxCFE guide
+# HFE, SCP and HxCFE guide
 
 Acorn File Forge uses the official HxCFloppyEmulator command-line converter,
 normally invoked as `hxcfe`, to open, create and save HFE floppy images. HFE is
@@ -117,11 +117,74 @@ read-back verification is not available for HFE, so the application reports an
 unverified write and requires the disk to be tested on suitable hardware. See
 the [physical floppy guide](PHYSICAL-FLOPPY-GUIDE.md).
 
+## Open an SCP flux capture
+
+An `.scp` file is a SuperCard Pro track and bit-cell capture, most often
+produced by a separate flux-reading tool talking to Greaseweazle or SuperCard
+Pro hardware. No device is required to inspect an existing capture. Acorn File
+Forge opens `.scp` files exactly the way it opens `.hfe` files:
+
+1. Select **Open image** or drag an `.scp` file onto a pane.
+2. HxCFE decodes the flux capture to a private working sector image.
+3. Acorn File Forge identifies the decoded filesystem as DFS or ADFS and opens
+   it with the applicable catalogue and filename rules. It runs the complete
+   filesystem validator before presenting the pane, so a plausible root header
+   cannot hide a broken directory tree.
+4. HxCFE re-encodes the decoded sectors back to SCP and decodes that result
+   again. If it does not match byte-for-byte, the capture opens read-only; it
+   can still be browsed and copied from, but not rewritten safely.
+
+The original SCP is retained unchanged throughout the session, and an editable
+capture is saved the same way an editable HFE is: HxCFE encodes the edited
+sectors back to SCP, decodes that candidate again, and blocks the download if
+any byte differs from the working sectors.
+
+Some Greaseweazle SCP captures expose an HxCFE raw-writer edge case in which
+the final blank 256-byte sector is omitted even though all 16 sectors are
+reported on the last ADFS-L track. Acorn File Forge recognises only that exact
+one-sector-short form at the end of a known floppy geometry, restores the blank
+tail sector, then validates the complete image. It never pads a missing sector
+in the middle of a track. The supplied 80-track, double-sided ADFS-L sample
+therefore opens as a 655,360-byte `.adl`, exposes its complete nested directory
+tree, and exports directly through **File → Export as…**.
+
+In the native Linux edition, **Tools → Write physical floppy** can also send an
+SCP capture to a connected Greaseweazle. As with HFE, the flux-level write
+cannot use automatic sector verification and is reported as unverified.
+
+## Export an image to another format
+
+**File → Export as…** converts the current image's decoded sectors into
+another compatible container, independent of how the image was opened. It
+downloads a single converted file, separately from the timestamped **Save**
+ZIP, and never changes the working image.
+
+The same action has an **Export** control in every pane header, between
+**Save Image** and **Refresh View**. It stays visible but greyed out when the
+open media has no compatible target, and its tooltip gives the reason: a
+BeebSCSI DAT and DSC pair carries geometry no sector or flux container can
+represent, and MMB, UEF, ROM, ROMFS and archive panes have nothing to convert.
+
+Available targets depend on the image's filing system and geometry:
+
+- Every DFS or ADFS image can export its plain sector image under the correct
+  canonical extension (`.ssd`/`.dsd` for DFS, `.ads`/`.adm`/`.adl`/`.adf` for
+  ADFS). This is useful when an image was opened from an HFE or SCP container
+  and a plain sector image is wanted for an emulator.
+- DFS images of any size, and ADFS S/M/L images, can also export as an HFE or
+  SCP flux container, using the same encode-then-verify check used when saving
+  an edited HFE or SCP.
+
+Other ADFS geometries (D, E, E+, F, F+, G, G+) and BeebSCSI DAT/DSC pairs only
+offer the native sector export, because HxCFE has no blank flux layout for
+those geometries and DAT/DSC pairs carry BeebSCSI-specific geometry that a
+flux container cannot represent.
+
 ## Troubleshooting
 
 ### “The HFE conversion engine is not installed”
 
-Official 1.0.2 Docker images and native packages bundle HxCFE. If this error
+Official 1.1.0 Docker images and native packages bundle HxCFE. If this error
 appears, confirm that the package is current and that all runtime files are
 present:
 

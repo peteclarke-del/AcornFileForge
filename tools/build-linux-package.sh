@@ -53,6 +53,7 @@ mkdir -p \
     "$stage/usr/share/pixmaps"
 
 cp -a \
+    "$project_root/acorn_floppy" \
     "$project_root/acorn_greaseweazle" \
     "$project_root/app" \
     "$project_root/desktop" \
@@ -108,6 +109,12 @@ cp \
     "$stage/usr/share/doc/acorn-file-forge/"
 cp "$project_root/LICENSE" "$stage/usr/share/doc/acorn-file-forge/copyright"
 cp -a "$project_root/docs" "$stage/usr/share/doc/acorn-file-forge/handbook"
+
+# Bytecode compiled by the build machine's interpreter is wrong for any other
+# Python the package supports, and would be preferred over the source it no
+# longer matches. Ship only source; the interpreter caches what it needs.
+find "$stage" -type d -name __pycache__ -prune -exec rm -rf {} +
+find "$stage" -type f -name '*.py[co]' -delete
 
 installed_size=$(du -sk "$stage" | awk '{print $1}')
 cat > "$stage/DEBIAN/control" <<EOF
