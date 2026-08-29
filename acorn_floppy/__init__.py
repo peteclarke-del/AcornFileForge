@@ -10,6 +10,7 @@ from .device import (
     FloppyWriteResult,
     available_devices,
     geometry,
+    validated_device,
     geometry_for_size,
 )
 
@@ -23,5 +24,6 @@ __all__ = [
     "FloppyWriteResult",
     "available_devices",
     "geometry",
+    "validated_device",
     "geometry_for_size",
 ]

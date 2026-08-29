@@ -316,3 +316,85 @@ class FloppyDriveRouteTests(unittest.TestCase):
                 json={"device": "/dev/fd0", "geometry": "dfs-80"},
             )
         self.assertEqual(list(Path(self.temporary.name).glob("fd-read-*")), [])
+
+
+class DeviceValidationTests(unittest.TestCase):
+    """A request may name the drive, so the value must be constrained."""
+
+    def test_real_floppy_nodes_are_accepted(self) -> None:
+        from acorn_floppy import validated_device
+
+        for name in ("/dev/fd0", "/dev/fd1", "/dev/fd0u800", "  /dev/fd0  "):
+            with self.subTest(name=name):
+                self.assertEqual(validated_device(name), name.strip())
+
+    def test_other_block_devices_are_refused(self) -> None:
+        """A system disk is a block device too, and must never be readable here."""
+        from acorn_floppy import validated_device
+
+        for name in ("/dev/sda", "/dev/sda1", "/dev/nvme0n1", "/dev/mapper/root"):
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(FloppyError, "not a floppy device"):
+                    validated_device(name)
+
+    def test_traversal_and_arbitrary_paths_are_refused(self) -> None:
+        from acorn_floppy import validated_device
+
+        for name in ("/etc/passwd", "/dev/fd0/../sda", "../fd0", "", None, "fd0"):
+            with self.subTest(name=name):
+                with self.assertRaises(FloppyError):
+                    validated_device(name)
+
+
+@unittest.skipIf(Flask is None, "Flask is installed in the production image")
+class DeviceRouteHardeningTests(unittest.TestCase):
+    """The endpoints must refuse a non-floppy device before touching it."""
+
+    def setUp(self) -> None:
+        from app.operations import OperationRegistry
+        from app.routes.desktop import create_desktop_blueprint
+
+        self.temporary = tempfile.TemporaryDirectory()
+        self.service = Mock()
+        self.service.work_dir = Path(self.temporary.name)
+        app = Flask(__name__)
+        app.register_blueprint(
+            create_desktop_blueprint(self.service, OperationRegistry(), Mock())
+        )
+
+        @app.errorhandler(DiskError)
+        def _disk_error(error):
+            return jsonify(error=str(error)), 400
+
+        self.client = app.test_client()
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def test_reading_a_system_disk_is_refused(self) -> None:
+        with patch("app.routes.desktop.FloppyDevice") as device:
+            response = self.client.post(
+                "/api/desktop/floppy-drive/read",
+                json={"device": "/dev/sda", "geometry": "dfs-80"},
+            )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("not a floppy device", response.get_json()["error"])
+        device.return_value.read.assert_not_called()
+
+    def test_a_traversing_capture_name_cannot_escape_the_scratch_directory(self) -> None:
+        from acorn_floppy import FloppyReadResult
+
+        with patch("app.routes.desktop.FloppyDevice") as device:
+            device.return_value.read.return_value = FloppyReadResult(
+                device="/dev/fd0", image="capture.ssd", geometry="dfs-80", size=204_800,
+            )
+            self.client.post(
+                "/api/desktop/floppy-drive/read",
+                json={"device": "/dev/fd0", "geometry": "dfs-80", "name": "../../escape"},
+            )
+            if device.return_value.read.called:
+                destination = Path(device.return_value.read.call_args[0][0]).resolve()
+                self.assertTrue(
+                    str(destination).startswith(str(Path(self.temporary.name).resolve())),
+                    f"capture escaped to {destination}",
+                )

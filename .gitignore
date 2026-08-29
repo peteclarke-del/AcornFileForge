@@ -22,3 +22,6 @@ test-results/
 .idea/
 .vscode/
 *.swp
+.agents
+.claude
+.codex

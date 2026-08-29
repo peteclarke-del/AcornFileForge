@@ -12,6 +12,7 @@ from flask import Blueprint, jsonify, request
 from acorn_floppy import (
     ACORN_GEOMETRIES,
     geometry as floppy_geometry,
+    validated_device,
     FloppyDevice,
     FloppyError,
     available_devices,
@@ -156,6 +157,20 @@ def _physical_media(service: DiskService, session, details: dict, progress):
 PHYSICAL_READ_FORMATS = frozenset({"ssd", "dsd", "adf", "ads", "adm", "adl", "hfe", "scp"})
 
 
+def _capture_destination(folder: Path, stem: object, suffix: str) -> Path:
+    """Build a capture path that cannot escape the directory it belongs in.
+
+    The name arrives in a request, so it is reduced to a safe filename and the
+    result is then confirmed to resolve inside the scratch directory. A name
+    that tries to traverse out is refused rather than silently rewritten.
+    """
+    safe = DiskService.safe_filename(str(stem or "").strip() or "capture")
+    destination = (folder / f"{Path(safe).stem or 'capture'}{suffix}").resolve()
+    if destination.parent != folder.resolve():
+        raise DiskError("The capture name is not a valid filename.")
+    return destination
+
+
 def create_desktop_blueprint(
     service: DiskService,
     operations: OperationRegistry | None = None,
@@ -274,13 +289,9 @@ def create_desktop_blueprint(
                 + "."
             )
         revolutions = data.get("revolutions")
-        name = DiskService.safe_filename(
-            str(data.get("name") or "").strip() or "capture"
-        )
-        stem = Path(name).stem or "capture"
         operation_id = str(data.get("operationId") or "") or None
         with tempfile.TemporaryDirectory(dir=service.work_dir, prefix="gw-read-") as folder:
-            destination = Path(folder) / f"{stem}.{requested}"
+            destination = _capture_destination(Path(folder), data.get("name"), f".{requested}")
             try:
                 with operations.tracked(
                     operation_id,
@@ -327,17 +338,15 @@ def create_desktop_blueprint(
     def read_floppy_drive():
         """Capture a disk from a real drive and open it as a new image."""
         data = payload()
-        device = str(data.get("device") or "/dev/fd0")
         geometry_id = str(data.get("geometry") or "")
-        name = DiskService.safe_filename(str(data.get("name") or "").strip() or "capture")
-        stem = Path(name).stem or "capture"
         operation_id = str(data.get("operationId") or "") or None
         try:
+            device = validated_device(data.get("device") or "/dev/fd0")
             layout = floppy_geometry(geometry_id)
         except FloppyError as exc:
             raise DiskError(str(exc)) from exc
         with tempfile.TemporaryDirectory(dir=service.work_dir, prefix="fd-read-") as folder:
-            destination = Path(folder) / f"{stem}{layout.extension}"
+            destination = _capture_destination(Path(folder), data.get("name"), layout.extension)
             try:
                 with operations.tracked(
                     operation_id,
@@ -357,7 +366,10 @@ def create_desktop_blueprint(
         """Write an open image to a real drive, erasing the disk in it."""
         data = payload()
         session = service.get(str(data.get("image") or ""))
-        device = str(data.get("device") or "/dev/fd0")
+        try:
+            device = validated_device(data.get("device") or "/dev/fd0")
+        except FloppyError as exc:
+            raise DiskError(str(exc)) from exc
         details = _physical_media_details(service, session, data.get("slot"))
         operation_id = str(data.get("operationId") or "") or None
         try:

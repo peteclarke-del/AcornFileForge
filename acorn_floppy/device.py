@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import errno
 import os
+import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
@@ -127,6 +128,29 @@ def geometry_for_size(size: int) -> FloppyGeometry | None:
     if len(matches) != 1:
         return None
     return next(iter(matches.values()))
+
+
+# Linux names floppy devices /dev/fd0 upward, optionally with a geometry
+# suffix such as /dev/fd0u800. Nothing else is a floppy, and accepting an
+# arbitrary path would let a request name any block device on the machine.
+DEVICE_PATTERN = re.compile(r"^/dev/fd\d+[a-z0-9]*$")
+
+
+def validated_device(name: object) -> str:
+    """Return a floppy device path, or refuse anything that is not one.
+
+    A request may name the drive to use, so the value must be constrained
+    before it reaches the filesystem. Restricting the shape rejects a system
+    disk such as /dev/sda outright: that is a block device too, and reading it
+    would otherwise hand back the first part of its contents as an image.
+    """
+    value = str(name or "").strip()
+    if not DEVICE_PATTERN.fullmatch(value):
+        raise FloppyError(
+            f"“{value}” is not a floppy device. Choose one of the drives this host "
+            "exposes, such as /dev/fd0."
+        )
+    return value
 
 
 def available_devices(candidates: int = 4) -> list[str]:
@@ -310,7 +334,9 @@ __all__ = [
     "FloppyProbe",
     "FloppyReadResult",
     "FloppyWriteResult",
+    "DEVICE_PATTERN",
     "available_devices",
+    "validated_device",
     "geometry",
     "geometry_for_size",
 ]
