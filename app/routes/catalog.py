@@ -99,6 +99,10 @@ def _copy_disk_files(service: DiskService, source, target, target_slot, target_p
             copied += 1
     if not copied:
         raise DiskError("The downloaded disk image is empty, so nothing was installed.")
+    # A disc installed without its boot option cannot start itself, which is
+    # the difference between the files being present and the title running.
+    if target_slot is None:
+        service.carry_boot_option(source, target, target_path)
     return copied
 
 

@@ -4352,6 +4352,11 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
                         source, None, None, target, target_directory, report
                     )
             if source.kind in {"dfs", "tape", "adfs"}:
+                # Extraction into the root can keep the source's boot option,
+                # which is what lets the image start itself. carry_boot_option
+                # declines any other destination, because a boot option names
+                # $.!BOOT and would otherwise point at a file that is not there.
+                self.carry_boot_option(source, target, target_directory)
                 report("Checking copied loaders for ADFS command conflicts", None, None)
                 loader_repairs, loader_warnings = self._repair_copied_adfs_loaders(
                     target,

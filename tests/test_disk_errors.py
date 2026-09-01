@@ -414,6 +414,128 @@ class DiskErrorTests(unittest.TestCase):
             self.assertTrue(target.dirty)
             self.assertEqual(list(root.glob(".import-rollback-*")), [])
 
+    def _extraction_fixture(self, root: Path):
+        service = DiskService(root)
+        source_path = root / "source.ssd"
+        target_path = root / "target.dat"
+        source_path.write_bytes(b"source")
+        target_path.write_bytes(b"target")
+        source = ImageSession("4" * 32, source_path.name, "dfs", source_path)
+        target = ImageSession("5" * 32, target_path.name, "adfs", target_path)
+
+        def listing(session, path, *_args, **_kwargs):
+            if session is not source:
+                return {"entries": []}
+            if path == "":
+                return {"entries": [{"name": "$", "type": "dir", "virtual": True}]}
+            return {"entries": [{"name": "GAME", "type": "file"}]}
+
+        return service, source, target, listing
+
+    def test_root_extraction_carries_the_source_boot_option(self) -> None:
+        # A disc installed into the root without its *OPT 4 setting has all its
+        # files but cannot start itself, which is the difference between the
+        # contents being present and the title running.
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            service, source, target, listing = self._extraction_fixture(root)
+
+            with (
+                patch.object(service, "require_writable_geometry"),
+                patch.object(service, "list_directory", side_effect=listing),
+                patch.object(service, "_copy_image_listing_to_adfs"),
+                patch.object(service, "_repair_copied_adfs_loaders", return_value=([], [])),
+                patch.object(service, "_mark_mutated"),
+                patch.object(service, "_run", return_value="3 (EXEC)") as run,
+            ):
+                destination = service.extract_image_to_adfs_directory(
+                    source, target, "$", None, create_directory=False,
+                )
+
+            self.assertEqual(destination, "$")
+            self.assertIn(
+                ["opt", str(target.path), "3"],
+                [list(call.args[0]) for call in run.call_args_list],
+            )
+            self.assertEqual(target.warnings, [])
+
+    def test_a_directory_destination_leaves_the_boot_option_alone(self) -> None:
+        # A boot option names $.!BOOT. Setting it after installing into a child
+        # directory would point the machine at a file that is not there and
+        # break an image which previously started. Software installed into its
+        # own directory is reached through the menu, which selects it first.
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            service, source, target, _ = self._extraction_fixture(root)
+
+            with patch.object(service, "_run", return_value="3 (EXEC)") as run:
+                for destination in ("$.GAME", "$.Games.Chuck", "GAME"):
+                    with self.subTest(destination=destination):
+                        self.assertIsNone(
+                            service.carry_boot_option(source, target, destination)
+                        )
+            run.assert_not_called()
+
+    def test_a_non_adfs_destination_is_declined(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            service, source, target, _ = self._extraction_fixture(root)
+            target.kind = "dfs"
+
+            with patch.object(service, "_run", return_value="3 (EXEC)") as run:
+                self.assertIsNone(service.carry_boot_option(source, target, "$"))
+            run.assert_not_called()
+
+    def test_a_source_disc_with_no_boot_option_sets_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            service, source, target, listing = self._extraction_fixture(root)
+
+            with (
+                patch.object(service, "require_writable_geometry"),
+                patch.object(service, "list_directory", side_effect=listing),
+                patch.object(service, "_copy_image_listing_to_adfs"),
+                patch.object(service, "_repair_copied_adfs_loaders", return_value=([], [])),
+                patch.object(service, "_mark_mutated"),
+                patch.object(service, "_run", return_value="0 (OFF)") as run,
+            ):
+                service.extract_image_to_adfs_directory(
+                    source, target, "$", None, create_directory=False,
+                )
+
+            self.assertEqual(
+                [call for call in run.call_args_list
+                 if len(call.args[0]) > 2 and call.args[0][0] == "opt"],
+                [],
+            )
+
+    def test_a_failed_boot_option_warns_and_keeps_the_installed_files(self) -> None:
+        # The files are already in place, so refusing the whole extraction over
+        # the boot option would lose more than it protects.
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            service, source, target, listing = self._extraction_fixture(root)
+
+            def run(args, *_a, **_k):
+                if args[0] == "opt" and len(args) > 2:
+                    raise DiskError("engine refused")
+                return "3 (EXEC)"
+
+            with (
+                patch.object(service, "require_writable_geometry"),
+                patch.object(service, "list_directory", side_effect=listing),
+                patch.object(service, "_copy_image_listing_to_adfs"),
+                patch.object(service, "_repair_copied_adfs_loaders", return_value=([], [])),
+                patch.object(service, "_mark_mutated"),
+                patch.object(service, "_run", side_effect=run),
+            ):
+                destination = service.extract_image_to_adfs_directory(
+                    source, target, "$", None, create_directory=False,
+                )
+
+            self.assertEqual(destination, "$")
+            self.assertTrue(any("boot option" in warning for warning in target.warnings))
+
     def test_failed_current_directory_extraction_restores_target_image(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

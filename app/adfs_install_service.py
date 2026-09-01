@@ -10,6 +10,52 @@ from .oaknut_internals import file_copy_item, write_copy_item
 class ADFSInstallMixin:
     """Audit and repair software trees installed into ADFS hard disks."""
 
+    def carry_boot_option(
+        self, source: ImageSession, target: ImageSession, destination: str
+    ) -> int | None:
+        """Give the ADFS target the source disc's `*OPT 4` setting.
+
+        Installing a disc's files without its boot option leaves an image that
+        cannot start itself: the machine has nothing to act on and the user is
+        returned to the prompt. Every booting disc in the Acorn Electron TOSEC
+        set uses option 3, `*EXEC $.!BOOT`.
+
+        Only the root is eligible. A boot option names `$.!BOOT`, so setting it
+        after extracting into a child directory would point the machine at a
+        file that is not there and turn a working image into one that fails on
+        boot. Software installed into its own directory is reached through the
+        menu instead, which makes it the current directory first.
+
+        Returns the option carried across, or None when there was nothing to
+        carry. A failure to set it is reported as a warning rather than raised:
+        the files are already installed and are still usable by hand.
+        """
+        if target.kind != "adfs":
+            return None
+        if (destination or "$").strip(".") not in ("", "$"):
+            return None
+        try:
+            reported = str(self._run(["opt", str(source.path)])).strip()
+        except DiskError:
+            return None
+        digits = reported.split(" ", 1)[0]
+        if not digits.isdigit():
+            return None
+        option = int(digits)
+        if option == 0:
+            return None
+        try:
+            self._run(["opt", str(target.path), str(option)])
+        except DiskError as exc:
+            self._append_warning(
+                target,
+                "The files were installed, but the source disc's boot option "
+                f"could not be set on the destination: {exc}",
+            )
+            return None
+        self._mark_mutated(target, None)
+        return option
+
     @staticmethod
     def _adfs_directory_items(mount, directory: str, file_item) -> list[dict]:
         pending = [directory]
