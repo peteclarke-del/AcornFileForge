@@ -157,7 +157,7 @@ class DesktopPackagingTests(unittest.TestCase):
         workflow = (ROOT / ".github/workflows/release.yml").read_text(
             encoding="utf-8"
         )
-        self.assertEqual("1.1.0", (ROOT / "VERSION").read_text(encoding="utf-8").strip())
+        self.assertEqual("1.1.1", (ROOT / "VERSION").read_text(encoding="utf-8").strip())
         for required in (
             "debian:trixie-slim",
             "ubuntu:24.04",
