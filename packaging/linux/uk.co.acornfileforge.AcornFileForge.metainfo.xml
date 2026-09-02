@@ -41,6 +41,11 @@
   <url type="homepage">https://github.com/peteclarke-del/AcornFileForge</url>
   <url type="bugtracker">https://github.com/peteclarke-del/AcornFileForge/issues</url>
   <releases>
+    <release version="1.1.1" date="2026-09-02">
+      <description>
+        <p>Keeps the source disc's boot option when its files are installed into the root of an ADFS image, so an installed disc still starts itself.</p>
+      </description>
+    </release>
     <release version="1.1.0" date="2026-08-29">
       <description>
         <p>Adds SuperCard Pro flux support, container export, reading and writing real disks through a Greaseweazle or a floppy controller, and buildable Windows, macOS and RPM editions.</p>
