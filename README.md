@@ -2368,7 +2368,7 @@ verify the target device carefully.
 
 ### FileCore compatibility note
 
-The released Oaknut 12.15.1 engine safely edits ADFS S, M, L and D, New-map E,
+The released Oaknut 12.16.0 engine safely edits ADFS S, M, L and D, New-map E,
 F and G, and the E+, F+ and G+ Big-directory variants. The app creates all ten
 standard floppy formats, detects their on-disc structures, preserves Acorn
 metadata, compacts allocation and runs the filesystem validator. Standard New
@@ -2890,7 +2890,7 @@ archive, container image or native package.
 - Python 3.14 in the container, or a compatible Python 3 release for the native application
 - Flask 3.1
 - Gunicorn 26
-- Oaknut Disc, ADFS and ROMFS 12.15.1, including writable FileCore
+- Oaknut Disc, ADFS and ROMFS 12.16.0, including writable FileCore
   S/M/L/D/E/E+/F/F+/G/G+ and hard-disk support
 - HxC Floppy Emulator command-line engine 2.16.15.2, compiled from one pinned
   upstream revision for both Docker and native release packages

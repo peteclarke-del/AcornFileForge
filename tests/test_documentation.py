@@ -10,6 +10,36 @@ from urllib.parse import unquote
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def pinned_requirements(path: Path) -> dict[str, str]:
+    """Map each `name[extra]==version` line of a requirements file to its version.
+
+    Extras are dropped from the key, so `oaknut-romfs[cli]==12.16.0` is
+    reported as `oaknut-romfs`.
+    """
+    pins: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "==" in line:
+            name, version = line.split("==", 1)
+            pins[name.split("[", 1)[0].lower()] = version
+    return pins
+
+
+def pinned_oaknut_release() -> str:
+    """The single Oaknut release the application requires.
+
+    The Oaknut packages are cut together from one repository, so the three the
+    application pins must agree before any document can be checked against
+    them.
+    """
+    requirements = pinned_requirements(ROOT / "requirements.txt")
+    versions = {
+        name: version for name, version in requirements.items() if name.startswith("oaknut-")
+    }
+    assert len(set(versions.values())) == 1, f"requirements.txt mixes Oaknut releases: {versions}"
+    return next(iter(versions.values()))
+
+
 def published_text_files() -> list[Path]:
     files = [
         ROOT / "README.md",
@@ -98,18 +128,41 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn("bundled HxCFloppyEmulator", release)
 
     def test_published_dependency_versions_match_manifests(self) -> None:
-        requirements = {}
-        for line in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines():
-            if "==" in line:
-                name, version = line.split("==", 1)
-                requirements[name.split("[", 1)[0].lower()] = version
+        requirements = pinned_requirements(ROOT / "requirements.txt")
         package_lock = json.loads((ROOT / "package-lock.json").read_text(encoding="utf-8"))
         notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
         self.assertIn(f"| Flask | {requirements['flask']} |", notices)
         self.assertIn(f"| Gunicorn | {requirements['gunicorn']} |", notices)
         self.assertIn(f"| Capstone | {requirements['capstone']} |", notices)
+        self.assertIn(f"| Oaknut Disc, ADFS and ROMFS | {pinned_oaknut_release()} |", notices)
         playwright = package_lock["packages"]["node_modules/playwright"]["version"]
         self.assertIn(f"| Playwright | {playwright},", notices)
+
+    def test_handbooks_name_the_pinned_oaknut_release(self) -> None:
+        """Every Oaknut version the documentation quotes is the one installed.
+
+        The FileCore handbook, the main README and the in-app help all tell the
+        user which Oaknut release does their editing. A dependency bump touches
+        only requirements.txt, so without this check those passages keep naming
+        the superseded engine, which is exactly the drift the notices test above
+        already catches for the inventory table.
+        """
+        expected = pinned_oaknut_release()
+        pattern = re.compile(r"Oaknut[^\n\d]{0,40}?(\d+\.\d+\.\d+)")
+        stale: list[str] = []
+        for path in [
+            ROOT / "README.md",
+            ROOT / "THIRD_PARTY_NOTICES.md",
+            ROOT / "app" / "static" / "help.js",
+            *sorted((ROOT / "docs").glob("*.md")),
+        ]:
+            for number, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1
+            ):
+                for version in pattern.findall(line):
+                    if version != expected:
+                        stale.append(f"{path.relative_to(ROOT)}:{number}: {line.strip()}")
+        self.assertEqual(stale, [], "\n".join([f"documents not naming Oaknut {expected}:", *stale]))
 
     def test_compose_example_publishes_application_and_emulator_ports(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
