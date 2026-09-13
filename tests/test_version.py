@@ -11,7 +11,7 @@ METAINFO = ROOT / "packaging/linux/uk.co.acornfileforge.AcornFileForge.metainfo.
 
 class VersionTests(unittest.TestCase):
     def test_packaged_version_matches_stable_release(self):
-        self.assertEqual(application_version(), "1.1.2")
+        self.assertEqual(application_version(), "1.1.3")
 
 
 class ReleaseRecordTests(unittest.TestCase):
