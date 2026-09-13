@@ -41,6 +41,11 @@
   <url type="homepage">https://github.com/peteclarke-del/AcornFileForge</url>
   <url type="bugtracker">https://github.com/peteclarke-del/AcornFileForge/issues</url>
   <releases>
+    <release version="1.1.2" date="2026-09-13">
+      <description>
+        <p>Updates the Oaknut filesystem engine to 12.16.0 and Gunicorn to 26.2.0, with no change to editing, repair or format behaviour.</p>
+      </description>
+    </release>
     <release version="1.1.1" date="2026-09-02">
       <description>
         <p>Keeps the source disc's boot option when its files are installed into the root of an ADFS image, so an installed disc still starts itself.</p>
