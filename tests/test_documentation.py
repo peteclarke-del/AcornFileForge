@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def pinned_requirements(path: Path) -> dict[str, str]:
     """Map each `name[extra]==version` line of a requirements file to its version.
 
-    Extras are dropped from the key, so `oaknut-romfs[cli]==12.16.0` is
+    Extras are dropped from the key, so `oaknut-romfs[cli]==1.2.3` is
     reported as `oaknut-romfs`.
     """
     pins: dict[str, str] = {}
