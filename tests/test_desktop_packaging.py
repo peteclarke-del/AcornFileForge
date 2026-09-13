@@ -3,6 +3,8 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 
+from test_documentation import pinned_oaknut_release, pinned_requirements
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -151,7 +153,29 @@ class DesktopPackagingTests(unittest.TestCase):
             if line.strip() and not line.startswith("#")
         }
 
-        self.assertTrue(application.issubset(package_lock))
+        self.assertEqual(
+            application - package_lock,
+            set(),
+            "requirements.txt pins that packaging/linux/requirements-debian.txt does not carry",
+        )
+
+    def test_debian_dependency_lock_pins_one_oaknut_release(self) -> None:
+        """The Oaknut sub-packages ship together, so the lock must not mix releases.
+
+        requirements.txt pins only the three Oaknut packages the application
+        imports; the lock also pins the ten they pull in. A dependency bump
+        edits requirements.txt alone, so a lock that still carried the previous
+        release for the other ten would vendor a Debian package assembled from
+        two Oaknut releases that were never tested together.
+        """
+        expected = pinned_oaknut_release()
+        package_lock = pinned_requirements(ROOT / "packaging/linux/requirements-debian.txt")
+        mismatched = {
+            name: version
+            for name, version in package_lock.items()
+            if name.startswith("oaknut-") and version != expected
+        }
+        self.assertEqual(mismatched, {}, f"Debian lock entries not at Oaknut {expected}")
 
     def test_stable_release_builds_debian_and_ubuntu_for_supported_architectures(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text(
