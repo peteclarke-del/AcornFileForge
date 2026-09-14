@@ -352,5 +352,78 @@ window.AcornUI = (() => {
     return closed;
   }
 
-  return { api, uploadApi, esc, humanSize, modal, modalContent, setModalAbort, setModalProgress, showModal, toast, trapFocus };
+  //  A question asked from inside an open dialog has to sit in that dialog,
+  //  because an open <dialog> paints in the browser's top layer and a second
+  //  one cannot be opened over it. The browser's own confirm() cannot be
+  //  styled or given a button that says what it does. The About box's
+  //  application update asks with these two, which are the same in the
+  //  sibling File Forges.
+
+  //  The id every overlay dialog's heading carries, and what its card is
+  //  labelled by for a screen reader.
+  const OVERLAY_TITLE_ID = "overlay-dialog-title";
+
+  function overlayDialog(body, { onOpen = null } = {}) {
+    return new Promise(resolve => {
+      const shade = document.createElement("div");
+      //  Always sized to the viewport, never to whatever it was appended to.
+      //  A dialog is only as tall as its own content, so an overlay laid out
+      //  inside a short one was centred in a box smaller than itself and had
+      //  its heading cut off the top.
+      shade.className = "editor-choice-shade overlay-dialog-shade";
+      shade.setAttribute("role", "dialog");
+      shade.setAttribute("aria-modal", "true");
+      shade.innerHTML = body;
+      if (shade.querySelector(`#${OVERLAY_TITLE_ID}`)) {
+        shade.setAttribute("aria-labelledby", OVERLAY_TITLE_ID);
+      }
+      const previous = document.activeElement;
+      const finish = value => {
+        shade.remove();
+        // Focus goes back where it came from, so a keyboard user is not
+        // dropped at the top of the document after every question.
+        if (previous && previous.isConnected) previous.focus();
+        resolve(value);
+      };
+      shade.addEventListener("keydown", event => {
+        if (event.key === "Escape") { event.preventDefault(); finish(null); }
+        trapFocus(shade, event);
+      });
+      //  An open <dialog> paints in the browser's top layer, above everything
+      //  the page can put on it, so an overlay that has to sit over one has to
+      //  be inside it. With nothing open, the page itself is the host.
+      (modal.open ? modal : document.body).append(shade);
+      // Every dialog built on this answers with one of a set of named
+      // outcomes, so the buttons carrying them are wired here rather than by
+      // each caller in turn.
+      shade.querySelectorAll("[data-choice]").forEach(button => {
+        button.onclick = () => finish(button.dataset.choice);
+      });
+      onOpen?.(shade, finish);
+      const preferred = shade.querySelector("[autofocus], input, textarea, select")
+        || shade.querySelector(".modal-actions .button.primary, .modal-actions .button.danger")
+        || shade.querySelector("button");
+      preferred?.focus();
+      if (preferred?.select) preferred.select();
+    });
+  }
+
+  const dialogHeading = (title, message, extra = "") => `
+    <h2 id="${OVERLAY_TITLE_ID}">${esc(title)}</h2>
+    ${message ? `<p>${esc(message)}</p>` : ""}${extra}`;
+
+  /** Ask a yes/no question. Resolves true only for the confirming button. */
+  function confirmChoice(title, message, {
+    confirmLabel = "Continue", cancelLabel = "Cancel", danger = false, note = "",
+  } = {}) {
+    const body = `<section class="editor-choice-card overlay-dialog">
+      ${dialogHeading(title, message, note ? `<div class="help-note">${esc(note)}</div>` : "")}
+      <div class="modal-actions">
+        <button type="button" class="button ghost" data-choice="cancel">${esc(cancelLabel)}</button>
+        <button type="button" class="button ${danger ? "danger" : "primary"}" data-choice="confirm">${esc(confirmLabel)}</button>
+      </div></section>`;
+    return overlayDialog(body).then(value => value === "confirm");
+  }
+
+  return { api, uploadApi, confirmChoice, esc, humanSize, modal, modalContent, overlayDialog, setModalAbort, setModalProgress, showModal, toast, trapFocus };
 })();

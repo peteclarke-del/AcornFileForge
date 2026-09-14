@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import queue
 import sys
 import threading
@@ -20,6 +21,9 @@ from .runtime import DesktopServer
 
 NATIVE_OPEN_EXTENSIONS = IMAGE_EXTENSIONS | {".dsc", ".zip"}
 MAX_NATIVE_OPEN_PLANS = 256
+#: What the page sends once an application update is installed and the
+#: server has agreed that nothing is reading or writing a disk.
+RESTART_MESSAGE = "restart-application"
 
 
 def _desktop_message_text(result) -> str:
@@ -39,6 +43,18 @@ def _desktop_message_text(result) -> str:
     if not isinstance(message, str):
         raise TypeError("WebKit supplied a non-text script message.")
     return message
+
+
+def restart_command(args: argparse.Namespace) -> list[str]:
+    """The command that starts the desktop application again, as ``python3 -m desktop``.
+
+    The images named when it was first started are not opened a second time:
+    the workspace restores the panes that were open.
+    """
+    command = [sys.executable, "-m", "desktop"]
+    if args.work_dir is not None:
+        command += ["--work-dir", str(args.work_dir)]
+    return command
 
 
 def _arguments(argv: list[str]) -> argparse.Namespace:
@@ -166,6 +182,8 @@ def run(argv: list[str] | None = None) -> int:
             # the desktop portal still owns the visible chooser.
             self.chooser_targets = {}
             self.native_drop_target = None
+            # Set when the page asks for a restart after an application update.
+            self.restart_requested = False
 
         def do_startup(self) -> None:
             Adw.Application.do_startup(self)
@@ -256,6 +274,12 @@ def run(argv: list[str] | None = None) -> int:
                     "the native desktop command",
                     str(exc),
                 )
+                return
+            if message == RESTART_MESSAGE:
+                # The process is started again once the application has
+                # shut down and stopped its server; see run().
+                self.restart_requested = True
+                self.quit()
                 return
             if message == "open-images" or message.startswith("open-images:"):
                 _command, separator, pane_value = message.partition(":")
@@ -564,7 +588,13 @@ def run(argv: list[str] | None = None) -> int:
             Adw.Application.do_shutdown(self)
 
     application = AcornFileForgeApplication()
-    return int(application.run([sys.argv[0], *map(str, args.images)]))
+    status = int(application.run([sys.argv[0], *map(str, args.images)]))
+    if application.restart_requested:
+        # The process is replaced, so the new version loads every module
+        # afresh. The launcher's environment and working folder are kept.
+        command = restart_command(args)
+        os.execv(command[0], command)
+    return status
 
 
 if __name__ == "__main__":

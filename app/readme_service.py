@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from .branding import HOMEPAGE
 from .checksum import sha256_path
 from .dfs_compat import dfs_catalogue_files
 from .mmb_layout import (
@@ -196,7 +197,7 @@ def build_download_readme(
         f"# {session.name}",
         "",
         "This archive was prepared by Acorn File Forge, the open-source Acorn image workshop.",
-        "Project: https://github.com/peteclarke-del/AcornFileForge",
+        f"Project: {HOMEPAGE}",
         "",
         "## Image details",
         "",
@@ -353,7 +354,7 @@ def build_download_readme(
             "Complete disk images keep file metadata inside their own catalogues, so they do not need an image-level .inf sidecar. Loose files exported from Acorn File Forge are packaged with a matching .inf file instead.",
             "DFS and MMB cannot preserve flux timing, weak sectors or every copy-protection feature. HFE can contain track-level information that is not representable after filesystem editing.",
             "ADFS directory and free-space metadata must match the selected hardware profile. BeebSCSI DAT images also require their matching DSC geometry.",
-            "For current documentation, releases and issue reporting, visit https://github.com/peteclarke-del/AcornFileForge.",
+            f"For current documentation, releases and issue reporting, visit {HOMEPAGE}.",
             "",
         )
     )
