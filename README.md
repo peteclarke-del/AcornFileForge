@@ -71,7 +71,7 @@ Release builds also provide a native-architecture Debian package. Install it
 on the Debian or Ubuntu release for which it was built:
 
 ```bash
-sudo apt install ./acorn-file-forge_1.2.0-1~deb13_amd64.deb
+sudo apt install ./acorn-file-forge_1.2.0-1.deb13_amd64.deb
 acorn-file-forge
 ```
 
