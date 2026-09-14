@@ -34,6 +34,7 @@ function hasHostCapability(capability) {
 const {
   api: rawApi,
   uploadApi: rawUploadApi,
+  confirmChoice,
   esc,
   humanSize,
   modal,
@@ -50,10 +51,20 @@ const { confirmPageOverride } = window.AcornSafetyDialogs.create({ esc, normalis
 let collectionCatalogue = window.AcornCollectionCatalogue.create({ uuid: newUuid });
 const collectionRevisionsSeen = new Map();
 const showHelp = window.AcornHelp.create({ showModal, modalContent });
+// The update's requests change nothing in the workspace, so they go straight
+// to the server rather than through api(), which clears the clipboard first.
+const appUpdate = window.AcornAppUpdate.create({
+  api: rawApi,
+  esc,
+  humanSize,
+  confirmChoice,
+  nativeHost: () => window.webkit?.messageHandlers?.acornDesktop || null,
+});
 const showAbout = window.AcornAbout.create({
   showModal,
   esc,
   context: () => ({ version: applicationVersion, engine: applicationEngine, host: platformContract.host }),
+  attachUpdates: () => appUpdate.attach(modalContent.querySelector("[data-app-update]")),
 });
 const formats = window.AcornFormats;
 let persistentStorageChanged = () => {};
