@@ -956,6 +956,9 @@ dialog:has(.patch-preflight-dialog) { width: min(760px, calc(100vw - 30px)); }
 .editor-document-state { color: var(--teal); font-weight: 700; }
 .editor-choice-shade { position: absolute; z-index: 10050; inset: 0; display: grid; place-items: center; padding: 20px; border-radius: inherit; background: var(--modal-backdrop); }
 .editor-choice-shade.editor-global-overlay { position: fixed; border-radius: 0; }
+.editor-choice-shade.overlay-dialog-shade { position: fixed; border-radius: 0; }
+.overlay-dialog h2 { margin: 0 0 7px; font-size: 21px; letter-spacing: -.03em; }
+.overlay-dialog > p { margin: 0 0 14px; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .editor-choice-card { width: min(480px, 100%); padding: 20px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--paper); box-shadow: var(--shadow); }
 .editor-choice-card p { color: var(--muted); font-size: 12px; line-height: 1.55; }
 .uef-structural-review { width: min(920px, calc(100vw - 3rem)); max-height: min(720px, calc(100vh - 3rem)); overflow: auto; }
@@ -1196,6 +1199,12 @@ dialog:has(.help-guide) { width: min(1120px, calc(100vw - 24px)); }
 .about-facts dt { color: var(--muted); font: 700 9px DM Mono, monospace; text-transform: uppercase; }
 .about-facts dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 11px; }
 .about-links { display: flex; flex-wrap: wrap; gap: 8px; }
+.about-update { display: grid; gap: 8px; }
+.about-update:focus { outline: none; }
+.about-update-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.about-update-size { color: var(--muted); font: 10px DM Mono, monospace; }
+.about-update-status { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.55; overflow-wrap: anywhere; user-select: text; }
+.about-update-page { justify-self: start; font-size: 11px; }
 .installed-menu-preview { display: grid; gap: 14px; }
 .menu-preview-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; }
 .menu-preview-heading h2 { margin: 2px 0 0; }
