@@ -41,6 +41,11 @@
   <url type="homepage">https://github.com/peteclarke-del/AcornFileForge</url>
   <url type="bugtracker">https://github.com/peteclarke-del/AcornFileForge/issues</url>
   <releases>
+    <release version="1.2.1" date="2026-09-22">
+      <description>
+        <p>Updates the Oaknut filesystem engine to 12.18.2, with no change to editing, repair or format behaviour.</p>
+      </description>
+    </release>
     <release version="1.2.0" date="2026-09-14">
       <description>
         <p>Adds Check for Application Updates to the About box, so a package installed from a release can download, verify and install a newer release, with no change to editing, repair or format behaviour.</p>
