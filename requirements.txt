@@ -1,6 +1,6 @@
 Flask==3.1.3
 gunicorn==26.2.0
-oaknut-disc==12.17.1
+oaknut-disc==12.18.2
 oaknut-romfs[cli]==12.17.1
 oaknut-adfs==12.17.1
 capstone==5.0.9
