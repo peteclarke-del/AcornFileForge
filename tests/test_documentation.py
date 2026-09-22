@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import unittest
+from importlib.metadata import PackageNotFoundError, metadata
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -137,6 +138,22 @@ class DocumentationTests(unittest.TestCase):
         self.assertIn(f"| Oaknut Disc, ADFS and ROMFS | {pinned_oaknut_release()} |", notices)
         playwright = package_lock["packages"]["node_modules/playwright"]["version"]
         self.assertIn(f"| Playwright | {playwright},", notices)
+
+    def test_oaknut_notice_links_the_repository_oaknut_declares(self) -> None:
+        """The notices send readers to the repository Oaknut itself publishes.
+
+        The row once linked a repository that does not exist, and nothing
+        noticed because only the version was checked. Oaknut's own package
+        metadata is the authority for where its source and licence live.
+        """
+        try:
+            project_urls = metadata("oaknut-disc").get_all("Project-URL") or []
+        except PackageNotFoundError:
+            self.skipTest("oaknut-disc is not installed")
+        repository = dict(url.split(", ", 1) for url in project_urls)["Repository"]
+        notices = (ROOT / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+        row = next(line for line in notices.splitlines() if line.startswith("| Oaknut "))
+        self.assertIn(f"<{repository}>", row)
 
     def test_handbooks_name_the_pinned_oaknut_release(self) -> None:
         """Every Oaknut version the documentation quotes is the one installed.
