@@ -1,9 +1,9 @@
 # Oaknut FileCore integration
 
-Acorn File Forge uses the released Oaknut 12.17.1 packages. No local Oaknut
+Acorn File Forge uses the released Oaknut 12.18.2 packages. No local Oaknut
 patch is applied at build time.
 
-Oaknut 12.17.1 incorporates the writable classic E/F work and supplies one
+Oaknut 12.18.2 incorporates the writable classic E/F work and supplies one
 content-driven ADFS implementation for the full standard floppy family:
 
 | Format | Capacity | Allocation map | Directory layout | Filename limit | Entries per directory |
@@ -32,10 +32,15 @@ because its allocation structures describe the filesystem extent. A classic
 BeebSCSI old-map DAT still requires its matching DSC geometry file for safe
 hardware-compatible editing and saving.
 
+Since 12.18, Oaknut also reads a BeebSCSI or Pi1MHz `.cfg` geometry sidecar
+and, like the firmware, prefers it to a `.dsc` beside the same image. Acorn
+File Forge still pairs a DAT only with its DSC: a session never holds a `.cfg`,
+so the geometry it edits against is always the one the DSC declares.
+
 ## Dependency boundary
 
 `requirements.txt` pins `oaknut-disc`, `oaknut-adfs` and `oaknut-romfs` to the
-same 12.17.1 release. The Docker dependency stage imports the public ADFS format
+same 12.18.2 release. The Docker dependency stage imports the public ADFS format
 constants for D through G+ and fails the build if that released capability is
 missing. Application code does not carry or apply a fork of Oaknut.
 
