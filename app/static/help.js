@@ -1054,7 +1054,7 @@ function showHelp() {
             <h3>Compatibility, limits and troubleshooting</h3>
             <h4>Important compatibility limits</h4>
             <ul>
-              <li>The released Oaknut 12.17.1 engine safely creates and edits ADFS S/M/L/D/E/E+/F/F+/G/G+, old-map and new-map FileCore hard disks, and BeebSCSI old-map DAT with its matching DSC.</li>
+              <li>The released Oaknut 12.18.2 engine safely creates and edits ADFS S/M/L/D/E/E+/F/F+/G/G+, old-map and new-map FileCore hard disks, and BeebSCSI old-map DAT with its matching DSC.</li>
               <li>D/E/F/G New directories allow 77 entries with 10-character names. E+/F+/G+ Big directories allow names up to 255 characters and a capacity-dependent number of entries. The pane and bulk planner use those detected limits.</li>
               <li>RPCEmu and Arculator HDF/HD4 images whose logical FileCore disc begins at the 0x200-byte emulator offset are content-detected and retain that layout.</li>
               <li>“Physical HDD” means a byte-for-byte RAW image. The browser and container do not access devices such as <code>/dev/sdb</code> directly.</li>
@@ -1070,7 +1070,7 @@ function showHelp() {
               <dt>DSD will not insert</dt><dd>Choose a starting position with two adjacent empty MMB slots.</dd>
               <dt>HFE is read-only</dt><dd>The image uses HFE v2/v3, reports bad sectors, or contains track features the sector editor cannot reproduce safely. Export its files or copy its readable sectors to another image.</dd>
               <dt>HxCFE is reported missing</dt><dd>Official Docker images and native 1.0.2 packages include HxCFE and its supporting libraries. Reinstall the package matching the host distribution and architecture if <code>/opt/acorn-file-forge/native/bin/hxcfe</code> is absent. A source checkout receives HxCFE when its Docker image or native package is built.</dd>
-              <dt>A FileCore image cannot be opened</dt><dd>Confirm it is a raw ADFS/FileCore image or a supported HDF/HD4 layout rather than a compressed archive or track dump. The Docker build pins Oaknut 12.17.1 and needs no local patch. The detailed error distinguishes an unrecognised filesystem from a corrupt map or directory.</dd>
+              <dt>A FileCore image cannot be opened</dt><dd>Confirm it is a raw ADFS/FileCore image or a supported HDF/HD4 layout rather than a compressed archive or track dump. The Docker build pins Oaknut 12.18.2 and needs no local patch. The detailed error distinguishes an unrecognised filesystem from a corrupt map or directory.</dd>
               <dt>Name collision found</dt><dd>Use the default DISC-0000 naming strategy, or review every highlighted name. The check is case-insensitive and scoped to each destination parent.</dd>
               <dt>Empty disk found</dt><dd>Choose Skip and continue or Abort. Blank disks can be stored in MMB, but do not become empty ADFS directories.</dd>
               <dt>Destination exists</dt><dd>An empty directory is reused silently. A populated directory offers Keep, Replace or Abort; a file is never overwritten as though it were an empty directory.</dd>
