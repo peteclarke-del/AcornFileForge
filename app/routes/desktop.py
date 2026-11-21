@@ -18,9 +18,12 @@ from acorn_floppy import (
     available_devices,
 )
 from acorn_greaseweazle import (
+    DISK_FORMATS,
     DRIVE_CHOICES,
+    DiskFormatError,
     GreaseweazleClient,
     GreaseweazleError,
+    disk_format,
     image_format,
     stable_snapshot,
 )
@@ -30,6 +33,7 @@ from ..disk_service import DiskError, DiskService
 from ..desktop_state import DesktopClientState
 from ..image_opening import open_image_path, open_rom_component_paths
 from ..operations import OperationRegistry
+from ..physical_drive import PhysicalDriveService
 from ..rom_components import MAX_ROM_COMPONENTS
 from .common import payload
 from .effects import request_effect
@@ -153,19 +157,25 @@ def _physical_media(service: DiskService, session, details: dict, progress):
             temporary.unlink(missing_ok=True)
 
 
-# Capture targets the workbench can open again, mapped to the suffix each one
-# writes. A request names the format, so the suffix is taken from this table
-# rather than from the request, keeping the caller's text out of the path.
-PHYSICAL_READ_FORMATS: dict[str, str] = {
-    "ssd": ".ssd",
-    "dsd": ".dsd",
-    "adf": ".adf",
-    "ads": ".ads",
-    "adm": ".adm",
-    "adl": ".adl",
-    "hfe": ".hfe",
-    "scp": ".scp",
-}
+# Flux captures a request may ask for. Sector captures name an Acorn layout
+# instead, so the suffix always comes from a table, never from the request.
+FLUX_CAPTURE_FORMATS: dict[str, str] = {"hfe": ".hfe", "scp": ".scp"}
+
+
+def _capture_target(requested: object):
+    """Return the destination suffix and layout for a capture request."""
+    name = str(requested or "ssd").strip().lower()
+    if name in FLUX_CAPTURE_FORMATS:
+        return FLUX_CAPTURE_FORMATS[name], None
+    try:
+        layout = disk_format(name)
+    except DiskFormatError as exc:
+        raise DiskError(
+            "Choose a capture format: "
+            + ", ".join([*DISK_FORMATS, *FLUX_CAPTURE_FORMATS])
+            + "."
+        ) from exc
+    return layout.suffix, layout
 
 
 # A capture is written under a fixed name inside a private scratch directory,
@@ -189,6 +199,16 @@ def _name_captured_session(service: DiskService, session, requested: object) -> 
         pass
 
 
+def _step(value: object) -> int:
+    try:
+        step = int(value or 1)
+    except (TypeError, ValueError):
+        step = 0
+    if step not in (1, 2):
+        raise DiskError("Choose single (1) or double (2) head stepping.")
+    return step
+
+
 def create_desktop_blueprint(
     service: DiskService,
     operations: OperationRegistry | None = None,
@@ -201,6 +221,81 @@ def create_desktop_blueprint(
     # disk off half written.
     media_activity = media_activity or Activity()
     blueprint = Blueprint("desktop", __name__)
+    drives = PhysicalDriveService(service, lambda: GreaseweazleClient())
+
+    @contextmanager
+    def drive_operation(operation_id: object, start: str, done: str):
+        """Track a drive task and turn hardware failures into user errors."""
+        try:
+            with operations.tracked(str(operation_id or "") or None, start, done) as progress:
+                yield progress
+        except GreaseweazleError as exc:
+            raise DiskError(str(exc)) from exc
+
+    @blueprint.post("/api/desktop/drive/probe")
+    @request_effect("external", "identifying the disk in a Greaseweazle drive")
+    @media_activity.guard
+    def probe_drive():
+        """Say whether the disk in a drive is formatted, and as what.
+
+        Nothing is written. A disk that cannot be identified is reported with
+        the layouts the user may choose between.
+        """
+        data = payload()
+        drive = str(data.get("drive") or "")
+        status = GreaseweazleClient().probe()
+        if not status.available:
+            raise DiskError(status.detail)
+        with drive_operation(data.get("operationId"), f"Checking the disk in drive {drive}", "Disk checked") as progress:
+            detection = drives.probe(drive, progress)
+        return jsonify(
+            detection=detection.public(),
+            formats=[item.public() for item in DISK_FORMATS.values()],
+        )
+
+    @blueprint.post("/api/desktop/drive/open")
+    @request_effect("external", "reading a disk into a drive pane")
+    @media_activity.guard
+    def open_drive():
+        data = payload()
+        drive = str(data.get("drive") or "")
+        with drive_operation(data.get("operationId"), f"Reading the disk in drive {drive}", "Disk read") as progress:
+            session = drives.open_disk(drive, str(data.get("format") or ""), _step(data.get("step")), progress)
+        return jsonify(image=service.summary(session))
+
+    @blueprint.post("/api/desktop/drive/format")
+    @request_effect("external", "formatting a disk in a Greaseweazle drive")
+    @media_activity.guard
+    def format_drive():
+        """Format the disk in a drive. The client asks before calling this."""
+        data = payload()
+        if data.get("confirm") is not True:
+            raise DiskError("Formatting erases the disk, so it needs confirming first.")
+        drive = str(data.get("drive") or "")
+        with drive_operation(data.get("operationId"), f"Formatting the disk in drive {drive}", "Disk formatted") as progress:
+            session = drives.format_disk(
+                drive,
+                str(data.get("format") or ""),
+                _step(data.get("step")),
+                str(data.get("title") or ""),
+                progress,
+            )
+        return jsonify(image=service.summary(session))
+
+    @blueprint.post("/api/desktop/images/<image_id>/drive/write")
+    @request_effect("external", "writing a drive pane back to its disk")
+    @media_activity.guard
+    def write_drive(image_id):
+        data = payload()
+        session = service.get(image_id)
+        if not session.physical_drive:
+            raise DiskError("This pane is not attached to a floppy drive.")
+        details = {"name": session.name, "slot": None}
+        drive = session.physical_drive["drive"]
+        with drive_operation(data.get("operationId"), f"Writing to the disk in drive {drive}", "Disk written") as progress:
+            with _physical_media(service, session, details, progress) as image:
+                result = drives.write_disk(session, image, progress)
+        return jsonify(result=result, image=service.summary(session))
 
     @blueprint.get("/api/desktop/client-state")
     def get_client_state():
@@ -306,13 +401,7 @@ def create_desktop_blueprint(
         """
         data = payload()
         drive = str(data.get("drive") or "")
-        suffix = PHYSICAL_READ_FORMATS.get(str(data.get("format") or "ssd").strip().lower())
-        if suffix is None:
-            raise DiskError(
-                "Choose a capture format: "
-                + ", ".join(sorted(PHYSICAL_READ_FORMATS))
-                + "."
-            )
+        suffix, layout = _capture_target(data.get("format"))
         revolutions = data.get("revolutions")
         operation_id = str(data.get("operationId") or "") or None
         with tempfile.TemporaryDirectory(dir=service.work_dir, prefix="gw-read-") as folder:
@@ -328,6 +417,8 @@ def create_desktop_blueprint(
                         drive,
                         progress,
                         revolutions=int(revolutions) if revolutions is not None else None,
+                        disk_format=layout,
+                        step=_step(data.get("step")),
                     )
                     progress("Opening the captured image", None, None)
                     session = service.create_from_path(destination)

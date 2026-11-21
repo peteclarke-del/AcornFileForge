@@ -427,6 +427,28 @@ const { guardedPaneAction, trackedPaneOperation } = window.AcornOperationUI.crea
   setModalProgress,
   newUuid,
 });
+const filesystemConversion = window.AcornFilesystemConversion.create({
+  panes,
+  api,
+  esc,
+  showModal,
+  toast,
+  trackedPaneOperation,
+  addPane: () => addPane(),
+  otherPaneIndexes: index => otherPaneIndexes(index),
+  paneLabel: index => paneLabel(index),
+  acceptImage: (index, image) => acceptImage(index, image),
+});
+const drivePane = window.AcornDrivePane.create({
+  panes,
+  api,
+  esc,
+  showModal,
+  modal,
+  toast,
+  trackedPaneOperation,
+  acceptImage: (index, image) => acceptImage(index, image),
+});
 
 async function openHexEditor(index, initialOffset = 0, { host: requestedHost = null, onClose = null, afterSave = null, pageSize = 256 } = {}) {
   const pane = panes[index];
@@ -682,6 +704,9 @@ function renderPane(index, preserveScroll = false) {
     host.innerHTML = `${paneDragHandle(index)}${emptyMarkup()}${loadingMarkup(pane)}`;
     host.querySelector(".pane-open").onclick = () => chooseImage(index);
     host.querySelector(".pane-new").onclick = () => showCreateImageModal(index);
+    const driveButton = host.querySelector(".pane-drive");
+    driveButton.hidden = !hasHostCapability("physical-floppy-read");
+    driveButton.onclick = () => drivePane.openDrive(index);
     host.querySelector(".pane-recover").onclick = () => recoverPreviousSession(index);
     host.querySelector(".close-empty-pane").onclick = () => closePane(index);
     if (pane.loading) {
@@ -854,6 +879,7 @@ function renderPane(index, preserveScroll = false) {
     <div class="tool-menu-panel">
       ${newSubmenu}
       <button class="menu-command menu-load-image"><b>▤</b><span>Open image…</span></button>
+      ${hasHostCapability("physical-floppy-read") ? '<button class="menu-command menu-open-drive"><b>▣</b><span>Open floppy drive…</span></button>' : ""}
       <button class="menu-command menu-save-image"><b>⇩</b><span>Save image</span></button>
       ${pane.image.exportFormats?.length ? `<button class="menu-command menu-export-image"><b>⇄</b><span>Export as…</span></button>` : ""}
       ${isTape || pane.image.readOnly ? "" : `<span class="menu-separator" role="separator"></span>`}
@@ -973,6 +999,7 @@ function renderPane(index, preserveScroll = false) {
       ${isSlots ? "" : `<button class="menu-command validate-image"><b>✓</b><span>${isRom ? "Check ROM structure" : "Check filesystem"}</span></button>`}
       ${isAdfsHdd ? '<button class="menu-command audit-adfs-installations"><b>⌁</b><span>Check installed disk software…</span></button>' : ""}
       ${isArchive ? "" : isRom ? '<button class="menu-command rom-workbench"><b>⌬</b><span>ROM Workbench…</span></button><button class="menu-command configure-rom"><b>▥</b><span>ROM layout…</span></button>' : isRomfs ? `${pane.image.readOnly ? "" : '<button class="menu-command configure-romfs"><b>▥</b><span>ROMFS properties…</span></button>'}` : isSlots || isTape ? (isTape ? '<button class="menu-command uef-project"><b>≋</b><span>UEF tape project…</span></button><button class="menu-command convert-tape"><b>⇥</b><span>Convert tape to disk</span></button>' : "") : pane.image.readOnly ? "" : '<button class="menu-command compact-image"><b>≋</b><span>Compact filesystem</span></button>'}
+      ${["dfs", "adfs"].includes(pane.image.kind) && !isAdfsHdd && !isSlots ? `<button class="menu-command convert-filesystem"><b>⇄</b><span>Convert to ${pane.image.kind === "dfs" ? "ADFS" : "DFS"}…</span></button>` : ""}
     </div>
   </details>`;
   const exportControl = exportAvailability(pane.image);
@@ -991,6 +1018,7 @@ function renderPane(index, preserveScroll = false) {
       <span class="format-icon ${kind}">${paneFormat(pane.image)}</span>
       <div class="image-name"><button class="image-title" type="button" title="Rename ${esc(pane.image.name)}">${esc(pane.image.name)}</button><small>${esc(location)} · ${humanSize(pane.image.size)}</small></div>
       <span class="dirty-dot" role="img" aria-label="Changes made" title="Changes made · save before closing"></span>
+      ${drivePane.headerMarkup(pane)}
       <div class="pane-head-actions" aria-label="Image actions">
         <button class="icon-button new-image" title="New Blank Image" aria-label="New Blank Image">${PANE_ICONS.newImage}</button>
         <button class="icon-button replace-image" title="Load New Image" aria-label="Load New Image">${PANE_ICONS.loadImage}</button>
@@ -1032,6 +1060,7 @@ function renderPane(index, preserveScroll = false) {
   host.querySelector(".refresh-image").onclick = () => refreshCurrentView(index);
   host.querySelector(".menu-new-matching-image")?.addEventListener("click", event => guardedPaneAction(index, () => newImageFromFileMenu(index, event.currentTarget.dataset.format)));
   host.querySelector(".menu-load-image")?.addEventListener("click", () => chooseImage(index));
+  host.querySelector(".menu-open-drive")?.addEventListener("click", () => drivePane.openDrive(index));
   host.querySelector(".menu-save-image")?.addEventListener("click", () => guardedPaneAction(index, () => saveImage(index)));
   host.querySelector(".menu-export-image")?.addEventListener("click", () => guardedPaneAction(index, () => exportImageAs(index)));
   host.querySelector(".export-image")?.addEventListener("click", () => guardedPaneAction(index, () => exportImageAs(index)));
@@ -1042,6 +1071,7 @@ function renderPane(index, preserveScroll = false) {
   host.querySelector(".clipboard-copy-action")?.addEventListener("click", () => setWorkspaceClipboard(index, "copy"));
   host.querySelector(".clipboard-paste-action")?.addEventListener("click", () => pasteWorkspaceClipboard(index));
   host.querySelector(".close-image").onclick = () => closePane(index);
+  drivePane.bindHeader(host, index);
   host.querySelector(".mmb-home")?.addEventListener("click", () => returnToMmb(index));
   host.querySelector(".archive-exit")?.addEventListener("click", () => leaveArchive(index));
   host.querySelector(".import-file")?.addEventListener("click", () => guardedPaneAction(index, () => chooseHostFile(index)));
@@ -1069,6 +1099,7 @@ function renderPane(index, preserveScroll = false) {
   host.querySelector(".debug-whole-mmb")?.addEventListener("click", () => guardedPaneAction(index, () => launchPaneEmulator(index, true, true)));
   host.querySelector(".write-physical-floppy")?.addEventListener("click", () => guardedPaneAction(index, () => showPhysicalFloppyDialog(index)));
   host.querySelector(".convert-tape")?.addEventListener("click", () => guardedPaneAction(index, () => convertTape(index)));
+  host.querySelector(".convert-filesystem")?.addEventListener("click", () => guardedPaneAction(index, () => filesystemConversion.open(index)));
   host.querySelector(".uef-project")?.addEventListener("click", () => guardedPaneAction(index, () => showUefProject(index)));
   host.querySelector(".preview-menu")?.addEventListener("click", () => guardedPaneAction(index, () => showMenuPreview(index)));
   host.querySelector(".audit-menu-pages")?.addEventListener("click", () => guardedPaneAction(index, () => auditMmbMenuPages(index)));
@@ -3092,7 +3123,16 @@ async function closePane(index) {
   if (panes.some(item => item.loading || item.actionPending)) {
     return toast("Wait for current pane operations to finish before closing a pane.", true);
   }
-  if (!pane.image?.dirty) {
+  if (drivePane.unwritten(pane)) {
+    showModal(`
+      <h2>Close without writing to the disk?</h2>
+      <p>This pane has changes that have not been written to the disk in drive ${esc(pane.image.physicalDrive.drive)}. The disk still holds what it held before.</p>
+      <div class="help-note"><strong>Recovery remains available:</strong> closing a pane does not delete its private server-side working copy.</div>
+      <div class="modal-actions"><button class="button ghost" value="cancel">Keep open</button><button class="button danger" value="discard">Close without writing</button></div>`,
+    () => removePane(index));
+    return;
+  }
+  if (!pane.image?.dirty || pane.image.physicalDrive) {
     removePane(index);
     return;
   }

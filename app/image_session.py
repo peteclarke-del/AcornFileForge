@@ -58,6 +58,9 @@ class ImageSession:
     rom_project: dict = field(default_factory=lambda: normalise_project({}))
     editor_projects: dict[str, dict] = field(default_factory=dict)
     compatibility_reports: list[dict] = field(default_factory=list)
+    # Set when the pane is bound to a disk in a Greaseweazle drive:
+    # drive, format, step and the digest of what the disk last held.
+    physical_drive: dict | None = None
     content_kind_cache: dict[tuple, str] = field(default_factory=dict)
     owner_id: str | None = field(default_factory=lambda: SESSION_OWNER.get())
     lock: threading.RLock = field(default_factory=threading.RLock)

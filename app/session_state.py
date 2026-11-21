@@ -74,6 +74,7 @@ def session_metadata(session: ImageSession) -> dict:
         "romProject": session.rom_project,
         "editorProjects": session.editor_projects,
         "compatibilityReports": session.compatibility_reports[-10:],
+        "physicalDrive": session.physical_drive,
         "dirty": session.dirty,
         "finalisedMtimeNs": session.finalised_mtime_ns,
         "ownerId": session.owner_id,
