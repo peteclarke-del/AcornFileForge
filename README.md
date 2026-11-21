@@ -185,7 +185,9 @@ the reusable release checklist.
 - The [Linux desktop guide](docs/LINUX-DESKTOP.md) covers the GTK application,
   native file handling, XDG storage and emulator configuration.
 - The [physical floppy guide](docs/PHYSICAL-FLOPPY-GUIDE.md) covers optional
-  Greaseweazle setup, supported images, verification and safe cancellation.
+  Greaseweazle setup, opening a disk in a drive as a pane (format detection,
+  formatting a blank disk, explicit write-back), supported images,
+  verification and safe cancellation.
 - The [platform contract](docs/PLATFORM-CONTRACT.md) defines the mandatory
   parity boundary between browser and native hosts.
 - The [headless CLI guide](docs/CLI-GUIDE.md) covers automation, stable JSON results, dry-runs and deterministic recipes.
@@ -1828,6 +1830,30 @@ media has no compatible target:
 Other ADFS geometries and BeebSCSI DAT/DSC pairs only offer the native sector
 export, since HxCFE has no blank flux layout for those geometries. See the
 [HFE, SCP and export guide](docs/HFE-HXC-GUIDE.md) for the complete procedure.
+
+## Converting between DFS and ADFS
+
+**Export as…** keeps an image's filesystem and changes only its container.
+To change the filesystem itself, use **Tools → Convert to ADFS…** on a DFS
+pane, or **Convert to DFS…** on an ADFS floppy pane. Conversion copies files,
+not sectors, into a blank image of the layout you choose. Load and execution
+addresses, locked access, the disc title and the `*OPT 4` boot option come
+across. The converted image opens in a new pane (or one you pick), and the
+source pane is not changed. Save, export or write the new pane as usual,
+including **Write to disk** through a Greaseweazle.
+
+| From | To | How files are placed |
+| --- | --- | --- |
+| DFS (`.ssd`, `.dsd`) | ADFS S, M, L, D/E or F | `$.NAME` stays in `$`; `G.NAME` goes to `$.G.NAME`. Side 2 of a DSD goes under `$.SIDE2` |
+| ADFS floppy | DFS 40/80 track, single/double sided | `$` files keep their names; a file in `$.Games…` takes the letter `G`. Names are cut to seven characters, keeping them unique |
+
+DFS holds 31 files per side, has no subdirectories, allows names of up to
+seven characters, and has less space than most ADFS floppies. The dialog
+therefore shows what will be renamed and what will not fit before anything is
+created. If files would be left out, you must tick **Convert without these
+files**, or choose a bigger layout such as double-sided 80-track DFS. ADFS hard
+discs and MMB collections are not converted this way. Copy their files into a
+floppy pane instead.
 
 ## Working with ROM images
 

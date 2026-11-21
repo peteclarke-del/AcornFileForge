@@ -13,6 +13,7 @@ from .filename_policy import session_name_policy, target_name_policy
 from .image_session import ImageSession, SESSION_OWNER
 from .rom import DEFAULT_BANK_SIZE, bank_count, validate_bank_size
 from .rom_workbench import normalise_project
+from .physical_drive import normalise_physical_drive, physical_drive_summary
 from .session_state import session_metadata
 from .uef import UEFError, parse_uef
 
@@ -107,6 +108,7 @@ class SessionDiskMixin:
                     str(key): normalise_editor_project(value)
                     for key, value in dict(metadata.get("editorProjects") or {}).items()
                 },
+                physical_drive=normalise_physical_drive(metadata.get("physicalDrive")),
                 compatibility_reports=[
                     dict(report)
                     for report in list(metadata.get("compatibilityReports") or [])[-10:]
@@ -394,6 +396,7 @@ class SessionDiskMixin:
             "doubleSided": session.path.name.lower().endswith(".dsd"),
             "containerFormat": "hfe" if session.hfe_original_path else "scp" if session.scp_original_path else None,
             "readOnly": session.hfe_read_only or session.scp_read_only or bool(romfs and romfs["readOnly"]),
+            "physicalDrive": physical_drive_summary(session),
             "exportFormats": self.export_formats(session),
             "rom": ({
                 "bankSize": session.rom_bank_size,

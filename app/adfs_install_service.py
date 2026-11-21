@@ -11,9 +11,14 @@ class ADFSInstallMixin:
     """Audit and repair software trees installed into ADFS hard disks."""
 
     def carry_boot_option(
-        self, source: ImageSession, target: ImageSession, destination: str
+        self,
+        source: ImageSession,
+        target: ImageSession,
+        destination: str,
+        *,
+        include_dfs: bool = False,
     ) -> int | None:
-        """Give the ADFS target the source disc's `*OPT 4` setting.
+        """Give the target disc the source disc's `*OPT 4` setting.
 
         Installing a disc's files without its boot option leaves an image that
         cannot start itself: the machine has nothing to act on and the user is
@@ -26,11 +31,15 @@ class ADFSInstallMixin:
         boot. Software installed into its own directory is reached through the
         menu instead, which makes it the current directory first.
 
+        DFS targets are declined unless ``include_dfs`` is set: a whole-disc
+        conversion into a fresh DFS image carries the option across, but
+        installing files into an existing DFS disc must not change its boot.
+
         Returns the option carried across, or None when there was nothing to
         carry. A failure to set it is reported as a warning rather than raised:
         the files are already installed and are still usable by hand.
         """
-        if target.kind != "adfs":
+        if target.kind != "adfs" and not (include_dfs and target.kind == "dfs"):
             return None
         if (destination or "$").strip(".") not in ("", "$"):
             return None

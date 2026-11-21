@@ -5,6 +5,7 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, request, send_file, send_from_directory
 
+from ..filesystem_conversion import conversion_targets, convert, plan_conversion
 from ..download_archive import build_download_archive, prepared_download
 from ..disk_service import DiskError, DiskService
 from ..image_opening import open_image_upload
@@ -261,6 +262,36 @@ def create_images_blueprint(
             data.get("format", "ssd"),
         )
         return jsonify(image=service.summary(converted), files=files)
+
+    @blueprint.get("/api/images/<image_id>/filesystem-conversion")
+    def filesystem_conversion_plan(image_id):
+        """List the layouts a DFS or ADFS image converts to, or preview one."""
+        session = service.get(image_id)
+        target = request.args.get("target")
+        if not target:
+            return jsonify(targets=conversion_targets(session))
+        return jsonify(plan=plan_conversion(service, session, target).public())
+
+    @blueprint.post("/api/images/<image_id>/filesystem-conversion")
+    @request_effect("lifecycle", "converting an image to another filesystem")
+    def convert_filesystem(image_id):
+        """Copy every file into a new image; the source pane is unchanged."""
+        data = payload()
+        source = service.get(image_id)
+        with operations.tracked(
+            str(data.get("operationId") or "") or None,
+            "Converting the image",
+            "Image converted",
+        ) as progress:
+            converted, plan = convert(
+                service,
+                source,
+                str(data.get("target") or ""),
+                accept_losses=data.get("acceptLosses") is True,
+                title=data.get("title"),
+                progress=progress,
+            )
+        return jsonify(image=service.summary(converted), plan=plan.public())
 
     @blueprint.get("/api/images/<image_id>/export/formats")
     def image_export_formats(image_id):

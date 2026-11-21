@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from acorn_greaseweazle import DISK_FORMATS
 from acorn_greaseweazle import (
     GreaseweazleClient,
     GreaseweazleError,
@@ -210,6 +211,9 @@ class GreaseweazleTests(unittest.TestCase):
 
 
 
+DFS_80 = DISK_FORMATS["dfs-80"]
+
+
 class GreaseweazleReadTests(unittest.TestCase):
     """Capturing a physical disk, the mirror of the existing write support."""
 
@@ -236,7 +240,7 @@ class GreaseweazleReadTests(unittest.TestCase):
         progress = Mock()
         with tempfile.TemporaryDirectory() as folder:
             target = Path(folder) / "capture.ssd"
-            result = self._client().read(target, "A", progress)
+            result = self._client().read(target, "A", progress, disk_format=DFS_80)
         self.assertIsInstance(result, ReadResult)
         self.assertEqual(result.drive, "A")
         self.assertEqual(result.image, "capture.ssd")
@@ -295,7 +299,7 @@ class GreaseweazleReadTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             target = Path(folder) / "capture.ssd"
             with self.assertRaisesRegex(GreaseweazleError, "could not read the physical disk"):
-                self._client().read(target, "A")
+                self._client().read(target, "A", disk_format=DFS_80)
             self.assertFalse(target.exists())
 
     @patch("acorn_greaseweazle.client.subprocess.Popen")
@@ -305,7 +309,7 @@ class GreaseweazleReadTests(unittest.TestCase):
         popen.side_effect = self._capture("No disk detected\n", None)
         with tempfile.TemporaryDirectory() as folder:
             with self.assertRaisesRegex(GreaseweazleError, "without producing an image"):
-                self._client().read(Path(folder) / "capture.ssd", "A")
+                self._client().read(Path(folder) / "capture.ssd", "A", disk_format=DFS_80)
 
     @patch("acorn_greaseweazle.client.subprocess.Popen")
     @patch("acorn_greaseweazle.client.subprocess.run")
@@ -314,7 +318,7 @@ class GreaseweazleReadTests(unittest.TestCase):
         popen.side_effect = self._capture("T0.0: Read\n", b"")
         with tempfile.TemporaryDirectory() as folder:
             with self.assertRaisesRegex(GreaseweazleError, "without producing an image"):
-                self._client().read(Path(folder) / "capture.ssd", "A")
+                self._client().read(Path(folder) / "capture.ssd", "A", disk_format=DFS_80)
 
     def test_an_unsupported_destination_suffix_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as folder:
@@ -325,7 +329,7 @@ class GreaseweazleReadTests(unittest.TestCase):
     def test_an_invalid_drive_is_refused_before_any_device_access(self, run) -> None:
         with tempfile.TemporaryDirectory() as folder:
             with self.assertRaisesRegex(GreaseweazleError, "drive A, B, 0, 1, 2 or 3"):
-                self._client().read(Path(folder) / "capture.ssd", "Z")
+                self._client().read(Path(folder) / "capture.ssd", "Z", disk_format=DFS_80)
         run.assert_not_called()
 
     @patch("acorn_greaseweazle.client.shutil.which", return_value=None)
@@ -334,7 +338,7 @@ class GreaseweazleReadTests(unittest.TestCase):
         client = GreaseweazleClient()
         with tempfile.TemporaryDirectory() as folder:
             with self.assertRaisesRegex(GreaseweazleError, "gw command is not installed"):
-                client.read(Path(folder) / "capture.ssd", "A")
+                client.read(Path(folder) / "capture.ssd", "A", disk_format=DFS_80)
 
 
 class GreaseweazleSharedStreamTests(unittest.TestCase):

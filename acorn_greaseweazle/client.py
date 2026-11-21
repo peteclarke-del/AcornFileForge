@@ -1,4 +1,4 @@
-"""Safe subprocess adapter for writing Acorn images with Greaseweazle.
+"""Safe subprocess adapter for reading and writing Acorn disks with Greaseweazle.
 
 The module deliberately has no Flask, GTK or Nautilus dependencies. Both
 Acorn File Forge and a file-manager extension can therefore use the same
@@ -19,6 +19,17 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator
+
+from .detect import (
+    ENCODINGS,
+    PROBE_TRACKS,
+    Detection,
+    classify,
+    parse_decode,
+    parse_sector_total,
+    track_zero_bytes,
+)
+from .formats import FLUX_SUFFIXES, DiskFormat, DiskFormatError, format_for_image
 
 
 class GreaseweazleError(RuntimeError):
@@ -46,6 +57,16 @@ class ReadResult:
     tracks_read: int
     size: int
     output_tail: tuple[str, ...]
+    disk_format: str | None = None
+    step: int = 1
+    sectors_found: int | None = None
+    sectors_total: int | None = None
+
+    @property
+    def missing_sectors(self) -> int:
+        if self.sectors_found is None or self.sectors_total is None:
+            return 0
+        return max(0, self.sectors_total - self.sectors_found)
 
 
 @dataclass(frozen=True)
@@ -56,6 +77,8 @@ class WriteResult:
     verification_supported: bool
     tracks_written: int
     output_tail: tuple[str, ...]
+    disk_format: str | None = None
+    step: int = 1
 
 
 IMAGE_FORMATS = {
@@ -110,6 +133,29 @@ def stable_snapshot(source: str | Path, directory: str | Path | None = None) -> 
         yield snapshot
     finally:
         snapshot.unlink(missing_ok=True)
+
+
+@contextmanager
+def _complete_image(path: Path, layout: DiskFormat | None) -> Iterator[Path]:
+    """Yield the image padded to its full layout, leaving the original alone.
+
+    DFS images are often truncated after their last used sector; gw needs
+    every track's bytes, so a short image is written from a padded copy.
+    """
+    if layout is None or path.stat().st_size >= layout.size:
+        yield path
+        return
+    handle = tempfile.NamedTemporaryFile(
+        prefix="acorn-floppy-full-", suffix=path.suffix.lower(), dir=path.parent, delete=False
+    )
+    padded = Path(handle.name)
+    try:
+        with handle, path.open("rb") as stream:
+            shutil.copyfileobj(stream, handle)
+            handle.write(bytes(layout.size - path.stat().st_size))
+        yield padded
+    finally:
+        padded.unlink(missing_ok=True)
 
 
 class GreaseweazleClient:
@@ -246,6 +292,88 @@ class GreaseweazleClient:
             reader.join(timeout=1)
         return return_code, output, tracks, total
 
+    @staticmethod
+    def _step(value: int) -> int:
+        if int(value) not in (1, 2):
+            raise GreaseweazleError("Choose single (1) or double (2) head stepping.")
+        return int(value)
+
+    @staticmethod
+    def _layout_arguments(layout: DiskFormat | None, step: int) -> list[str]:
+        """Name the disk definition, so gw never guesses it from a suffix."""
+        if layout is None:
+            return []
+        arguments = [f"--format={layout.gw_format}"]
+        if step == 2:
+            arguments.append("--tracks=step=2")
+        return arguments
+
+    def _offline(self, arguments: list[str], timeout: float = 120) -> str:
+        """Run a gw command that touches only files, such as ``convert``."""
+        try:
+            result = subprocess.run(
+                arguments,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=timeout,
+                env=self._environment(),
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise GreaseweazleError(f"Could not run Greaseweazle: {exc}") from exc
+        return result.stdout or ""
+
+    def probe_disk(
+        self,
+        drive: str,
+        directory: str | Path,
+        progress: Callable[[str, int | None, int | None], None] | None = None,
+    ) -> Detection:
+        """Identify the Acorn format of the disk in a drive without writing.
+
+        Four tracks are read as raw flux, once; every encoding is then tried
+        against that capture offline, so the probe costs one short read.
+        """
+        selected_drive = self._drive(drive)
+        command = self._ready_command()
+        report = progress or (lambda _message, _current=None, _total=None: None)
+        folder = Path(directory)
+        capture = folder / "probe.scp"
+        report(f"Reading the first tracks of the disk in drive {selected_drive}", 0, None)
+        return_code, output, _tracks, _total = self._stream(
+            [command, "read", f"--drive={selected_drive}", f"--tracks={PROBE_TRACKS}", str(capture)],
+            report,
+            activity="Probing the disk",
+            limit_message="Greaseweazle took too long to read the first tracks of the disk.",
+        )
+        if return_code or not capture.is_file():
+            tail = "\n".join(output[-12:])
+            raise GreaseweazleError(
+                "Greaseweazle could not read the disk. Check that a disk is inserted and the drive is selected correctly."
+                + (f"\n\n{tail}" if tail else "")
+            )
+        decodes = {}
+        track_zero = {}
+        for position, encoding in enumerate(ENCODINGS, start=1):
+            report(f"Checking for {encoding.label}", position, len(ENCODINGS))
+            decoded = folder / f"probe-{encoding.key}.img"
+            text = self._offline([
+                command,
+                "convert",
+                f"--format={encoding.gw_format}",
+                f"--tracks={PROBE_TRACKS}",
+                str(capture),
+                str(decoded),
+            ])
+            decodes[encoding.key] = parse_decode(text)
+            data = decoded.read_bytes() if decoded.is_file() else b""
+            track_zero[encoding.key] = track_zero_bytes(data, encoding)
+            decoded.unlink(missing_ok=True)
+        capture.unlink(missing_ok=True)
+        return classify(decodes, track_zero)
+
     def _ready_command(self) -> str:
         probe = self.probe()
         if not probe.available or not probe.command:
@@ -259,6 +387,8 @@ class GreaseweazleClient:
         progress: Callable[[str, int | None, int | None], None] | None = None,
         *,
         revolutions: int | None = None,
+        disk_format: DiskFormat | None = None,
+        step: int = 1,
     ) -> ReadResult:
         """Capture a physical disk into an image file.
 
@@ -269,10 +399,20 @@ class GreaseweazleClient:
         """
         path = Path(destination)
         image_type = image_format(path)
+        if disk_format is None and path.suffix.casefold() not in FLUX_SUFFIXES:
+            raise GreaseweazleError("Choose the floppy format to read a sector image with.")
+        if disk_format is not None and disk_format.suffix != path.suffix.casefold():
+            raise GreaseweazleError(f"A {disk_format.label} disk is captured as {disk_format.suffix}.")
         selected_drive = self._drive(drive)
+        selected_step = self._step(step)
         command = self._ready_command()
         report = progress or (lambda _message, _current=None, _total=None: None)
-        arguments = [command, "read", f"--drive={selected_drive}"]
+        arguments = [
+            command,
+            "read",
+            f"--drive={selected_drive}",
+            *self._layout_arguments(disk_format, selected_step),
+        ]
         if revolutions is not None:
             if not 1 <= int(revolutions) <= 10:
                 raise GreaseweazleError("Choose between 1 and 10 revolutions per track.")
@@ -300,8 +440,9 @@ class GreaseweazleClient:
                 "and that the drive is selected correctly."
             )
         size = path.stat().st_size
+        sectors = parse_sector_total(output)
         report(
-            f"Physical disk captured as {image_type.label}",
+            f"Physical disk captured as {disk_format.label if disk_format else image_type.label}",
             total or len(tracks),
             total or len(tracks),
         )
@@ -311,6 +452,10 @@ class GreaseweazleClient:
             tracks_read=len(tracks),
             size=size,
             output_tail=tuple(output[-12:]),
+            disk_format=disk_format.identifier if disk_format else None,
+            step=selected_step,
+            sectors_found=sectors[0] if sectors else None,
+            sectors_total=sectors[1] if sectors else None,
         )
 
     def write(
@@ -318,22 +463,37 @@ class GreaseweazleClient:
         image: str | Path,
         drive: str,
         progress: Callable[[str, int | None, int | None], None] | None = None,
+        *,
+        disk_format: DiskFormat | None = None,
+        step: int = 1,
     ) -> WriteResult:
         path = Path(image)
         image_type = image_format(path)
         selected_drive = self._drive(drive)
+        selected_step = self._step(step)
+        try:
+            layout = disk_format or format_for_image(path)
+        except (DiskFormatError, OSError) as exc:
+            raise GreaseweazleError(str(exc)) from exc
         command = self._ready_command()
         report = progress or (lambda _message, _current=None, _total=None: None)
         report(f"Starting physical write on drive {selected_drive}", 0, None)
-        return_code, output, tracks, total = self._stream(
-            [command, "write", f"--drive={selected_drive}", str(path)],
-            report,
-            activity="Writing physical floppy",
-            limit_message=(
-                "Greaseweazle exceeded the 30 minute write limit. "
-                "The physical disk may be incomplete."
-            ),
-        )
+        with _complete_image(path, layout) as source:
+            return_code, output, tracks, total = self._stream(
+                [
+                    command,
+                    "write",
+                    f"--drive={selected_drive}",
+                    *self._layout_arguments(layout, selected_step),
+                    str(source),
+                ],
+                report,
+                activity="Writing physical floppy",
+                limit_message=(
+                    "Greaseweazle exceeded the 30 minute write limit. "
+                    "The physical disk may be incomplete."
+                ),
+            )
         transcript = "\n".join(output)
         folded_transcript = transcript.casefold()
         if return_code:
@@ -363,4 +523,6 @@ class GreaseweazleClient:
             verification_supported=image_type.automatic_verification,
             tracks_written=len(tracks),
             output_tail=tuple(output[-12:]),
+            disk_format=layout.identifier if layout else None,
+            step=selected_step,
         )

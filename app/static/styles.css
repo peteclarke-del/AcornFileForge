@@ -1097,6 +1097,9 @@ body:has(dialog[open].failed) .pane .loading { display: none; }
 .physical-floppy-context-menu button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px 11px; border: 0; border-radius: 5px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
 .physical-floppy-context-menu button:hover, .physical-floppy-context-menu button:focus-visible { background: var(--cream); outline: 2px solid var(--focus-ring); }
 .physical-floppy-context-menu button:disabled { color: var(--muted); cursor: not-allowed; opacity: .65; }
+.drive-badge { flex: none; padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--cream); color: var(--muted); font: 10px var(--mono); white-space: nowrap; }
+.drive-badge.unwritten { border-color: var(--orange); color: var(--orange); }
+.drive-write.compact { flex: none; padding: 3px 10px; font-size: 12px; }
 .physical-floppy-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 4px 0; }
 .physical-floppy-summary > div { padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--cream); }
 .physical-floppy-summary dt { color: var(--muted); font: 8px var(--mono); letter-spacing: .08em; text-transform: uppercase; }
@@ -1574,3 +1577,6 @@ dialog:has(.online-library-heading), dialog:has(.online-source-list) { width: mi
 .cheat-library-list article > span { display: flex; flex-wrap: wrap; justify-content: end; gap: 5px; }
 .cheat-library-list small, .cheat-library-list code { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 700px) { .guarded-cheat-grid { grid-template-columns: 1fr; } .guarded-cheat-grid > label.wide { grid-column: auto; } }
+.conversion-list { margin: 6px 0 0; padding-left: 18px; max-height: 160px; overflow: auto; font-size: 12px; }
+.conversion-renames summary { cursor: pointer; }
+.conversion-note { color: var(--muted); font-size: 12px; }

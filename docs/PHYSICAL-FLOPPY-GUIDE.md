@@ -1,7 +1,9 @@
 # Reading and writing physical floppy disks
 
-The native Linux edition of Acorn File Forge can send an open floppy image to
-a Greaseweazle drive, and capture a physical disk back into a working image. The browser and Docker editions deliberately cannot
+The native Linux edition of Acorn File Forge can open the disk in a
+Greaseweazle drive as a normal pane, write an edited pane back to that disk,
+format a blank disk, and send any open floppy image to a drive. The browser and
+Docker editions deliberately cannot
 access host USB hardware. Image editing remains shared between both editions;
 only the final hardware adapter is desktop-specific.
 
@@ -16,29 +18,87 @@ only the final hardware adapter is desktop-specific.
 | One formatted disk selected in an MMB | Yes, as an extracted SSD snapshot | Not applicable | Yes |
 | MMB container, DAT/DSC, HDF and other hard disks | No | No | Not applicable |
 
-## Reading a physical disk
+## Open a disk in a drive
 
-Select **Read physical floppy**, choose the connected drive and the capture
-format, then read. The capture is written to a private temporary file first and
-is only opened as an image pane once Greaseweazle has exited cleanly and left a
-usable file behind, so an empty drive or a failed read never becomes a pane you
-might mistake for real data. A failed capture removes its partial file.
+Choose **Open floppy drive** in an empty pane, or **File → Open floppy drive…**,
+then pick the Greaseweazle drive. Acorn File Forge reads four tracks (cylinders
+0 and 2 of both heads) as raw flux and identifies the disk from them without
+writing anything:
 
-Choose the capture format to match the intent:
+| What is found on track 0 | Identified as |
+| --- | --- |
+| FM, ten 256-byte sectors | DFS. The catalogue gives 40 or 80 tracks, and head 1 shows double-sided |
+| MFM, sixteen 256-byte sectors | Old-map ADFS. The free-space map gives S, M or L |
+| MFM, five 1024-byte sectors | ADFS D or E (800 KiB) |
+| MFM high density, ten 1024-byte sectors | ADFS F (1.6 MiB) |
+
+Cylinder 2 also shows whether a 40-track disk is sitting in an 80-track drive:
+its sector headers then say cylinder 1, and the disk is read with double
+stepping.
+
+What happens next depends on the disk:
+
+- **Identified.** The whole disk is read with that layout and opens as an
+  ordinary pane. Browse, add, rename, delete and undo work as for any image.
+- **Not identified.** Sectors were found but match no single layout, or a DFS
+  catalogue gives no track count. You are asked to choose the format and the
+  head stepping. A wrong choice only produces an unreadable pane; the disk is
+  not changed.
+- **Unformatted.** No sector headers were found. You are asked whether to
+  format the disk, and with which layout and title. Formatting needs the
+  confirmation box ticked, and declining writes nothing.
+
+Unreadable sectors do not stop the read. The pane opens with a warning that
+gives the count. Their bytes are zero, and writing back would make them
+permanent.
+
+### Writing the pane back
+
+A drive pane never writes to the disk on its own. Its header shows the drive
+and either **Matches the disk** or **Changes not yet written**, and has a
+**Write to disk** button. Writing asks for confirmation, then writes every
+track with the layout and stepping the disk was opened with, and verifies by
+reading it back. The pane then shows **Matches the disk** again. Undoing
+back to the disk's contents also counts as matching, because the comparison
+uses the bytes, not an edit counter.
+
+To put a DFS disc's files onto an ADFS floppy, or the reverse, open it, use
+**Tools → Convert to ADFS/DFS…** to make a converted pane, then write that
+pane with **Write physical floppy…**. See *Converting between DFS and ADFS* in
+the README.
+
+Closing a pane with unwritten changes asks first. The disk keeps what it held
+before, and the pane's private working copy stays available through
+**Recover previous session**.
+
+### Capturing to an image file
+
+The `/api/desktop/physical-floppy/read` route still captures a disk into a new
+image without binding it to the drive. A sector capture names one of the
+layouts in the table below; `hfe` and `scp` capture bitcells or raw flux.
 
 | Format | Captures | Use when |
 | --- | --- | --- |
-| `ssd`, `dsd` | Decoded DFS sectors | The disk is a standard DFS floppy |
-| `ads`, `adm`, `adl`, `adf` | Decoded ADFS sectors | The disk is a standard ADFS floppy |
+| `dfs-40`, `dfs-80`, `dfs-40-ds`, `dfs-80-ds` | Decoded DFS sectors | The disk is a standard DFS floppy |
+| `adfs-s`, `adfs-m`, `adfs-l`, `adfs-800`, `adfs-1600` | Decoded ADFS sectors | The disk is a standard ADFS floppy |
 | `hfe` | Bitcell image | The disk has non-standard tracks worth keeping |
 | `scp` | Raw flux | Preservation, copy protection, or a disk that will not decode |
 
-A sector format decodes while reading and fails on an unreadable track. A flux
-capture keeps everything the drive produced, including tracks no filesystem
+The earlier names `ssd`, `dsd`, `ads`, `adm`, `adl` and `adf` are still
+accepted and mean the 80-track DFS and the 800 KiB ADFS layouts. A flux capture keeps everything the drive produced, including tracks no filesystem
 decoder accepts, so it is the safer choice for a disk of unknown condition or
-one you may only get one chance to read. Use `--revs` through the API, or the
-revolutions control, to capture several revolutions per track when a disk is
-marginal.
+one you may only get one chance to read. Pass `revolutions` to capture several
+revolutions per track when a disk is marginal.
+
+### Layouts are always explicit
+
+`gw` picks a disk definition from a file's suffix when it is not told one, and
+its defaults are wrong for Acorn media: `.adf` means an Amiga disk, and
+`.ssd`/`.dsd` mean 40 tracks. Every sector read and write therefore passes
+`--format=acorn.…` explicitly. An image being written takes its layout from its
+DFS catalogue or ADFS size, and a DFS image truncated after its last used
+sector is padded with zeros in a temporary copy, so the original is never
+changed.
 
 Greaseweazle describes HFE and SCP as flux or raw bitcell data, so it cannot
 perform its usual sector read-back verification. Acorn File Forge calls this
@@ -141,8 +201,22 @@ modified by the hardware operation.
 ## Shared integration module
 
 The UI-neutral implementation is the top-level `acorn_greaseweazle` Python
-package. It owns supported suffixes, drive validation, discovery, stable
-snapshots, subprocess control, progress parsing and verification policy. It has
+package. It owns supported suffixes, the Acorn layout table (`formats.py`), disk
+identification (`detect.py`), drive validation, discovery, stable snapshots,
+subprocess control, progress parsing and verification policy. The drive pane
+binding (`app/physical_drive.py`) is the only part that knows about image
+sessions. It has
 no Flask, GTK or Nautilus dependency, so the companion `nautilus-acornfs`
 project can consume the same module rather than maintaining a second hardware
 implementation.
+
+## Testing without a drive
+
+`tests/fake_gw.py` stands in for a drive by passing reads and writes to the
+real `gw convert` against a flux file. With no file present, it inserts a
+blank, unformatted disk. `tests/test_physical_drive.py` uses it to format,
+identify, open, edit and write back DFS and ADFS disks through the real
+routes. Those round trips run when a working `gw` is on `PATH` or named by
+`ACORN_TEST_GW`, and are skipped otherwise. `tests/browser/drive-pane-regression.cjs`
+covers the dialogs in Chromium.
+
