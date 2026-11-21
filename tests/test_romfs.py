@@ -67,6 +67,8 @@ class RomfsTests(unittest.TestCase):
 
         self.service.set_access(session, None, ["PROGRAM"], False)
         self.assertTrue(self.service.list_directory(session, "$", None)["entries"][0]["runOnly"])
+        self.service.set_access(session, None, ["PROGRAM"], True)
+        self.assertFalse(self.service.list_directory(session, "$", None)["entries"][0]["runOnly"])
         self.service.mutate(session, None, ["mv", "{image}:PROGRAM", "NEW.NAME"])
         self.assertEqual(self.service.list_directory(session, "$", None)["entries"][0]["name"], "NEW.NAME")
         self.service.mutate(session, None, ["rm", "--force", "{image}:NEW.NAME"])

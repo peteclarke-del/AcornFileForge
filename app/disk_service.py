@@ -2211,10 +2211,12 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
             if inner not in {"", "$"}:
                 raise DiskError("ROMFS is flat and does not contain directories.")
             rows = []
+            from oaknut.file import Access
+
             with self.romfs_mount(session) as mount:
                 for entry in mount.iter_entries(""):
                     metadata = mount.acorn_meta(entry.name)
-                    access = int(metadata.access or 0)
+                    run_only = Access(int(metadata.access or 0)).is_run_only
                     row = {
                         "name": entry.name,
                         "path": entry.name,
@@ -2224,8 +2226,8 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
                         "filetype": "",
                         "datestamp": "",
                         "length": int(entry.length or 0),
-                        "attr": "RUN" if access & 0x40 else "LOAD",
-                        "runOnly": bool(access & 0x40),
+                        "attr": "RUN" if run_only else "LOAD",
+                        "runOnly": run_only,
                     }
                     content_kind = self._listing_content_kind(
                         session, None, None, entry.name, row,
@@ -2679,7 +2681,12 @@ class DiskService(SessionDiskMixin, FilesystemDiskMixin, ADFSInstallMixin, MmbCa
                     for target in targets:
                         meta = mount.acorn_meta(target)
                         current = Access(meta.access) if meta.access is not None else Access(0)
-                        access = current & ~Access.X if writable else current | Access.X
+                        # ROMFS copy protection is *RUN-only: owner E without R.
+                        access = (
+                            (current & ~Access.E) | Access.R
+                            if writable
+                            else (current & ~Access.R) | Access.E
+                        )
                         mount.set_acorn_meta(
                             target,
                             AcornMeta(
