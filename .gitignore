@@ -6,14 +6,19 @@
 # Acorn File Forge working data belongs in Docker's named volume.
 /work/
 
+# Release artefacts from tools/build-release.sh and build-linux-package.sh
+/dist/
+
 # Python and test caches
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 node_modules/
 test-results/
+playwright-report/
 .venv-desktop/
 .venv/
 
@@ -22,6 +27,4 @@ test-results/
 .idea/
 .vscode/
 *.swp
-.agents
-.claude
-.codex
+.claude/
