@@ -12,7 +12,6 @@ correctly reports nothing to write.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 from pathlib import Path
 import tempfile
 from typing import Callable
@@ -27,19 +26,12 @@ from acorn_greaseweazle import (
 )
 from acorn_greaseweazle.formats import DiskFormatError
 
+from .checksum import sha256_path
 from .errors import DiskError
 from .floppy_layouts import create_blank_layout, layout as floppy_layout
 from .image_session import ImageSession
 
 Progress = Callable[[str, int | None, int | None], None]
-
-def file_digest(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
 
 def normalise_physical_drive(value: object) -> dict | None:
     """Accept a stored binding only when every field is still valid."""
@@ -72,7 +64,7 @@ def physical_drive_summary(session: ImageSession) -> dict | None:
         "format": layout.public(),
         "step": binding["step"],
         "missingSectors": binding.get("missingSectors", 0),
-        "unwritten": file_digest(session.path) != binding.get("diskDigest"),
+        "unwritten": sha256_path(session.path) != binding.get("diskDigest"),
     }
 
 
@@ -82,7 +74,7 @@ def bind(session: ImageSession, drive: str, layout: DiskFormat, step: int, missi
         "drive": drive,
         "format": layout.identifier,
         "step": step,
-        "diskDigest": file_digest(session.path),
+        "diskDigest": sha256_path(session.path),
         "missingSectors": missing,
     }
 

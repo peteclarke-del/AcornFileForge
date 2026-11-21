@@ -9,7 +9,7 @@ packages stay in step.
 ## Requirements
 
 Use a current Debian or Ubuntu desktop with a supported Python 3 release. The
-container currently uses Python 3.14, while the native installer uses the
+container currently uses Python 3.15, while the native installer uses the
 distribution-provided Python. Install the native libraries first:
 
 ```bash

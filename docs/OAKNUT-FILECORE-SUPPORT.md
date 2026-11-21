@@ -1,9 +1,9 @@
 # Oaknut FileCore integration
 
-Acorn File Forge uses the released Oaknut 12.18.2 packages. No local Oaknut
+Acorn File Forge uses the released Oaknut 13.1.3 packages. No local Oaknut
 patch is applied at build time.
 
-Oaknut 12.18.2 incorporates the writable classic E/F work and supplies one
+Oaknut 13.1.3 incorporates the writable classic E/F work and supplies one
 content-driven ADFS implementation for the full standard floppy family:
 
 | Format | Capacity | Allocation map | Directory layout | Filename limit | Entries per directory |
@@ -40,7 +40,7 @@ so the geometry it edits against is always the one the DSC declares.
 ## Dependency boundary
 
 `requirements.txt` pins `oaknut-disc`, `oaknut-adfs` and `oaknut-romfs` to the
-same 12.18.2 release. The Docker dependency stage imports the public ADFS format
+same 13.1.3 release. The Docker dependency stage imports the public ADFS format
 constants for D through G+ and fails the build if that released capability is
 missing. Application code does not carry or apply a fork of Oaknut.
 
